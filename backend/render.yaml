@@ -4,21 +4,15 @@ services:
     runtime: python
     region: oregon
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.9"
-      - key: PORT
-        value: "10000"
-      - key: ENVIRONMENT
-        value: "production"
       - key: DATABASE_URL
-        sync: false
+        value: postgresql+asyncpg://fitness_db_evug_user:i03ZpUPkvhbjmp2H2FDug9IUEj03ErEC@dpg-dblpinp42hec73e0g730-a.oregon-postgres.render.com/fitness_db_evug
       - key: SECRET_KEY
         generateValue: true
       - key: GEMINI_API_KEY
         sync: false
-      - key: DEFAULT_SEASON_ID
-        value: "2026-S4"
+      - key: PYTHON_VERSION
+        value: 3.11.8

@@ -38,7 +38,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,7 +102,13 @@ async def root_status() -> dict[str, str]:
 
 
 @app.get("/health", tags=["Healthcheck"])
-async def healthcheck() -> dict[str, str]:
+def health() -> dict[str, str]:
+    """Endpoint explícito de salud para Render Health Check."""
+    return {"status": "ok"}
+
+
+@app.get("/health/db", tags=["Healthcheck"])
+async def healthcheck_db() -> dict[str, str]:
     """Verifica conectividad activa con PostgreSQL en Render."""
     async with AsyncSessionLocal() as session:
         await session.execute(text("SELECT 1"))
