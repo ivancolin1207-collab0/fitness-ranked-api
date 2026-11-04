@@ -47,9 +47,34 @@ class ApiClientService {
     final List<String> candidates = <String>[
       _baseUrl,
       ApiConstants.defaultProductionBaseUrl,
+      ApiConstants.fallbackLocalLanUrl,
+      ApiConstants.fallbackEmulatorUrl,
+      ApiConstants.fallbackLoopbackUrl,
     ];
     final Set<String> seen = <String>{};
     return candidates.where((String u) => seen.add(u)).toList();
+  }
+
+  Duration _timeoutForCandidate(String candidate) {
+    if (candidate.contains('onrender.com')) {
+      return ApiConstants.requestTimeout;
+    }
+    return ApiConstants.localCandidateTimeout;
+  }
+
+  bool _isUnprovisionedServerResponse(http.Response response) {
+    final String? renderRouting = response.headers['x-render-routing'];
+    if (renderRouting != null && renderRouting.contains('no-server')) {
+      return true;
+    }
+    if (response.statusCode == 404) {
+      final String trimmed = response.body.trim();
+      // Las respuestas 404 de nuestro backend FastAPI siempre son JSON con {"detail": ...}
+      if (!trimmed.startsWith('{')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Map<String, String> _buildHeaders(String? jwtToken) {
@@ -62,6 +87,9 @@ class ApiClientService {
   }
 
   String _extractErrorDetail(http.Response response) {
+    if (_isUnprovisionedServerResponse(response)) {
+      return 'El Web Service ($_baseUrl) respondió 404 (aún no desplegado en Render) y no se detectó servidor local en ${ApiConstants.fallbackLocalLanUrl}.';
+    }
     try {
       final dynamic decoded = jsonDecode(response.body);
       if (decoded is Map<String, dynamic> && decoded['detail'] != null) {
@@ -75,11 +103,17 @@ class ApiClientService {
     Future<http.Response> Function(String candidateBase) requestFn,
   ) async {
     Object? lastError;
+    http.Response? unprovisionedResponse;
+
     for (final String candidate in _candidateBaseUrls()) {
       try {
         final http.Response response = await requestFn(candidate).timeout(
-          ApiConstants.requestTimeout,
+          _timeoutForCandidate(candidate),
         );
+        if (_isUnprovisionedServerResponse(response)) {
+          unprovisionedResponse ??= response;
+          continue;
+        }
         _baseUrl = candidate;
         return response;
       } on SocketException catch (e) {
@@ -90,8 +124,96 @@ class ApiClientService {
         lastError = e;
       }
     }
+
+    if (unprovisionedResponse != null) {
+      return unprovisionedResponse;
+    }
+
     throw HttpException(
-      'No se pudo conectar al servidor Render Cloud ($_baseUrl). Si el servicio estaba en reposo (cold start), intenta nuevamente en unos segundos. Detalle: $lastError',
+      'No se pudo conectar a $_baseUrl ni al servidor local (${ApiConstants.fallbackLocalLanUrl}). Verifica que el Web Service esté activo en Render o que uvicorn corra con --host 0.0.0.0. Detalle: $lastError',
+    );
+  }
+
+  // =========================================================================
+  // 0. PING / HEALTHCHECK DE CONECTIVIDAD (/health y /docs)
+  // =========================================================================
+
+  Future<ServerHealthCheckModel> checkServerHealth({
+    String? specificUrl,
+  }) async {
+    final List<String> candidates = specificUrl != null &&
+            specificUrl.trim().isNotEmpty
+        ? <String>[specificUrl.trim().replaceAll(RegExp(r'/+$'), '')]
+        : _candidateBaseUrls();
+
+    int? firstStatusCode;
+    String? firstAttemptedUrl;
+
+    for (final String candidate in candidates) {
+      firstAttemptedUrl ??= candidate;
+      final Stopwatch sw = Stopwatch()..start();
+      try {
+        final http.Response res = await _httpClient
+            .get(
+              Uri.parse('$candidate/health'),
+              headers: _buildHeaders(null),
+            )
+            .timeout(_timeoutForCandidate(candidate));
+        sw.stop();
+
+        firstStatusCode ??= res.statusCode;
+
+        if (res.statusCode == 200 && !_isUnprovisionedServerResponse(res)) {
+          _baseUrl = candidate;
+          return ServerHealthCheckModel(
+            isOnline: true,
+            activeBaseUrl: candidate,
+            statusCode: 200,
+            latencyMs: sw.elapsedMilliseconds,
+            message:
+                'Backend activo en $candidate (${sw.elapsedMilliseconds} ms) • PostgreSQL Render conectado.',
+          );
+        }
+
+        // Probar /docs como verificación secundaria si /health no respondió 200
+        if (!_isUnprovisionedServerResponse(res)) {
+          final http.Response docsRes = await _httpClient
+              .get(Uri.parse('$candidate/docs'))
+              .timeout(const Duration(seconds: 5));
+          if (docsRes.statusCode == 200) {
+            _baseUrl = candidate;
+            return ServerHealthCheckModel(
+              isOnline: true,
+              activeBaseUrl: candidate,
+              statusCode: 200,
+              latencyMs: sw.elapsedMilliseconds,
+              message:
+                  'Backend FastAPI detectado en $candidate (/docs activo).',
+            );
+          }
+        }
+      } catch (_) {
+        sw.stop();
+      }
+    }
+
+    final String target = firstAttemptedUrl ?? _baseUrl;
+    if (firstStatusCode == 404) {
+      return ServerHealthCheckModel(
+        isOnline: false,
+        activeBaseUrl: target,
+        statusCode: 404,
+        message:
+            'HTTP 404 en $target: El Web Service aún no está desplegado en Render y el backend local (${ApiConstants.fallbackLocalLanUrl}) no está encendido.',
+      );
+    }
+
+    return ServerHealthCheckModel(
+      isOnline: false,
+      activeBaseUrl: target,
+      statusCode: firstStatusCode,
+      message:
+          'Servidor inalcanzable ($target). Despliega el Web Service en Render o inicia en tu Mac: uvicorn app.main:app --host 0.0.0.0 --port 8000',
     );
   }
 

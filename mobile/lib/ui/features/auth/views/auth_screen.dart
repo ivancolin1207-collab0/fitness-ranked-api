@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../data/models/auth_models.dart';
 import '../../../core/app_theme.dart';
 import '../view_models/auth_view_model.dart';
 
@@ -119,7 +120,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        'Conectado a PostgreSQL en Render (${widget.viewModel.apiBaseUrl})',
+                                        'Endpoint actual: ${widget.viewModel.apiBaseUrl}',
                                         style: const TextStyle(
                                           fontSize: 11,
                                           color: ApexTheme.textMuted,
@@ -130,7 +131,9 @@ class _AuthScreenState extends State<AuthScreen> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: 14),
+                            _buildServerHealthBanner(context),
+                            const SizedBox(height: 16),
                             if (widget.viewModel.errorMessage != null) ...<Widget>[
                               Container(
                                 padding: const EdgeInsets.all(12),
@@ -298,6 +301,109 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildServerHealthBanner(BuildContext context) {
+    final ServerHealthCheckModel? health = widget.viewModel.healthStatus;
+    final bool isOnline = health?.isOnline ?? false;
+    final Color statusColor = isOnline
+        ? ApexTheme.readinessGreen
+        : (health == null ? ApexTheme.cyanElectric : ApexTheme.warningAmber);
+
+    final String statusText = health != null
+        ? health.message
+        : 'Pulsa "Ping /health" para verificar disponibilidad del servidor.';
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: statusColor.withValues(alpha: 0.7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(
+                isOnline
+                    ? Icons.cloud_done_rounded
+                    : Icons.health_and_safety_outlined,
+                color: statusColor,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isOnline
+                      ? 'HEALTHCHECK /health: ONLINE'
+                      : 'DIAGNÓSTICO DE SERVIDOR (/health)',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: statusColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            statusText,
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: ApexTheme.textPrimary,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: <Widget>[
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: ApexTheme.voltAccent,
+                  side: const BorderSide(color: ApexTheme.voltAccent),
+                ),
+                onPressed: widget.viewModel.isCheckingHealth
+                    ? null
+                    : () => widget.viewModel.pingServerHealth(),
+                icon: widget.viewModel.isCheckingHealth
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: ApexTheme.voltAccent,
+                        ),
+                      )
+                    : const Icon(Icons.network_ping_rounded, size: 15),
+                label: const Text(
+                  'Ping /health',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                ),
+              ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: ApexTheme.cyanElectric,
+                  side: const BorderSide(color: ApexTheme.cyanElectric),
+                ),
+                onPressed: () => _openServerConfigDialog(context),
+                icon: const Icon(Icons.dns_outlined, size: 15),
+                label: const Text(
+                  'Cambiar Servidor / IP',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 

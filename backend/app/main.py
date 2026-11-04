@@ -30,8 +30,8 @@ settings = get_settings()
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
-    redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # CORS global habilitado para permitir consumo desde la APK móvil en cualquier red/IP
@@ -77,11 +77,28 @@ async def handle_database_errors(
     )
 
 
-# Registro de Routers v1
+# Registro de Routers v1 (/api/v1/*) y alias directos (/*) para compatibilidad total
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(biometrics.router, prefix=settings.API_V1_STR)
 app.include_router(workouts.router, prefix=settings.API_V1_STR)
 app.include_router(leaderboard.router, prefix=settings.API_V1_STR)
+
+app.include_router(auth.router, include_in_schema=False)
+app.include_router(biometrics.router, include_in_schema=False)
+app.include_router(workouts.router, include_in_schema=False)
+app.include_router(leaderboard.router, include_in_schema=False)
+
+
+@app.get("/", tags=["Healthcheck"])
+async def root_status() -> dict[str, str]:
+    """Endpoint raíz informativo del servicio."""
+    return {
+        "status": "online",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "health_endpoint": "/health",
+        "api_prefix": settings.API_V1_STR,
+    }
 
 
 @app.get("/health", tags=["Healthcheck"])

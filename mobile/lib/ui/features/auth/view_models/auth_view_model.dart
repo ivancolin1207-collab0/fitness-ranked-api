@@ -26,6 +26,12 @@ class AuthViewModel extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
+  ServerHealthCheckModel? _healthStatus;
+  ServerHealthCheckModel? get healthStatus => _healthStatus;
+
+  bool _isCheckingHealth = false;
+  bool get isCheckingHealth => _isCheckingHealth;
+
   String get apiBaseUrl => _repository.currentApiBaseUrl;
 
   Future<void> bootstrapSession() async {
@@ -35,7 +41,10 @@ class AuthViewModel extends ChangeNotifier {
 
     try {
       await _repository.initializeSavedApiUrl();
-      _currentUser = await _repository.fetchCurrentSessionProfile();
+      _healthStatus = await _repository.checkServerHealth();
+      if (_healthStatus != null && _healthStatus!.isOnline) {
+        _currentUser = await _repository.fetchCurrentSessionProfile();
+      }
     } catch (_) {
       _currentUser = null;
     } finally {
@@ -44,10 +53,29 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  Future<ServerHealthCheckModel> pingServerHealth({String? specificUrl}) async {
+    _isCheckingHealth = true;
+    notifyListeners();
+
+    try {
+      final ServerHealthCheckModel status = await _repository.checkServerHealth(
+        specificUrl: specificUrl,
+      );
+      _healthStatus = status;
+      if (status.isOnline) {
+        _errorMessage = null;
+      }
+      return status;
+    } finally {
+      _isCheckingHealth = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> setServerUrl(String url) async {
     await _repository.setCustomApiBaseUrl(url);
     _errorMessage = null;
-    notifyListeners();
+    await pingServerHealth(specificUrl: url);
   }
 
   Future<bool> login({
@@ -59,6 +87,14 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final ServerHealthCheckModel health =
+          await _repository.checkServerHealth();
+      _healthStatus = health;
+      if (!health.isOnline) {
+        _errorMessage = health.message;
+        return false;
+      }
+
       _currentUser = await _repository.login(
         email: email,
         password: password,
@@ -83,6 +119,14 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final ServerHealthCheckModel health =
+          await _repository.checkServerHealth();
+      _healthStatus = health;
+      if (!health.isOnline) {
+        _errorMessage = health.message;
+        return false;
+      }
+
       _currentUser = await _repository.register(
         username: username,
         email: email,

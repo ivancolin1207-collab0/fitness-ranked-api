@@ -123,3 +123,19 @@ class ProfileSetupRequestModel {
     };
   }
 }
+
+class ServerHealthCheckModel {
+  final bool isOnline;
+  final String activeBaseUrl;
+  final int? statusCode;
+  final int? latencyMs;
+  final String message;
+
+  const ServerHealthCheckModel({
+    required this.isOnline,
+    required this.activeBaseUrl,
+    this.statusCode,
+    this.latencyMs,
+    required this.message,
+  });
+}

@@ -34,6 +34,18 @@ class FitnessRepository {
     await _storageService.saveApiBaseUrl(_apiClient.baseUrl);
   }
 
+  Future<ServerHealthCheckModel> checkServerHealth({
+    String? specificUrl,
+  }) async {
+    final ServerHealthCheckModel status = await _apiClient.checkServerHealth(
+      specificUrl: specificUrl,
+    );
+    if (status.isOnline) {
+      await _storageService.saveApiBaseUrl(status.activeBaseUrl);
+    }
+    return status;
+  }
+
   Future<String> getPreferredUnitSystem() {
     return _storageService.readUnitSystem();
   }
