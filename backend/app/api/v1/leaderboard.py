@@ -1,0 +1,679 @@
+from __future__ import annotations
+
+"""
+Endpoints de Leaderboard Ranked, Buscador de Rivales, Matchmaking Automático (±100 ELO)
+y Duelos Semanales 1v1 en Tiempo Real (`/leaderboard`).
+"""
+
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import case, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.core.elo_engine import (
+    CompetitionType,
+    MetricTarget,
+    RankedTier,
+    WorkoutStatus,
+    resolve_tier,
+    settle_1v1_duel_elo,
+)
+from app.core.security import get_current_user
+from app.models.entities import (
+    Competition,
+    CompetitionParticipant,
+    RankedPoint,
+    User,
+    Workout,
+)
+from app.schemas.leaderboard import (
+    ActiveDuelLiveResponse,
+    Duel1v1ResolutionRequest,
+    Duel1v1ResolutionResponse,
+    DuelInviteByUsernameRequest,
+    DuelMatchmakeRequest,
+    LeaderboardResponse,
+    LeaderboardRowResponse,
+    OpponentSearchResultResponse,
+)
+
+router = APIRouter(prefix="/leaderboard", tags=["Leaderboard & 1v1 Matchmaking"])
+
+
+async def _get_athlete_weekly_stats(
+    db: AsyncSession,
+    user_id: UUID,
+) -> tuple[float, float, float]:
+    """
+    Calcula en tiempo real desde la tabla `workouts` los puntajes acumulados en los
+    últimos 7 días para un usuario: (lbm_score, dots_score, avg_compliance_pct).
+    """
+    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    stmt = select(
+        func.coalesce(func.sum(Workout.lbm_allometric_score), 0.0).label("lbm"),
+        func.coalesce(func.sum(Workout.dots_normalized_volume), 0.0).label("dots"),
+        func.coalesce(func.avg(Workout.compliance_pct), 100.0).label("comp"),
+    ).where(
+        Workout.user_id == user_id,
+        Workout.status == WorkoutStatus.COMPLETED,
+        Workout.date >= seven_days_ago,
+    )
+    row = (await db.execute(stmt)).mappings().one()
+    return (
+        round(float(row["lbm"]), 2),
+        round(float(row["dots"]), 2),
+        round(float(row["comp"]), 1),
+    )
+
+
+async def _build_live_duel_response(
+    db: AsyncSession,
+    comp: Competition,
+    challenger_user: User,
+    opponent_user: User,
+    season_id: str,
+) -> ActiveDuelLiveResponse:
+    rank_a = (
+        await db.execute(
+            select(RankedPoint).where(
+                RankedPoint.user_id == challenger_user.id,
+                RankedPoint.season_id == season_id,
+            )
+        )
+    ).scalar_one_or_none()
+    rank_b = (
+        await db.execute(
+            select(RankedPoint).where(
+                RankedPoint.user_id == opponent_user.id,
+                RankedPoint.season_id == season_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    elo_a = int(rank_a.current_elo) if rank_a else 1200
+    elo_b = int(rank_b.current_elo) if rank_b else 1200
+
+    lbm_a, dots_a, comp_a = await _get_athlete_weekly_stats(db, challenger_user.id)
+    lbm_b, dots_b, comp_b = await _get_athlete_weekly_stats(db, opponent_user.id)
+
+    delta_win, _ = settle_1v1_duel_elo(
+        elo_a=elo_a,
+        elo_b=elo_b,
+        score_a=max(lbm_a, 100.0),
+        score_b=min(lbm_b, 50.0),
+    )
+    stake = max(12, abs(delta_win))
+
+    mode = "AUTO_ELO_MATCHMAKING" if "Matchmaking" in comp.title else "DIRECT_INVITE"
+
+    return ActiveDuelLiveResponse(
+        competition_id=comp.id,
+        season_id=comp.season_id,
+        matchmaking_mode=mode,
+        metric_target=comp.metric_target,
+        challenger_user_id=challenger_user.id,
+        challenger_username=challenger_user.username,
+        challenger_elo=elo_a,
+        challenger_tier=resolve_tier(elo_a).value,
+        challenger_lbm_score=lbm_a,
+        challenger_dots_score=dots_a,
+        challenger_rpe_compliance_pct=comp_a,
+        opponent_user_id=opponent_user.id,
+        opponent_username=opponent_user.username,
+        opponent_elo=elo_b,
+        opponent_tier=resolve_tier(elo_b).value,
+        opponent_lbm_score=lbm_b,
+        opponent_dots_score=dots_b,
+        opponent_rpe_compliance_pct=comp_b,
+        projected_elo_stake=stake,
+        start_date=comp.start_date,
+        end_date=comp.end_date,
+    )
+
+
+@router.get(
+    "",
+    response_model=LeaderboardResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_season_leaderboard(
+    _current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    season_id: str = Query(default="2026-S4", pattern=r"^[A-Za-z0-9_-]{3,32}$"),
+    competition_type: CompetitionType = Query(default=CompetitionType.GLOBAL_LEADERBOARD),
+    metric_target: MetricTarget = Query(default=MetricTarget.LBM_ALLOMETRIC_RATIO),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> LeaderboardResponse:
+    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+    sum_dots = func.coalesce(func.sum(Workout.dots_normalized_volume), 0.0).label(
+        "total_dots"
+    )
+    sum_lbm = func.coalesce(func.sum(Workout.lbm_allometric_score), 0.0).label(
+        "total_lbm"
+    )
+    avg_comp = func.coalesce(func.avg(Workout.compliance_pct), 100.0).label("avg_comp")
+
+    tie_breaker = case(
+        (metric_target == MetricTarget.DOTS_RELATIVE_VOLUME, sum_dots),
+        else_=sum_lbm,
+    )
+
+    stmt = (
+        select(
+            User.id.label("user_id"),
+            User.username,
+            User.full_name,
+            RankedPoint.tier,
+            RankedPoint.current_elo,
+            RankedPoint.peak_elo,
+            RankedPoint.wins,
+            RankedPoint.losses,
+            RankedPoint.active_streak,
+            sum_dots,
+            sum_lbm,
+            avg_comp,
+        )
+        .join(User, User.id == RankedPoint.user_id)
+        .outerjoin(
+            Workout,
+            (Workout.user_id == User.id)
+            & (Workout.status == WorkoutStatus.COMPLETED)
+            & (Workout.date >= seven_days_ago),
+        )
+        .where(
+            RankedPoint.season_id == season_id,
+            User.is_active.is_(True),
+        )
+        .group_by(
+            User.id,
+            User.username,
+            User.full_name,
+            RankedPoint.tier,
+            RankedPoint.current_elo,
+            RankedPoint.peak_elo,
+            RankedPoint.wins,
+            RankedPoint.losses,
+            RankedPoint.active_streak,
+        )
+        .order_by(RankedPoint.current_elo.desc(), tie_breaker.desc())
+        .limit(limit)
+    )
+
+    rows = (await db.execute(stmt)).mappings().all()
+
+    entries = [
+        LeaderboardRowResponse(
+            rank=idx + 1,
+            user_id=r["user_id"],
+            username=r["username"],
+            full_name=r["full_name"],
+            tier=r["tier"]
+            if isinstance(r["tier"], RankedTier)
+            else RankedTier(r["tier"]),
+            current_elo=int(r["current_elo"]),
+            peak_elo=int(r["peak_elo"]),
+            wins=int(r["wins"]),
+            losses=int(r["losses"]),
+            active_streak=int(r["active_streak"]),
+            dots_normalized_volume=round(float(r["total_dots"]), 2),
+            lbm_allometric_score=round(float(r["total_lbm"]), 2),
+            avg_compliance_pct=round(float(r["avg_comp"]), 2),
+        )
+        for idx, r in enumerate(rows)
+    ]
+
+    return LeaderboardResponse(
+        season_id=season_id,
+        competition_type=competition_type,
+        metric_target=metric_target,
+        generated_at=datetime.now(timezone.utc),
+        entries=entries,
+    )
+
+
+@router.get(
+    "/users/search",
+    response_model=list[OpponentSearchResultResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def search_opponents(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    q: str = Query(default="", max_length=60),
+    season_id: str = Query(default="2026-S4", pattern=r"^[A-Za-z0-9_-]{3,32}$"),
+) -> list[OpponentSearchResultResponse]:
+    """
+    Busca atletas reales registrados en PostgreSQL por `username` o `full_name`
+    para retarlos a un duelo semanal 1v1.
+    """
+    search_term = f"%{q.strip()}%" if q.strip() else "%"
+    stmt = (
+        select(User, RankedPoint)
+        .join(
+            RankedPoint,
+            (RankedPoint.user_id == User.id) & (RankedPoint.season_id == season_id),
+        )
+        .where(
+            User.id != current_user.id,
+            User.is_active.is_(True),
+            or_(
+                User.username.ilike(search_term),
+                User.full_name.ilike(search_term),
+            ),
+        )
+        .order_by(RankedPoint.current_elo.desc())
+        .limit(20)
+    )
+    rows = (await db.execute(stmt)).all()
+    results: list[OpponentSearchResultResponse] = []
+    for u_obj, rp_obj in rows:
+        lbm_s, dots_s, _ = await _get_athlete_weekly_stats(db, u_obj.id)
+        results.append(
+            OpponentSearchResultResponse(
+                user_id=u_obj.id,
+                username=u_obj.username,
+                full_name=u_obj.full_name,
+                tier=rp_obj.tier
+                if isinstance(rp_obj.tier, RankedTier)
+                else RankedTier(rp_obj.tier),
+                current_elo=int(rp_obj.current_elo),
+                weekly_lbm_score=lbm_s,
+                weekly_dots_score=dots_s,
+            )
+        )
+    return results
+
+
+@router.get(
+    "/duels/active",
+    response_model=Optional[ActiveDuelLiveResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_active_weekly_duel(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    season_id: str = Query(default="2026-S4", pattern=r"^[A-Za-z0-9_-]{3,32}$"),
+) -> Optional[ActiveDuelLiveResponse]:
+    """
+    Obtiene el duelo semanal 1v1 activo del usuario autenticado y calcula en vivo
+    los puntajes semanales LBM^0.67 y DOTS de ambos rivales.
+    """
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(Competition)
+        .join(
+            CompetitionParticipant,
+            CompetitionParticipant.competition_id == Competition.id,
+        )
+        .where(
+            CompetitionParticipant.user_id == current_user.id,
+            Competition.type == CompetitionType.ONE_VS_ONE,
+            Competition.is_active.is_(True),
+            Competition.end_date >= now,
+        )
+        .order_by(Competition.created_at.desc())
+        .limit(1)
+    )
+    comp = (await db.execute(stmt)).scalar_one_or_none()
+    if comp is None:
+        return None
+
+    parts = (
+        await db.execute(
+            select(CompetitionParticipant).where(
+                CompetitionParticipant.competition_id == comp.id
+            )
+        )
+    ).scalars().all()
+    opponent_id = next(
+        (p.user_id for p in parts if p.user_id and p.user_id != current_user.id),
+        None,
+    )
+    if opponent_id is None:
+        return None
+
+    opponent = (
+        await db.execute(select(User).where(User.id == opponent_id))
+    ).scalar_one_or_none()
+    if opponent is None:
+        return None
+
+    return await _build_live_duel_response(
+        db=db,
+        comp=comp,
+        challenger_user=current_user,
+        opponent_user=opponent,
+        season_id=season_id,
+    )
+
+
+async def _deactivate_previous_duels(db: AsyncSession, user_id: UUID) -> None:
+    part_comp_ids = (
+        await db.execute(
+            select(CompetitionParticipant.competition_id).where(
+                CompetitionParticipant.user_id == user_id
+            )
+        )
+    ).scalars().all()
+    if part_comp_ids:
+        active_comps = (
+            await db.execute(
+                select(Competition).where(
+                    Competition.id.in_(part_comp_ids),
+                    Competition.type == CompetitionType.ONE_VS_ONE,
+                    Competition.is_active.is_(True),
+                )
+            )
+        ).scalars().all()
+        for c in active_comps:
+            c.is_active = False
+
+
+@router.post(
+    "/duels/challenge",
+    response_model=ActiveDuelLiveResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def challenge_user_by_username(
+    payload: DuelInviteByUsernameRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ActiveDuelLiveResponse:
+    """
+    Modalidad 1: Versus por Invitación / Elección directa por `username`.
+    """
+    target_uname = payload.opponent_username.strip()
+    if target_uname.lower() == current_user.username.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes retarte a ti mismo a un duelo 1v1.",
+        )
+
+    opponent = (
+        await db.execute(
+            select(User).where(
+                func.lower(User.username) == target_uname.lower(),
+                User.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if opponent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No se encontró ningún atleta activo con username '{target_uname}'.",
+        )
+
+    await _deactivate_previous_duels(db, current_user.id)
+
+    now = datetime.now(timezone.utc)
+    comp = Competition(
+        title=f"Duelo Directo 1v1: {current_user.username} vs {opponent.username}",
+        type=CompetitionType.ONE_VS_ONE,
+        metric_target=payload.metric_target,
+        season_id=payload.season_id,
+        start_date=now,
+        end_date=now + timedelta(days=7),
+        is_active=True,
+    )
+    db.add(comp)
+    await db.flush()
+
+    db.add_all(
+        [
+            CompetitionParticipant(competition_id=comp.id, user_id=current_user.id),
+            CompetitionParticipant(competition_id=comp.id, user_id=opponent.id),
+        ]
+    )
+    await db.commit()
+
+    return await _build_live_duel_response(
+        db=db,
+        comp=comp,
+        challenger_user=current_user,
+        opponent_user=opponent,
+        season_id=payload.season_id,
+    )
+
+
+@router.post(
+    "/duels/matchmake",
+    response_model=ActiveDuelLiveResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def matchmake_1v1_by_elo(
+    payload: DuelMatchmakeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ActiveDuelLiveResponse:
+    """
+    Modalidad 2: Matchmaking Automático por ELO (±100 ELO por defecto, expandiendo al
+    rival más cercano en caso de que no haya otro atleta dentro del rango inicial).
+    """
+    my_rank = (
+        await db.execute(
+            select(RankedPoint).where(
+                RankedPoint.user_id == current_user.id,
+                RankedPoint.season_id == payload.season_id,
+            )
+        )
+    ).scalar_one_or_none()
+    my_elo = int(my_rank.current_elo) if my_rank else 1200
+
+    # Buscar primero dentro de ±elo_window
+    stmt_window = (
+        select(User, RankedPoint)
+        .join(
+            RankedPoint,
+            (RankedPoint.user_id == User.id)
+            & (RankedPoint.season_id == payload.season_id),
+        )
+        .where(
+            User.id != current_user.id,
+            User.is_active.is_(True),
+            RankedPoint.current_elo.between(
+                my_elo - payload.elo_window, my_elo + payload.elo_window
+            ),
+        )
+        .order_by(func.abs(RankedPoint.current_elo - my_elo).asc())
+        .limit(1)
+    )
+    match_row = (await db.execute(stmt_window)).first()
+
+    if match_row is None:
+        # Si no hay en ±100 ELO, seleccionar el usuario activo más cercano en ELO general
+        stmt_closest = (
+            select(User, RankedPoint)
+            .join(
+                RankedPoint,
+                (RankedPoint.user_id == User.id)
+                & (RankedPoint.season_id == payload.season_id),
+            )
+            .where(
+                User.id != current_user.id,
+                User.is_active.is_(True),
+            )
+            .order_by(func.abs(RankedPoint.current_elo - my_elo).asc())
+            .limit(1)
+        )
+        match_row = (await db.execute(stmt_closest)).first()
+
+    if match_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aún no hay otros atletas registrados en la temporada para emparejar.",
+        )
+
+    opponent_user: User = match_row[0]
+    await _deactivate_previous_duels(db, current_user.id)
+
+    now = datetime.now(timezone.utc)
+    comp = Competition(
+        title=f"Matchmaking ELO 1v1: {current_user.username} vs {opponent_user.username}",
+        type=CompetitionType.ONE_VS_ONE,
+        metric_target=payload.metric_target,
+        season_id=payload.season_id,
+        start_date=now,
+        end_date=now + timedelta(days=7),
+        is_active=True,
+    )
+    db.add(comp)
+    await db.flush()
+
+    db.add_all(
+        [
+            CompetitionParticipant(competition_id=comp.id, user_id=current_user.id),
+            CompetitionParticipant(competition_id=comp.id, user_id=opponent_user.id),
+        ]
+    )
+    await db.commit()
+
+    return await _build_live_duel_response(
+        db=db,
+        comp=comp,
+        challenger_user=current_user,
+        opponent_user=opponent_user,
+        season_id=payload.season_id,
+    )
+
+
+@router.post(
+    "/duels/1v1",
+    response_model=Duel1v1ResolutionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def resolve_1v1_duel(
+    payload: Duel1v1ResolutionRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Duel1v1ResolutionResponse:
+    if payload.challenger_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo puedes liquidar duelos en nombre de tu propio usuario.",
+        )
+    if payload.challenger_user_id == payload.opponent_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes competir en un duelo 1v1 contra ti mismo.",
+        )
+
+    settings = get_settings()
+    season = payload.season_id or settings.DEFAULT_SEASON_ID
+
+    rank_a = (
+        await db.execute(
+            select(RankedPoint).where(
+                RankedPoint.user_id == payload.challenger_user_id,
+                RankedPoint.season_id == season,
+            )
+        )
+    ).scalar_one_or_none()
+    rank_b = (
+        await db.execute(
+            select(RankedPoint).where(
+                RankedPoint.user_id == payload.opponent_user_id,
+                RankedPoint.season_id == season,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if rank_a is None or rank_b is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Uno o ambos atletas no tienen registro ELO activo en esta temporada.",
+        )
+
+    lbm_a, dots_a, _ = await _get_athlete_weekly_stats(db, payload.challenger_user_id)
+    lbm_b, dots_b, _ = await _get_athlete_weekly_stats(db, payload.opponent_user_id)
+
+    score_a = (
+        dots_a
+        if payload.metric_target == MetricTarget.DOTS_RELATIVE_VOLUME
+        else lbm_a
+    )
+    score_b = (
+        dots_b
+        if payload.metric_target == MetricTarget.DOTS_RELATIVE_VOLUME
+        else lbm_b
+    )
+
+    elo_a_before = int(rank_a.current_elo)
+    elo_b_before = int(rank_b.current_elo)
+    delta_a, delta_b = settle_1v1_duel_elo(
+        elo_a=elo_a_before,
+        elo_b=elo_b_before,
+        score_a=score_a,
+        score_b=score_b,
+    )
+
+    rank_a.current_elo = max(100, elo_a_before + delta_a)
+    rank_b.current_elo = max(100, elo_b_before + delta_b)
+
+    if score_a > score_b:
+        rank_a.wins += 1
+        rank_b.losses += 1
+    elif score_b > score_a:
+        rank_b.wins += 1
+        rank_a.losses += 1
+    else:
+        rank_a.draws += 1
+        rank_b.draws += 1
+
+    now = datetime.now(timezone.utc)
+    comp = Competition(
+        title=f"Duelo 1v1 Liquidado ({season})",
+        type=CompetitionType.ONE_VS_ONE,
+        metric_target=payload.metric_target,
+        season_id=season,
+        start_date=now - timedelta(days=7),
+        end_date=now,
+        is_active=False,
+    )
+    db.add(comp)
+    await db.flush()
+
+    db.add_all(
+        [
+            CompetitionParticipant(
+                competition_id=comp.id,
+                user_id=payload.challenger_user_id,
+                normalized_score=score_a,
+                final_rank=1 if score_a >= score_b else 2,
+                elo_change=delta_a,
+            ),
+            CompetitionParticipant(
+                competition_id=comp.id,
+                user_id=payload.opponent_user_id,
+                normalized_score=score_b,
+                final_rank=1 if score_b > score_a else 2,
+                elo_change=delta_b,
+            ),
+        ]
+    )
+
+    await db.commit()
+    await db.refresh(rank_a)
+    await db.refresh(rank_b)
+
+    return Duel1v1ResolutionResponse(
+        competition_id=comp.id,
+        season_id=season,
+        metric_target=payload.metric_target,
+        challenger_user_id=payload.challenger_user_id,
+        challenger_score=score_a,
+        challenger_elo_before=elo_a_before,
+        challenger_elo_after=int(rank_a.current_elo),
+        challenger_delta=delta_a,
+        opponent_user_id=payload.opponent_user_id,
+        opponent_score=score_b,
+        opponent_elo_before=elo_b_before,
+        opponent_elo_after=int(rank_b.current_elo),
+        opponent_delta=delta_b,
+        resolved_at=now,
+    )

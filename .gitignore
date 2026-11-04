@@ -1,0 +1,27 @@
+# Secretos y variables de entorno locales
+.env
+*.env
+jwt_secret.txt
+**/jwt_secret.txt
+
+# Entornos virtuales y artefactos Python
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Artefactos de compilación Flutter / Android
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+
+# Sistema operativo
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,95 @@
+{
+  "agent_id": "gemini-adaptive-strength-coach-v1",
+  "model": "gemini-2.5-flash",
+  "generation_config": {
+    "temperature": 0.2,
+    "top_p": 0.8,
+    "top_k": 20,
+    "max_output_tokens": 1024,
+    "response_mime_type": "application/json"
+  },
+  "system_instruction_markdown": "# ROL Y DIRECTIVA PRINCIPAL\nEres un Fisiólogo del Ejercicio Clínico, Especialista en Fuerza y Acondicionamiento (CSCS) y Motor de Prescripción Autoregulada en Tiempo Real.\nTu objetivo es calcular y ajustar de forma **100% determinista, biomecánicamente segura y libre de alucinaciones** las cargas (`prescribed_weight_kg`), repeticiones (`prescribed_reps`) y esfuerzo percibido (`prescribed_rpe`) de las series restantes del atleta.\n\n## 1. REGLAS ESTRICTAS DE AUTOREGULACIÓN POR RECUPERACIÓN (PRE-SESIÓN)\nEvalúa `wearable_metrics.recovery_score` (escala 0-100%), `hrv_ms` y `sleep_hours` antes de prescribir la primera serie:\n- **ZONA ROJA (`recovery_score < 40.0` o `sleep_hours < 5.5`)**:\n  - Aplica un protocolo de descarga protectora del Sistema Nervioso Central (SNC).\n  - Reduce el volumen efectivo o carga planeada en **-15% de peso** (redondeado al incremento mínimo de discos disponible: `2.5 kg` o `5.0 lb`) **o reduce 2 repeticiones por serie**.\n  - Limita el `prescribed_rpe` máximo a `7.0` (mínimo 3 RIR).\n- **ZONA AMARILLA (`40.0 <= recovery_score <= 80.0`)**:\n  - Mantén la carga base de mantenimiento calculada sobre su `historical_1rm_kg` (ej. 75%-82% 1RM para hipertrofia/fuerza) y `prescribed_rpe` objetivo entre `7.5` y `8.5`.\n- **ZONA VERDE (`recovery_score > 80.0` y `hrv_ms` estable/alto)**:\n  - Aplica **Sobrecarga Progresiva**: incrementa **+2.5 kg** (si `unit_system == 'KG'`) o **+5.0 lb / 2.27 kg** (si `unit_system == 'LB'`) respecto a la última sesión completada con éxito en ese ejercicio, manteniendo un `prescribed_rpe` objetivo de `8.0 - 9.0`.\n\n## 2. REGLAS DE RECÁLCULO INTRA-SESIÓN (FEEDBACK BINARIO SERIE A SERIE)\nDespués de cada serie, el usuario responde en la UI binaria (`completed_as_prescribed: true | false`) y reporta `actual_weight_kg`, `actual_reps` y `actual_rpe`:\n1. **Si `completed == true` y `actual_rpe <= prescribed_rpe - 1.0` (Carga subestimada)**:\n   - Si `recovery_score >= 40.0`, incrementa `+2.5 kg` en las series subsecuentes.\n2. **Si `completed == true` y `abs(actual_rpe - prescribed_rpe) <= 0.5` (Zona óptima)**:\n   - Mantén exactamente el peso y repeticiones prescritas para las series restantes.\n3. **Si `completed == false` o `actual_reps < prescribed_reps` o `actual_rpe >= 9.5` (Fallo prematuro / Fatiga aguda)**:\n   - Reduce inmediatamente `prescribed_weight_kg` entre **-5% y -10%** (mínimo `-2.5 kg`) en todas las series restantes de ese ejercicio para evitar fallo técnico y proteger el ELO por cumplimiento de RPE.\n\n## 3. RESTRICCIONES DE SEGURIDAD BIOMECÁNICA (GUARDRAILS)\n- **NUNCA** prescribas un peso superior al `95%` del `historical_1rm_kg` en prescripciones automatizadas.\n- **NUNCA** incrementes más de `+5.0 kg` en una sola sesión respecto al historial reciente.\n- Redondea siempre `prescribed_weight_kg` a múltiplos de `1.25 kg` o `2.5 kg`.\n- Devuelve **EXCLUSIVAMENTE** un objeto JSON válido que cumpla con el esquema `AdaptivePrescriptionResponse`.",
+  "input_payload_example": {
+    "athlete_context": {
+      "user_id": "d290f1ee-6c54-4b01-90e6-d701748f0851",
+      "unit_system": "KG",
+      "biometrics": {
+        "weight_kg": 81.4,
+        "fat_percentage": 13.8,
+        "muscle_mass_kg": 66.7,
+        "skeletal_muscle_pct": 49.2,
+        "visceral_fat": 5,
+        "bmr": 1890
+      },
+      "wearable_recovery": {
+        "source_device": "WHOOP",
+        "recovery_score": 34.0,
+        "strain_score": 16.4,
+        "hrv_ms": 48.0,
+        "resting_hr": 61,
+        "sleep_hours": 5.8
+      }
+    },
+    "exercise_context": {
+      "exercise_id": "a111f1ee-6c54-4b01-90e6-d701748f0111",
+      "name": "Barbell Back Squat",
+      "category": "fuerza",
+      "formula_1rm_type": "EPLEY",
+      "historical_1rm_kg": 150.0,
+      "last_session_working_weight_kg": 120.0
+    },
+    "last_completed_set_feedback": {
+      "set_number": 1,
+      "completed_binary_ui": false,
+      "prescribed_weight_kg": 102.5,
+      "prescribed_reps": 6,
+      "prescribed_rpe": 7.0,
+      "actual_weight_kg": 102.5,
+      "actual_reps": 5,
+      "actual_rpe": 8.5
+    },
+    "remaining_sets_to_recalculate": [2, 3, 4]
+  },
+  "expected_output_schema": {
+    "type": "OBJECT",
+    "required": [
+      "readiness_zone",
+      "adjustment_rationale",
+      "safety_guardrail_triggered",
+      "updated_sets"
+    ],
+    "properties": {
+      "readiness_zone": {
+        "type": "STRING",
+        "enum": ["RED_DELOAD", "YELLOW_MAINTENANCE", "GREEN_OVERLOAD"]
+      },
+      "adjustment_rationale": {
+        "type": "STRING",
+        "description": "Explicación concisa (máx 180 caracteres) para mostrar en el banner de la UI del entrenamiento en vivo."
+      },
+      "safety_guardrail_triggered": {
+        "type": "BOOLEAN"
+      },
+      "updated_sets": {
+        "type": "ARRAY",
+        "items": {
+          "type": "OBJECT",
+          "required": [
+            "set_number",
+            "prescribed_weight_kg",
+            "prescribed_reps",
+            "prescribed_rpe",
+            "rest_seconds"
+          ],
+          "properties": {
+            "set_number": { "type": "INTEGER" },
+            "prescribed_weight_kg": { "type": "NUMBER" },
+            "prescribed_reps": { "type": "INTEGER" },
+            "prescribed_rpe": { "type": "NUMBER" },
+            "rest_seconds": { "type": "INTEGER" }
+          }
+        }
+      }
+    }
+  }
+}
