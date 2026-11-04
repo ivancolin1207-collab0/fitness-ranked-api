@@ -26,8 +26,12 @@ def _build_engine() -> AsyncEngine:
     settings = get_settings()
     db_url = settings.DATABASE_URL
     if not db_url:
-        # URL local por defecto únicamente si no se definió en entorno (127.0.0.1)
-        db_url = "postgresql+asyncpg://127.0.0.1:5432/fitness_db_evug"
+        # Fallback directo a la instancia de Render PostgreSQL aprovisionada
+        db_url = (
+            "postgresql+asyncpg://fitness_db_evug_user:"
+            "i03ZpUPkvhbjmp2H2FDug9IUEj03ErEC@"
+            "dpg-dblpinp42hec73e0g730-a.oregon-postgres.render.com/fitness_db_evug"
+        )
 
     connect_args: dict[str, object] = {}
     if "render.com" in db_url:

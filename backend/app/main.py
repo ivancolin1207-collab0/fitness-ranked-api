@@ -7,6 +7,7 @@ cabeceras de seguridad HTTP estrictas y manejadores de errores seguros.
 """
 
 import logging
+import traceback
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, status
@@ -66,13 +67,14 @@ async def handle_database_errors(
     _request: Request, exc: SQLAlchemyError
 ) -> JSONResponse:
     """
-    Registra errores internos de base de datos en el servidor sin exponer detalles SQL al cliente.
+    Registra el traceback completo de base de datos en los logs de Uvicorn.
     """
-    logger.error("Error de base de datos interceptado: %s", type(exc).__name__)
+    traceback.print_exc()
+    logger.exception("Error de base de datos interceptado: %s", exc)
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=status.HTTP_400_BAD_REQUEST,
         content={
-            "detail": "Error interno procesando la operación de datos. Intenta nuevamente."
+            "detail": f"Error de base de datos: {str(exc)}"
         },
     )
 

@@ -12,10 +12,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Optional
 from uuid import UUID, uuid4
 
+import bcrypt
 from fastapi import Depends, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=True)
 
 # Registro en memoria de tokens revocados al cerrar sesión o desactivar cuenta
@@ -56,12 +55,24 @@ def validate_password_strength(password: str) -> None:
 
 
 def hash_password(password: str) -> str:
+    """
+    Genera hash bcrypt seguro compatible con Python 3.11+ y bcrypt 4.x+.
+    Codifica en UTF-8 y trunca a 72 bytes para evitar ValueError interno de bcrypt.
+    """
     validate_password_strength(password)
-    return pwd_context.hash(password)
+    pwd_bytes = password.encode("utf-8")[:72]
+    hashed = bcrypt.hashpw(pwd_bytes, bcrypt.gensalt(rounds=12))
+    return hashed.decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verifica contraseña en texto plano contra el hash bcrypt almacenado."""
+    try:
+        pwd_bytes = plain_password.encode("utf-8")[:72]
+        hash_bytes = hashed_password.encode("utf-8")
+        return bcrypt.checkpw(pwd_bytes, hash_bytes)
+    except Exception:
+        return False
 
 
 def create_access_token(
