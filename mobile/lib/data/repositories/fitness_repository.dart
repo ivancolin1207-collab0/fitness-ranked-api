@@ -546,6 +546,16 @@ class FitnessRepository {
   // 3. RUTINAS SEMANALES, ROLLOVER Y ENTRENO ADAPTATIVO EN VIVO
   // =========================================================================
 
+  Future<AiGeneratedRoutinePlanModel> loadCurrentAiRoutine() async {
+    final String token = await _requireToken();
+    return _apiClient.fetchCurrentAiRoutine(jwtToken: token);
+  }
+
+  Future<AiGeneratedRoutinePlanModel> generateAiRoutine() async {
+    final String token = await _requireToken();
+    return _apiClient.generateAiRoutine(jwtToken: token);
+  }
+
   Future<List<RoutineTemplateModel>> loadWeeklyRoutines() async {
     final String token = await _requireToken();
     return _apiClient.fetchRoutines(jwtToken: token);

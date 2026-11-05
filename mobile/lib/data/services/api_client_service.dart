@@ -738,6 +738,44 @@ class ApiClientService {
     throw HttpException(_extractErrorDetail(response));
   }
 
+  Future<AiGeneratedRoutinePlanModel> fetchCurrentAiRoutine({
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.get(
+        Uri.parse('$base/api/v1/routines/current'),
+        headers: _buildHeaders(jwtToken),
+      ),
+    );
+
+    if (response.statusCode == 200) {
+      return AiGeneratedRoutinePlanModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
+  Future<AiGeneratedRoutinePlanModel> generateAiRoutine({
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient
+          .post(
+            Uri.parse('$base/api/v1/routines/generate-ai'),
+            headers: _buildHeaders(jwtToken),
+          )
+          .timeout(const Duration(seconds: 75)),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return AiGeneratedRoutinePlanModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
   Future<RoutineTemplateModel> upsertRoutineByDay({
     required int dayOfWeek,
     required String name,

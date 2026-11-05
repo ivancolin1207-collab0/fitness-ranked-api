@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.v1 import auth, biometrics, leaderboard, workouts
+from app.api.v1 import auth, biometrics, leaderboard, routines, workouts
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, engine
 
@@ -82,11 +82,13 @@ async def handle_database_errors(
 # Registro de Routers v1 (/api/v1/*) y alias directos (/*) para compatibilidad total
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(biometrics.router, prefix=settings.API_V1_STR)
+app.include_router(routines.router, prefix=settings.API_V1_STR)
 app.include_router(workouts.router, prefix=settings.API_V1_STR)
 app.include_router(leaderboard.router, prefix=settings.API_V1_STR)
 
 app.include_router(auth.router, include_in_schema=False)
 app.include_router(biometrics.router, include_in_schema=False)
+app.include_router(routines.router, include_in_schema=False)
 app.include_router(workouts.router, include_in_schema=False)
 app.include_router(leaderboard.router, include_in_schema=False)
 
@@ -95,7 +97,8 @@ app.include_router(leaderboard.router, include_in_schema=False)
 async def ensure_postgres_enums() -> None:
     """
     Garantiza que wearable_source_enum incluya SAMSUNG_WATCH y APPLE_WATCH,
-    crea la tabla `daily_readiness` y elimina cualquier registro mock histórico.
+    crea las tablas `daily_readiness`, `user_routines`, `workout_days`, `workout_exercises`
+    y elimina cualquier registro o plantilla estática histórica.
     """
     try:
         async with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
@@ -135,6 +138,63 @@ async def ensure_postgres_enums() -> None:
                     "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7"
                 )
             )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_routines (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        name VARCHAR(180) NOT NULL,
+                        weekly_focus VARCHAR(240) NOT NULL DEFAULT 'Enfoque biomecánico adaptado a LBM',
+                        generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        status VARCHAR(30) NOT NULL DEFAULT 'active'
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS workout_days (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        routine_id UUID NOT NULL REFERENCES user_routines(id) ON DELETE CASCADE,
+                        day_number INTEGER NOT NULL,
+                        day_name VARCHAR(140) NOT NULL,
+                        target_muscles VARCHAR(60)[] NOT NULL DEFAULT '{}'
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS workout_exercises (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        day_id UUID NOT NULL REFERENCES workout_days(id) ON DELETE CASCADE,
+                        "order" INTEGER NOT NULL,
+                        exercise_key VARCHAR(80) NOT NULL DEFAULT 'bench_press_barbell',
+                        name VARCHAR(140) NOT NULL,
+                        muscle_group VARCHAR(80) NOT NULL,
+                        sets INTEGER NOT NULL DEFAULT 4,
+                        reps VARCHAR(30) NOT NULL DEFAULT '8-10',
+                        prescribed_weight_kg NUMERIC(6,2) NOT NULL DEFAULT 40.0,
+                        rpe NUMERIC(3,1) NOT NULL DEFAULT 8.0,
+                        rest_seconds INTEGER NOT NULL DEFAULT 90,
+                        tempo VARCHAR(30) NOT NULL DEFAULT '3-0-1-0',
+                        coaching_cue TEXT NOT NULL DEFAULT 'Controla la fase excéntrica y mantén estabilidad escapular'
+                    )
+                    """
+                )
+            )
+            # Eliminar plantillas estáticas antiguas (3 días) de usuarios sin rutina IA en user_routines
+            await conn.execute(
+                text(
+                    """
+                    DELETE FROM routine_templates
+                    WHERE user_id NOT IN (SELECT user_id FROM user_routines WHERE status = 'active')
+                    """
+                )
+            )
             # Limpiar filas mock residuales de versiones previas
             await conn.execute(
                 text(
@@ -153,7 +213,7 @@ async def ensure_postgres_enums() -> None:
                 )
             )
     except Exception as exc:
-        logger.warning("No se pudo actualizar daily_readiness en startup: %s", exc)
+        logger.warning("No se pudo actualizar daily_readiness / user_routines en startup: %s", exc)
 
 
 @app.get("/", tags=["Healthcheck"])

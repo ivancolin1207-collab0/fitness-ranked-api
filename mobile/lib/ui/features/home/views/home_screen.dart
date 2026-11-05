@@ -1,6 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../../../core/services/ble_heart_rate_service.dart';
 import '../../../../core/services/wearable_service.dart';
 import '../../../../data/models/auth_models.dart';
 import '../../../../data/models/biometric_models.dart';
@@ -30,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   AuthViewModel get authViewModel => widget.authViewModel;
 
   final WearableService _wearableService = WearableService();
+  final BleHeartRateService bleService = BleHeartRateService();
 
   bool hasWhoopData = false;
   double? recoveryScore;
@@ -97,7 +99,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable>[viewModel, authViewModel]),
+      listenable: Listenable.merge(
+        <Listenable>[viewModel, authViewModel, bleService],
+      ),
       builder: (BuildContext context, _) {
         final UserProfileModel? user = authViewModel.currentUser;
         final WearableMetricRecord? wearable = viewModel.wearable;
@@ -198,6 +202,23 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       onPressed: viewModel.toggleUnitSystem,
+                    ),
+                    IconButton(
+                      tooltip: 'Vincular Monitor BLE (0x180D)',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: Icon(
+                        Icons.bluetooth,
+                        color: bleService.isConnected
+                            ? const Color(0xFF10B981)
+                            : Colors.white70,
+                        size: 20,
+                      ),
+                      onPressed: () => _showBleConnectionModal(context),
                     ),
                     IconButton(
                       tooltip: 'Editar Perfil',
@@ -789,7 +810,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 1.3,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+            _buildBleDirectIndicator(context),
+            const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -1035,7 +1058,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
+            _buildBleDirectIndicator(context),
+            const SizedBox(height: 12),
             // 3 Anillos Oficiales Whoop: SUEÑO %, RECUPERACIÓN %, ESFUERZO
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -2187,6 +2212,296 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {});
       }
     });
+  }
+
+  Widget _buildBleDirectIndicator(BuildContext context) {
+    final bool connected = bleService.isConnected;
+    final int? bpm = bleService.latestBpm;
+    final String deviceName = bleService.connectedDeviceName ?? 'WHOOP 4.0';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(9),
+      onTap: () => _showBleConnectionModal(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: connected
+              ? const Color(0xFF10B981).withValues(alpha: 0.14)
+              : ApexTheme.obsidianBg,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(
+            color: connected
+                ? const Color(0xFF10B981)
+                : ApexTheme.borderGraphite,
+          ),
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              connected
+                  ? Icons.bluetooth_connected_rounded
+                  : Icons.bluetooth_searching_rounded,
+              size: 16,
+              color: connected
+                  ? const Color(0xFF10B981)
+                  : ApexTheme.cyanElectric,
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                connected
+                    ? 'BLE: Conectado (${bpm ?? "--"} BPM) • $deviceName'
+                    : 'BLE: Vincular WHOOP (0x180D) • Pulso en vivo',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: connected
+                      ? const Color(0xFF10B981)
+                      : ApexTheme.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              connected ? 'ACTIVO' : 'VINCULAR',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: connected
+                    ? const Color(0xFF10B981)
+                    : ApexTheme.cyanElectric,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showBleConnectionModal(BuildContext context) {
+    bleService.startScan();
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: ApexTheme.cardGraphite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (BuildContext sheetContext) {
+        return ListenableBuilder(
+          listenable: bleService,
+          builder: (BuildContext context, _) {
+            final List<BleDiscoveredDevice> devices =
+                bleService.discoveredDevices;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: <Widget>[
+                        const Expanded(
+                          child: Row(
+                            children: <Widget>[
+                              Icon(
+                                Icons.bluetooth_searching_rounded,
+                                color: ApexTheme.cyanElectric,
+                              ),
+                              SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  'BLUETOOTH BLE • MONITOR BPM EN VIVO (0x180D)',
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (bleService.isScanning)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          IconButton(
+                            onPressed: bleService.startScan,
+                            icon: const Icon(
+                              Icons.refresh_rounded,
+                              color: ApexTheme.voltAccent,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Conecta tu Whoop (con "Broadcast Heart Rate" activo), banda Polar/Garmin o smartwatch compatible con GATT 0x180D / 0x2A37.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: ApexTheme.textMuted,
+                      ),
+                    ),
+                    if (bleService.statusMessage != null) ...<Widget>[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: ApexTheme.obsidianBg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: ApexTheme.cyanElectric.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Text(
+                          bleService.statusMessage!,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: ApexTheme.cyanElectric,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (bleService.isConnected) ...<Widget>[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: ApexTheme.readinessGreen.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: ApexTheme.readinessGreen),
+                        ),
+                        child: Row(
+                          children: <Widget>[
+                            const Icon(
+                              Icons.bluetooth_connected_rounded,
+                              color: ApexTheme.readinessGreen,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    bleService.connectedDeviceName ??
+                                        'Sensor BLE Conectado',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Pulso actual: ${bleService.latestBpm ?? "--"} BPM (UINT8/UINT16 GATT 0x2A37)',
+                                    style: const TextStyle(
+                                      fontSize: 11.5,
+                                      color: ApexTheme.readinessGreen,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: bleService.disconnect,
+                              child: const Text(
+                                'Desconectar',
+                                style: TextStyle(color: ApexTheme.deloadCrimson),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 240),
+                      child: devices.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 20),
+                              child: Center(
+                                child: Text(
+                                  'Buscando sensores BLE cercanos...',
+                                  style: TextStyle(
+                                    color: ApexTheme.textMuted,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: devices.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (BuildContext context, int index) {
+                                final BleDiscoveredDevice d = devices[index];
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(
+                                    d.advertisesHrService
+                                        ? Icons.monitor_heart_rounded
+                                        : Icons.bluetooth_rounded,
+                                    color: d.advertisesHrService
+                                        ? ApexTheme.voltAccent
+                                        : ApexTheme.textMuted,
+                                  ),
+                                  title: Text(
+                                    d.displayName,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${d.advertisesHrService ? "GATT 0x180D • " : ""}RSSI ${d.rssi} dBm • ${d.remoteId}',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: ApexTheme.textMuted,
+                                    ),
+                                  ),
+                                  trailing: FilledButton(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: ApexTheme.voltAccent,
+                                      foregroundColor: Colors.black,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    onPressed: bleService.isConnecting
+                                        ? null
+                                        : () async {
+                                            await bleService
+                                                .connectToDevice(d);
+                                          },
+                                    child: const Text(
+                                      'VINCULAR',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _openWearableManualSyncModal(BuildContext context, String activeSource) {

@@ -38,6 +38,8 @@ from app.models.entities import (
     Workout,
     WorkoutSet,
 )
+from app.models.routine import UserRoutine, WorkoutDay, WorkoutExercise
+from app.services.ai_routine_service import ensure_ai_routine_tables
 from app.schemas.workouts import (
     ExerciseCreateRequest,
     RoutineExerciseItemResponse,
@@ -171,6 +173,29 @@ async def _build_routine_response(
     step_kg = float(routine.progression_step_kg)
     current_iso_week = date.today().isocalendar()[1]
 
+    # Mapear metadatos biomecánicos (exercise_key, tempo, coaching_cue, rest_seconds, reps) desde WorkoutExercise si existen
+    ai_meta_by_order: dict[int, WorkoutExercise] = {}
+    try:
+        await ensure_ai_routine_tables(db)
+        w_day = (
+            await db.execute(
+                select(WorkoutDay)
+                .join(UserRoutine, UserRoutine.id == WorkoutDay.routine_id)
+                .options(selectinload(WorkoutDay.exercises))
+                .where(
+                    UserRoutine.user_id == user_id,
+                    UserRoutine.status == "active",
+                    WorkoutDay.day_number == int(routine.day_of_week),
+                )
+                .order_by(UserRoutine.generated_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if w_day is not None and w_day.exercises:
+            ai_meta_by_order = {int(ex.order): ex for ex in w_day.exercises}
+    except Exception:
+        ai_meta_by_order = {}
+
     for item in routine.items:
         base_w = float(item.base_weight_kg)
         rec_w, overloaded = await _compute_recommended_weight_for_exercise(
@@ -184,10 +209,12 @@ async def _build_routine_response(
         variant_suggestion = _resolve_weekly_exercise_variant(
             item.exercise.name, current_iso_week
         )
+        meta = ai_meta_by_order.get(int(item.display_order))
         items_out.append(
             RoutineExerciseItemResponse(
                 exercise_id=item.exercise_id,
                 exercise_name=item.exercise.name,
+                exercise_key=meta.exercise_key if meta is not None else "bench_press_barbell",
                 muscle_group=item.exercise.muscle_group,
                 display_order=int(item.display_order),
                 target_sets=int(item.target_sets),
@@ -196,7 +223,13 @@ async def _build_routine_response(
                 progressive_overload_applied=overloaded,
                 weekly_variant_suggestion=variant_suggestion,
                 target_reps=int(item.target_reps),
+                target_reps_range=meta.reps if meta is not None else f"{int(item.target_reps)}",
                 target_rpe=float(item.target_rpe),
+                rest_seconds=int(meta.rest_seconds) if meta is not None else 90,
+                tempo=meta.tempo if meta is not None else "3-0-1-0",
+                coaching_cue=meta.coaching_cue
+                if meta is not None
+                else "Controla la fase excéntrica y mantén estabilidad escapular",
             )
         )
 
@@ -596,6 +629,27 @@ async def start_workout_from_routine(
             )
         )
     ).scalar_one_or_none()
+    if routine is None:
+        w_day = (
+            await db.execute(
+                select(WorkoutDay).where(WorkoutDay.id == routine_id)
+            )
+        ).scalar_one_or_none()
+        if w_day is not None:
+            routine = (
+                await db.execute(
+                    select(RoutineTemplate)
+                    .options(
+                        selectinload(RoutineTemplate.items).selectinload(
+                            RoutineTemplateExercise.exercise
+                        )
+                    )
+                    .where(
+                        RoutineTemplate.user_id == current_user.id,
+                        RoutineTemplate.day_of_week == int(w_day.day_number),
+                    )
+                )
+            ).scalar_one_or_none()
     if routine is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

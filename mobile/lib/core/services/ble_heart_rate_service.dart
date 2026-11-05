@@ -19,6 +19,12 @@ class BleDiscoveredDevice {
 }
 
 class BleHeartRateService extends ChangeNotifier {
+  static final BleHeartRateService instance = BleHeartRateService._internal();
+
+  factory BleHeartRateService() => instance;
+
+  BleHeartRateService._internal();
+
   /// Standard Bluetooth SIG Heart Rate GATT Service (0x180D)
   static const String heartRateServiceUuid =
       '0000180d-0000-1000-8000-00805f9b34fb';

@@ -110,8 +110,10 @@ class HomeViewModel extends ChangeNotifier {
           loadedWearable.recoveryScore.round() == 62 &&
           loadedWearable.sleepEfficiencyPct.round() == 90 &&
           loadedWearable.restingHr == 62) {
-        _wearable = null;
-      } else {
+        if (!hasWhoopData) {
+          _wearable = null;
+        }
+      } else if (loadedWearable != null) {
         _wearable = loadedWearable;
       }
 
@@ -135,7 +137,7 @@ class HomeViewModel extends ChangeNotifier {
         whoopStress = _wearable!.whoopStressLevel;
         whoopSleepHours = _wearable!.sleepHours;
         whoopStressCategory = stressCategory;
-      } else {
+      } else if (!hasWhoopData) {
         hasWhoopData = false;
       }
 

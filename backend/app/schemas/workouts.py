@@ -41,6 +41,7 @@ class RoutineTemplateUpsertRequest(BaseModel):
 class RoutineExerciseItemResponse(BaseModel):
     exercise_id: UUID
     exercise_name: str
+    exercise_key: str = "bench_press_barbell"
     muscle_group: str
     display_order: int
     target_sets: int
@@ -49,7 +50,11 @@ class RoutineExerciseItemResponse(BaseModel):
     progressive_overload_applied: bool = False
     weekly_variant_suggestion: Optional[str] = None
     target_reps: int
+    target_reps_range: str = "8-10"
     target_rpe: float
+    rest_seconds: int = 90
+    tempo: str = "3-0-1-0"
+    coaching_cue: str = "Controla la fase excéntrica y mantén estabilidad escapular"
 
 
 class RoutineTemplateResponse(BaseModel):
@@ -108,10 +113,14 @@ class WorkoutSetDetailResponse(BaseModel):
     id: UUID
     exercise_id: UUID
     exercise_name: str = "Ejercicio"
+    exercise_key: str = "bench_press_barbell"
     set_number: int
     prescribed_weight: float
     prescribed_reps: int
     prescribed_rpe: float
+    rest_seconds: int = 90
+    tempo: str = "3-0-1-0"
+    coaching_cue: str = "Controla la fase excéntrica y mantén estabilidad escapular"
     actual_weight: Optional[float]
     reps: Optional[int]
     rpe: Optional[float]

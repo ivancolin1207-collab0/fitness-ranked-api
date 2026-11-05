@@ -6,13 +6,54 @@ import '../../../core/app_theme.dart';
 import '../view_models/live_workout_view_model.dart';
 import 'set_binary_feedback_sheet.dart';
 
-class LiveWorkoutScreen extends StatelessWidget {
+class LiveWorkoutScreen extends StatefulWidget {
   final LiveWorkoutViewModel viewModel;
 
   const LiveWorkoutScreen({
     super.key,
     required this.viewModel,
   });
+
+  @override
+  State<LiveWorkoutScreen> createState() => _LiveWorkoutScreenState();
+}
+
+class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
+  int _selectedPreviewExerciseIndex = 0;
+
+  LiveWorkoutViewModel get viewModel => widget.viewModel;
+
+  Future<void> _handleRegenerateAiRoutine(BuildContext context) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Gemini calculando 5 días de entrenamiento y cargas exactas según tus biometría...',
+        ),
+        duration: Duration(seconds: 3),
+      ),
+    );
+    await viewModel.regenerateRoutineWithAi();
+    final bool ok = viewModel.errorMessage == null;
+    if (!context.mounted) return;
+    setState(() {
+      _selectedPreviewExerciseIndex = 0;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: ok ? ApexTheme.readinessGreen : ApexTheme.deloadCrimson,
+        content: Text(
+          ok
+              ? 'Periodización de 5 días × 6 ejercicios generada por Gemini 2.5 Flash.'
+              : (viewModel.errorMessage ??
+                  'No se pudo regenerar la rutina con IA.'),
+          style: const TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +80,32 @@ class LiveWorkoutScreen extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   spacing: 4,
                   children: <Widget>[
+                    IconButton(
+                      tooltip: 'Regenerar Rutina 5 Días con Gemini IA',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: viewModel.isGeneratingAiRoutine
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: ApexTheme.voltAccent,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.auto_awesome_rounded,
+                              color: ApexTheme.voltAccent,
+                              size: 19,
+                            ),
+                      onPressed: viewModel.isGeneratingAiRoutine
+                          ? null
+                          : () => _handleRegenerateAiRoutine(context),
+                    ),
                     IconButton(
                       tooltip: 'Vincular Monitor BLE (0x180D)',
                       visualDensity: VisualDensity.compact,
@@ -98,7 +165,31 @@ class LiveWorkoutScreen extends StatelessWidget {
             ],
           ),
           body: viewModel.isLoadingPlan
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        const CircularProgressIndicator(
+                          color: ApexTheme.voltAccent,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          viewModel.isGeneratingAiRoutine
+                              ? 'Gemini calculando 5 días de entrenamiento y cargas exactas según tus biometría...'
+                              : 'Sincronizando periodización cognitiva...',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: ApexTheme.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
               : RefreshIndicator(
                   onRefresh: viewModel.initializeWorkoutPlan,
                   child: SingleChildScrollView(
@@ -112,6 +203,8 @@ class LiveWorkoutScreen extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: <Widget>[
+                            if (viewModel.isGeneratingAiRoutine)
+                              _buildAiGeneratingOverlayBanner(),
                             if (viewModel.errorMessage != null)
                               _buildErrorBanner(viewModel.errorMessage!),
                             if (viewModel.isRolloverActive &&
@@ -145,6 +238,42 @@ class LiveWorkoutScreen extends StatelessWidget {
                 ),
         );
       },
+    );
+  }
+
+  Widget _buildAiGeneratingOverlayBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: ApexTheme.voltAccent.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ApexTheme.voltAccent, width: 1.3),
+      ),
+      child: const Row(
+        children: <Widget>[
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: ApexTheme.voltAccent,
+            ),
+          ),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Gemini calculando 5 días de entrenamiento y cargas exactas según tus biometría...',
+              style: TextStyle(
+                color: ApexTheme.voltAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -220,6 +349,7 @@ class LiveWorkoutScreen extends StatelessWidget {
   Widget _buildWeeklyRoutinesSelector(BuildContext context) {
     final List<RoutineTemplateModel> routines = viewModel.weeklyRoutines;
     final RoutineTemplateModel? selected = viewModel.selectedRoutine;
+    final String aiTitle = viewModel.aiRoutineTitle;
 
     return Card(
       child: Padding(
@@ -230,15 +360,31 @@ class LiveWorkoutScreen extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                const Expanded(
-                  child: Text(
-                    'PLANIFICACIÓN SEMANAL POR DÍA',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: ApexTheme.textMuted,
-                      letterSpacing: 0.4,
-                    ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Text(
+                        'PERIODIZACIÓN IA • 5 DÍAS × 6 EJERCICIOS',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          color: ApexTheme.voltAccent,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      if (aiTitle.trim().isNotEmpty)
+                        Text(
+                          aiTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: ApexTheme.textMuted,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 TextButton.icon(
@@ -246,18 +392,20 @@ class LiveWorkoutScreen extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
-                  onPressed: () => _openRoutineBuilderModal(context),
+                  onPressed: viewModel.isGeneratingAiRoutine
+                      ? null
+                      : () => _handleRegenerateAiRoutine(context),
                   icon: const Icon(
-                    Icons.add_circle_outline,
-                    size: 15,
-                    color: ApexTheme.voltAccent,
+                    Icons.auto_awesome_rounded,
+                    size: 14,
+                    color: ApexTheme.cyanElectric,
                   ),
                   label: const Text(
-                    'Editar / Crear Día',
+                    'REGENERAR RUTINA CON IA',
                     style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: ApexTheme.voltAccent,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      color: ApexTheme.cyanElectric,
                     ),
                   ),
                 ),
@@ -266,7 +414,7 @@ class LiveWorkoutScreen extends StatelessWidget {
             const SizedBox(height: 6),
             if (routines.isEmpty)
               const Text(
-                'Aún no tienes rutinas configuradas. Pulsa "Editar / Crear Día" para armar tu semana.',
+                'Generando tu rutina personalizada de 5 días con Gemini 2.5 Flash...',
                 style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
               )
             else
@@ -288,7 +436,12 @@ class LiveWorkoutScreen extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                         fontSize: 11.5,
                       ),
-                      onSelected: (_) => viewModel.selectRoutineTemplate(r),
+                      onSelected: (_) {
+                        setState(() {
+                          _selectedPreviewExerciseIndex = 0;
+                        });
+                        viewModel.selectRoutineTemplate(r);
+                      },
                     );
                   }).toList(),
                 ),
@@ -308,13 +461,13 @@ class LiveWorkoutScreen extends StatelessWidget {
           child: Column(
             children: <Widget>[
               const Icon(
-                Icons.fitness_center_rounded,
+                Icons.auto_awesome_rounded,
                 color: ApexTheme.voltAccent,
                 size: 36,
               ),
               const SizedBox(height: 8),
               const Text(
-                'CONFIGURA TU PRIMERA RUTINA SEMANAL',
+                'GENERAR PERIODIZACIÓN IA DE 5 DÍAS (6 EJERCICIOS POR DÍA)',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
               ),
@@ -329,10 +482,12 @@ class LiveWorkoutScreen extends StatelessWidget {
                     vertical: 10,
                   ),
                 ),
-                onPressed: () => _openRoutineBuilderModal(context),
-                icon: const Icon(Icons.add, size: 18),
+                onPressed: viewModel.isGeneratingAiRoutine
+                    ? null
+                    : () => _handleRegenerateAiRoutine(context),
+                icon: const Icon(Icons.auto_awesome_rounded, size: 18),
                 label: const Text(
-                  'CREAR RUTINA POR DÍA',
+                  'REGENERAR RUTINA CON IA',
                   style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
                 ),
               ),
@@ -343,6 +498,12 @@ class LiveWorkoutScreen extends StatelessWidget {
     }
 
     final String unit = viewModel.unitSystem;
+    final int safeIndex = routine.exercises.isEmpty
+        ? 0
+        : _selectedPreviewExerciseIndex.clamp(0, routine.exercises.length - 1);
+    final RoutineExerciseItemModel? previewEx =
+        routine.exercises.isNotEmpty ? routine.exercises[safeIndex] : null;
+
     return Card(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
@@ -353,18 +514,45 @@ class LiveWorkoutScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Text(
-              '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ApexTheme.cyanElectric.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: ApexTheme.cyanElectric.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  child: Text(
+                    '${routine.exercises.length} EJERCICIOS IA',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: ApexTheme.cyanElectric,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 2),
             Text(
-              'Enfoque: ${routine.focusGroup} • ${routine.exercises.length} ejercicios con sobrecarga progresiva',
+              'Enfoque: ${routine.focusGroup} • Cargas calculadas por LBM y recuperación',
               style: const TextStyle(
                 fontSize: 11.5,
                 color: ApexTheme.textMuted,
@@ -372,64 +560,135 @@ class LiveWorkoutScreen extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
-              exerciseName: routine.exercises.isNotEmpty
-                  ? routine.exercises.first.exerciseName
+              exerciseName: previewEx != null
+                  ? previewEx.exerciseName
                   : routine.focusGroup,
+              exerciseKey: previewEx?.exerciseKey,
               recoveryScore: viewModel.recoveryScore,
-              targetReps: routine.exercises.isNotEmpty
-                  ? routine.exercises.first.targetReps
-                  : 10,
-              prescribedRpe: routine.exercises.isNotEmpty
-                  ? routine.exercises.first.targetRpe
-                  : 8.0,
+              targetReps: previewEx?.targetReps ?? 10,
+              targetRepsRange: previewEx?.targetRepsRange,
+              prescribedRpe: previewEx?.targetRpe ?? 8.0,
+              customTempo: previewEx?.tempo,
+              customCoachingCue: previewEx?.coachingCue,
             ),
             const SizedBox(height: 12),
+            const Text(
+              'TOCA UN EJERCICIO PARA PREVISUALIZAR SU BIOMECÁNICA Y CARGA IA:',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: ApexTheme.textMuted,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 6),
             if (routine.exercises.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  'Esta rutina aún no tiene ejercicios asignados. Edítala para añadir tus ejercicios.',
+                  'Esta rutina aún no tiene ejercicios asignados. Pulsa "REGENERAR RUTINA CON IA".',
                   style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
                 ),
               )
             else
-              ...routine.exercises.map((RoutineExerciseItemModel ex) {
+              ...routine.exercises.asMap().entries.map(
+                  (MapEntry<int, RoutineExerciseItemModel> entry) {
+                final int idx = entry.key;
+                final RoutineExerciseItemModel ex = entry.value;
+                final bool isSelectedEx = idx == safeIndex;
                 final double w = viewModel.displayWeight(ex.targetWeightKg);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: <Widget>[
-                      const Icon(
-                        Icons.check_circle_outline_rounded,
-                        color: ApexTheme.cyanElectric,
-                        size: 15,
+                return InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () {
+                    setState(() {
+                      _selectedPreviewExerciseIndex = idx;
+                    });
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 7),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelectedEx
+                          ? ApexTheme.voltAccent.withValues(alpha: 0.12)
+                          : ApexTheme.obsidianBg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: isSelectedEx
+                            ? ApexTheme.voltAccent
+                            : ApexTheme.borderGraphite,
+                        width: isSelectedEx ? 1.3 : 1.0,
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          ex.exerciseName,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isSelectedEx
+                                    ? ApexTheme.voltAccent
+                                    : ApexTheme.cardGraphite,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '#${idx + 1}',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: isSelectedEx
+                                      ? Colors.black
+                                      : ApexTheme.cyanElectric,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                ex.exerciseName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              '${ex.targetSets}×${ex.targetRepsRange} @ ${w.toStringAsFixed(1)} $unit',
+                              style: const TextStyle(
+                                color: ApexTheme.voltAccent,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'RPE ${ex.targetRpe.toStringAsFixed(1)} • Tempo ${ex.tempo} • ${ex.coachingCue}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12.5,
+                            fontSize: 10.5,
+                            color: ApexTheme.textMuted,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${ex.targetSets}×${ex.targetReps} @ $w $unit (RPE ${ex.targetRpe.toStringAsFixed(1)})',
-                        style: const TextStyle(
-                          color: ApexTheme.voltAccent,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
               }),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             FilledButton.icon(
               style: FilledButton.styleFrom(
                 backgroundColor: ApexTheme.voltAccent,
@@ -629,6 +888,67 @@ class LiveWorkoutScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _promptCustomWeightDialog(
+    BuildContext context,
+    WorkoutSetModel activeSet,
+  ) async {
+    final String unit = viewModel.unitSystem;
+    final double currentDisplayed =
+        viewModel.displayWeight(activeSet.prescribedWeightKg);
+    final TextEditingController ctrl = TextEditingController(
+      text: currentDisplayed.toStringAsFixed(1),
+    );
+    final double? entered = await showDialog<double>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: ApexTheme.cardGraphite,
+          title: Text(
+            'AJUSTAR CARGA ($unit)',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+              color: ApexTheme.voltAccent,
+            ),
+          ),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'Peso de trabajo ($unit)',
+              suffixText: unit,
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: ApexTheme.voltAccent,
+                foregroundColor: Colors.black,
+              ),
+              onPressed: () {
+                final double? parsed =
+                    double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
+                Navigator.of(dialogContext).pop(parsed);
+              },
+              child: const Text(
+                'APLICAR',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (entered != null && entered > 0) {
+      viewModel.updateActiveSetPrescribedWeight(activeSet, entered);
+    }
+  }
+
   Widget _buildActiveSetCard(BuildContext context, WorkoutSetModel activeSet) {
     final String unit = viewModel.unitSystem;
     final double shownWeight =
@@ -682,18 +1002,139 @@ class LiveWorkoutScreen extends StatelessWidget {
             const SizedBox(height: 12),
             BiomechanicalExerciseAvatarModule(
               exerciseName: activeSet.exerciseName,
+              exerciseKey: activeSet.exerciseKey,
               recoveryScore: viewModel.recoveryScore,
               targetReps: activeSet.prescribedReps,
               prescribedRpe: activeSet.prescribedRpe,
+              customTempo: activeSet.tempo,
+              customCoachingCue: activeSet.coachingCue,
+            ),
+            const SizedBox(height: 12),
+            // Píldora táctica con RPE, Tempo y Coaching Cue generados por Gemini
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFF14171E),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(
+                  color: ApexTheme.cyanElectric.withValues(alpha: 0.55),
+                ),
+              ),
+              child: Row(
+                children: <Widget>[
+                  const Icon(
+                    Icons.bolt_rounded,
+                    size: 15,
+                    color: ApexTheme.cyanElectric,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'RPE ${activeSet.prescribedRpe.toStringAsFixed(1)} • Tempo ${activeSet.tempo} • ${activeSet.coachingCue}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: ApexTheme.textPrimary,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: <Widget>[
-                _PrescriptionPillar(
-                  label: 'CARGA PRESCRITA',
-                  value: '$shownWeight $unit',
-                  accent: ApexTheme.voltAccent,
+                Column(
+                  children: <Widget>[
+                    const Text(
+                      'CARGA IA (EDITABLE)',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        color: ApexTheme.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () => viewModel.updateActiveSetPrescribedWeight(
+                            activeSet,
+                            (shownWeight - 2.5).clamp(2.5, 500.0),
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: ApexTheme.obsidianBg,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: ApexTheme.borderGraphite),
+                            ),
+                            child: const Text(
+                              '-2.5',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w900,
+                                color: ApexTheme.textMuted,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () =>
+                              _promptCustomWeightDialog(context, activeSet),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Text(
+                              '${shownWeight.toStringAsFixed(1)} $unit',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: ApexTheme.voltAccent,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () => viewModel.updateActiveSetPrescribedWeight(
+                            activeSet,
+                            (shownWeight + 2.5).clamp(2.5, 500.0),
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: ApexTheme.obsidianBg,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: ApexTheme.voltAccent),
+                            ),
+                            child: const Text(
+                              '+2.5',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w900,
+                                color: ApexTheme.voltAccent,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
                 _PrescriptionPillar(
                   label: 'REPETICIONES',

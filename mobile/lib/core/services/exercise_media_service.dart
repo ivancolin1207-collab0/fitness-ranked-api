@@ -240,7 +240,65 @@ class ExerciseMediaService {
     ),
   ];
 
-  static ExerciseMediaSpec resolveForExercise(String rawName) {
+  static ExerciseMediaSpec resolveForExercise(
+    String rawName, {
+    String? exerciseKey,
+  }) {
+    final String key = (exerciseKey ?? '').toLowerCase().trim();
+    if (key.isNotEmpty) {
+      if (key.contains('bench') ||
+          key.contains('chest') ||
+          key.contains('incline_dumbbell_press') ||
+          key.contains('pec') ||
+          key.contains('dip')) {
+        return _catalog[0];
+      }
+      if (key.contains('squat') ||
+          key.contains('leg_extension') ||
+          key.contains('calf')) {
+        return _catalog[1];
+      }
+      if (key.contains('deadlift') ||
+          key.contains('rdl') ||
+          key.contains('leg_curl') ||
+          key.contains('hyperextension')) {
+        return _catalog[2];
+      }
+      if (key.contains('overhead_press') ||
+          key.contains('shoulder_press') ||
+          key.contains('shrug')) {
+        return _catalog[3];
+      }
+      if (key.contains('pulldown') || key.contains('pull_up')) {
+        return _catalog[4];
+      }
+      if (key.contains('row')) {
+        return _catalog[5];
+      }
+      if (key.contains('bicep') ||
+          key.contains('hammer_curl') ||
+          key.contains('dumbbell_curl') ||
+          key.contains('curl_barbell')) {
+        return _catalog[6];
+      }
+      if (key.contains('lateral_raise') || key.contains('rear_delt')) {
+        return _catalog[7];
+      }
+      if (key.contains('tricep') ||
+          key.contains('french_press') ||
+          key.contains('pushdown')) {
+        return _catalog[8];
+      }
+      if (key.contains('hip_thrust') || key.contains('glute')) {
+        return _catalog[10];
+      }
+      if (key.contains('leg_press') ||
+          key.contains('split_squat') ||
+          key.contains('lunge')) {
+        return _catalog[9];
+      }
+    }
+
     final String q = rawName.toLowerCase().trim();
     if (q.contains('banca') ||
         q.contains('bench') ||
@@ -257,7 +315,11 @@ class ExerciseMediaService {
         q.contains('squat') ||
         q.contains('hack') ||
         q.contains('cuádriceps') ||
-        q.contains('cuadriceps')) {
+        q.contains('cuadriceps') ||
+        q.contains('gemelo') ||
+        q.contains('sóleo') ||
+        q.contains('soleo') ||
+        q.contains('calf')) {
       return _catalog[1];
     }
     if (q.contains('peso muerto') ||
@@ -265,7 +327,8 @@ class ExerciseMediaService {
         q.contains('rumano') ||
         q.contains('rdl') ||
         q.contains('isquio') ||
-        q.contains('femoral')) {
+        q.contains('femoral') ||
+        q.contains('hiperext')) {
       return _catalog[2];
     }
     if (q.contains('militar') ||
@@ -273,7 +336,9 @@ class ExerciseMediaService {
         q.contains('ohp') ||
         q.contains('hombro') ||
         q.contains('shoulder press') ||
-        q.contains('arnold')) {
+        q.contains('arnold') ||
+        q.contains('encogimiento') ||
+        q.contains('trapecio')) {
       return _catalog[3];
     }
     if (q.contains('dominada') ||
@@ -288,7 +353,8 @@ class ExerciseMediaService {
         q.contains('row') ||
         q.contains('pendlay') ||
         q.contains('espalda') ||
-        q.contains('seal')) {
+        q.contains('seal') ||
+        q.contains('giron')) {
       return _catalog[5];
     }
     if (q.contains('curl') ||
@@ -335,6 +401,7 @@ class ExerciseMediaService {
     required ExerciseMediaSpec spec,
     double? recoveryScore,
     int? targetReps,
+    String? targetRepsRange,
     double? prescribedRpe,
   }) {
     final double rpe = prescribedRpe ??
@@ -343,9 +410,12 @@ class ExerciseMediaService {
                 ? 6.5
                 : (recoveryScore >= 67.0 ? 8.5 : 8.0))
             : 8.0);
-    final String repsRange = targetReps != null
-        ? '${math.max(4, targetReps - 1)}-${targetReps + 1} reps'
-        : '8-10 reps';
+    final String repsRange =
+        (targetRepsRange != null && targetRepsRange.trim().isNotEmpty)
+            ? '${targetRepsRange.trim()} reps'
+            : (targetReps != null
+                ? '${math.max(4, targetReps - 1)}-${targetReps + 1} reps'
+                : '8-10 reps');
     final String zoneSuffix = recoveryScore != null
         ? (recoveryScore < 34.0
             ? 'Descarga SNC (${recoveryScore.round()}% rec)'
@@ -361,16 +431,24 @@ class ExerciseMediaService {
 /// + 3 Píldoras Técnicas (Tempo Prescrito, Cue de Activación, Rango Objetivo).
 class BiomechanicalExerciseAvatarModule extends StatefulWidget {
   final String exerciseName;
+  final String? exerciseKey;
   final double? recoveryScore;
   final int? targetReps;
+  final String? targetRepsRange;
   final double? prescribedRpe;
+  final String? customTempo;
+  final String? customCoachingCue;
 
   const BiomechanicalExerciseAvatarModule({
     super.key,
     required this.exerciseName,
+    this.exerciseKey,
     this.recoveryScore,
     this.targetReps,
+    this.targetRepsRange,
     this.prescribedRpe,
+    this.customTempo,
+    this.customCoachingCue,
   });
 
   @override
@@ -449,12 +527,23 @@ class _BiomechanicalExerciseAvatarModuleState
 
   @override
   Widget build(BuildContext context) {
-    final ExerciseMediaSpec spec =
-        ExerciseMediaService.resolveForExercise(widget.exerciseName);
+    final ExerciseMediaSpec spec = ExerciseMediaService.resolveForExercise(
+      widget.exerciseName,
+      exerciseKey: widget.exerciseKey,
+    );
+    final String tempoCode =
+        (widget.customTempo != null && widget.customTempo!.trim().isNotEmpty)
+            ? widget.customTempo!.trim()
+            : spec.prescribedTempoCode;
+    final String cueText = (widget.customCoachingCue != null &&
+            widget.customCoachingCue!.trim().isNotEmpty)
+        ? widget.customCoachingCue!.trim()
+        : spec.activationCue;
     final String targetRangeText = ExerciseMediaService.formatTargetRange(
       spec: spec,
       recoveryScore: widget.recoveryScore,
       targetReps: widget.targetReps,
+      targetRepsRange: widget.targetRepsRange,
       prescribedRpe: widget.prescribedRpe,
     );
 
@@ -612,14 +701,14 @@ class _BiomechanicalExerciseAvatarModuleState
           icon: Icons.timer_outlined,
           accentColor: const Color(0xFFD2FF00),
           label: 'TEMPO PRESCRITO',
-          value: '${spec.prescribedTempoCode} (${spec.prescribedTempoDetail})',
+          value: '$tempoCode (${spec.prescribedTempoDetail})',
         ),
         const SizedBox(height: 5),
         _TechnicalCuePill(
           icon: Icons.psychology_alt_outlined,
           accentColor: const Color(0xFF00E5FF),
           label: 'CUE DE ACTIVACIÓN',
-          value: '"${spec.activationCue}"',
+          value: '"$cueText"',
         ),
         const SizedBox(height: 5),
         _TechnicalCuePill(

@@ -91,6 +91,17 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   bool _isSavingRoutine = false;
   bool get isSavingRoutine => _isSavingRoutine;
 
+  bool _isGeneratingAiRoutine = false;
+  bool get isGeneratingAiRoutine => _isGeneratingAiRoutine;
+
+  String _aiRoutineTitle =
+      'Hipertrofia Adaptativa Personalizada (Gemini 2.5 Flash)';
+  String get aiRoutineTitle => _aiRoutineTitle;
+
+  String _aiWeeklyFocus =
+      'Periodización de 5 días × 6 ejercicios adaptada a tu LBM y recuperación';
+  String get aiWeeklyFocus => _aiWeeklyFocus;
+
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
@@ -112,6 +123,47 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     return null;
   }
 
+  List<WorkoutSetModel> _enrichSetsWithRoutineMetadata(
+    List<WorkoutSetModel> rawSets,
+  ) {
+    final Map<String, RoutineExerciseItemModel> byName =
+        <String, RoutineExerciseItemModel>{};
+    for (final RoutineTemplateModel r in _weeklyRoutines) {
+      for (final RoutineExerciseItemModel ex in r.exercises) {
+        byName[ex.exerciseName.toLowerCase().trim()] = ex;
+      }
+    }
+    return rawSets.map((WorkoutSetModel s) {
+      final RoutineExerciseItemModel? match =
+          byName[s.exerciseName.toLowerCase().trim()];
+      if (match == null) {
+        return s;
+      }
+      return s.copyWith(
+        exerciseKey: match.exerciseKey,
+        restSeconds: match.restSeconds,
+        tempo: match.tempo,
+        coachingCue: match.coachingCue,
+      );
+    }).toList();
+  }
+
+  void updateActiveSetPrescribedWeight(
+    WorkoutSetModel targetSet,
+    double weightInDisplayedUnit,
+  ) {
+    final double weightKg = _unitSystem == 'LB'
+        ? double.parse((weightInDisplayedUnit / 2.20462).toStringAsFixed(2))
+        : double.parse(weightInDisplayedUnit.toStringAsFixed(2));
+    _sets = _sets.map((WorkoutSetModel s) {
+      if (s.id == targetSet.id) {
+        return s.copyWith(prescribedWeightKg: weightKg);
+      }
+      return s;
+    }).toList();
+    notifyListeners();
+  }
+
   Future<void> initializeWorkoutPlan() async {
     _isLoadingPlan = true;
     _errorMessage = null;
@@ -119,25 +171,64 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
     try {
       _unitSystem = await _repository.getPreferredUnitSystem();
-      final List<Object> results = await Future.wait<Object>(<Future<Object>>[
-        _repository.loadTodayWorkoutPlan(),
-        _repository.loadWeeklyRoutines(),
-      ]);
 
-      final TodayWorkoutPlanModel plan = results[0] as TodayWorkoutPlanModel;
-      final List<RoutineTemplateModel> routines =
-          results[1] as List<RoutineTemplateModel>;
+      // 1. Consultar GET /api/v1/routines/current
+      AiGeneratedRoutinePlanModel aiPlan;
+      try {
+        aiPlan = await _repository.loadCurrentAiRoutine();
+      } catch (_) {
+        aiPlan = const AiGeneratedRoutinePlanModel(
+          hasRoutine: false,
+          routineName: '',
+          weeklyFocus: '',
+          days: <RoutineTemplateModel>[],
+        );
+      }
 
+      // 2. Si no existe rutina IA de 5 días, disparar POST /api/v1/routines/generate-ai con overlay
+      if (!aiPlan.hasRoutine || aiPlan.days.length < 5) {
+        _isGeneratingAiRoutine = true;
+        notifyListeners();
+        try {
+          aiPlan = await _repository.generateAiRoutine();
+        } finally {
+          _isGeneratingAiRoutine = false;
+        }
+      }
+
+      if (aiPlan.days.isNotEmpty) {
+        _weeklyRoutines = aiPlan.days;
+        _aiRoutineTitle = aiPlan.routineName;
+        _aiWeeklyFocus = aiPlan.weeklyFocus;
+        _geminiRationale =
+            '${aiPlan.routineName} • ${aiPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
+      } else {
+        _weeklyRoutines = await _repository.loadWeeklyRoutines();
+      }
+
+      final TodayWorkoutPlanModel plan =
+          await _repository.loadTodayWorkoutPlan();
       _todayPlan = plan;
-      _weeklyRoutines = routines;
       _isRolloverActive = plan.isRollover;
       _rolloverBanner = plan.coachRolloverBanner;
-      _selectedRoutine =
-          plan.activeRoutine ?? (routines.isNotEmpty ? routines.first : null);
+
+      if (_weeklyRoutines.isNotEmpty) {
+        final int todayIso = DateTime.now().weekday.clamp(1, 5);
+        RoutineTemplateModel? matchedDay;
+        for (final RoutineTemplateModel r in _weeklyRoutines) {
+          if (r.dayOfWeek == todayIso) {
+            matchedDay = r;
+            break;
+          }
+        }
+        _selectedRoutine = matchedDay ?? _weeklyRoutines.first;
+      } else {
+        _selectedRoutine = plan.activeRoutine;
+      }
 
       if (plan.activeWorkout != null) {
         _activeWorkoutId = plan.activeWorkout!.id;
-        _sets = plan.activeWorkout!.sets;
+        _sets = _enrichSetsWithRoutineMetadata(plan.activeWorkout!.sets);
         _sessionLbmScore = plan.activeWorkout!.lbmAllometricScore;
         final String? notes = plan.activeWorkout!.aiPrescriptionNotes;
         if (notes != null && notes.isNotEmpty) {
@@ -157,6 +248,34 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
     } finally {
       _isLoadingPlan = false;
+      _isGeneratingAiRoutine = false;
+      notifyListeners();
+    }
+  }
+
+  /// Dispara `POST /api/v1/routines/generate-ai` mostrando el overlay de cálculo biomecánico.
+  Future<void> regenerateRoutineWithAi() async {
+    _isGeneratingAiRoutine = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final AiGeneratedRoutinePlanModel aiPlan =
+          await _repository.generateAiRoutine();
+      if (aiPlan.days.isNotEmpty) {
+        _weeklyRoutines = aiPlan.days;
+        _aiRoutineTitle = aiPlan.routineName;
+        _aiWeeklyFocus = aiPlan.weeklyFocus;
+        _selectedRoutine = aiPlan.days.first;
+        _activeWorkoutId = null;
+        _sets = <WorkoutSetModel>[];
+        _geminiRationale =
+            '${aiPlan.routineName} • ${aiPlan.weeklyFocus}. Cargas recalculadas por Gemini 2.5 Flash.';
+      }
+    } catch (e) {
+      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+    } finally {
+      _isGeneratingAiRoutine = false;
       notifyListeners();
     }
   }
@@ -184,7 +303,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
             _todayPlan?.activeRoutine?.id == routine.id,
       );
       _activeWorkoutId = session.id;
-      _sets = session.sets;
+      _sets = _enrichSetsWithRoutineMetadata(session.sets);
       _sessionLbmScore = session.lbmAllometricScore;
       final String? notes = session.aiPrescriptionNotes;
       if (notes != null && notes.isNotEmpty) {
