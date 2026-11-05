@@ -93,7 +93,10 @@ app.include_router(leaderboard.router, include_in_schema=False)
 
 @app.on_event("startup")
 async def ensure_postgres_enums() -> None:
-    """Garantiza que wearable_source_enum incluya SAMSUNG_WATCH y APPLE_WATCH en PostgreSQL."""
+    """
+    Garantiza que wearable_source_enum incluya SAMSUNG_WATCH y APPLE_WATCH,
+    crea la tabla `daily_readiness` y elimina cualquier registro mock histórico.
+    """
     try:
         async with engine.connect() as conn:
             autocommit_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
@@ -103,8 +106,44 @@ async def ensure_postgres_enums() -> None:
             await autocommit_conn.execute(
                 text("ALTER TYPE wearable_source_enum ADD VALUE IF NOT EXISTS 'APPLE_WATCH'")
             )
+            await autocommit_conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS daily_readiness (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        date DATE NOT NULL DEFAULT CURRENT_DATE,
+                        sleep_pct NUMERIC(5,2) NOT NULL,
+                        recovery_score NUMERIC(5,2) NOT NULL,
+                        strain_score NUMERIC(4,1) NOT NULL,
+                        stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0,
+                        stress_category VARCHAR(20) NOT NULL DEFAULT 'BAJO',
+                        source_device VARCHAR(30) NOT NULL DEFAULT 'WHOOP',
+                        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE (user_id, date, source_device)
+                    )
+                    """
+                )
+            )
+            # Limpiar filas mock residuales de versiones previas
+            await autocommit_conn.execute(
+                text(
+                    """
+                    DELETE FROM wearable_metrics
+                    WHERE recovery_score = 62 AND sleep_efficiency_pct = 90 AND resting_hr = 62
+                    """
+                )
+            )
+            await autocommit_conn.execute(
+                text(
+                    """
+                    DELETE FROM biometrics
+                    WHERE weight_kg = 78.4 AND fat_percentage IN (14.6, 14.8)
+                    """
+                )
+            )
     except Exception as exc:
-        logger.warning("No se pudo actualizar wearable_source_enum en startup: %s", exc)
+        logger.warning("No se pudo actualizar wearable_source_enum o daily_readiness en startup: %s", exc)
 
 
 @app.get("/", tags=["Healthcheck"])

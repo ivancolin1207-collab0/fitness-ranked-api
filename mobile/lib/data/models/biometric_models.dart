@@ -3,7 +3,7 @@ class FitdaysExtractedMetricsModel {
   final double fatPercentage;
   final double muscleMassKg;
   final double skeletalMusclePct;
-  final int visceralFat;
+  final double visceralFat;
   final double bodyWaterPct;
   final int bmr;
   final double ocrConfidence;
@@ -22,15 +22,36 @@ class FitdaysExtractedMetricsModel {
   });
 
   factory FitdaysExtractedMetricsModel.fromJson(Map<String, dynamic> json) {
+    final num? rawWeight = json['weight_kg'] as num?;
+    final num? rawFat =
+        (json['body_fat_pct'] ?? json['fat_percentage']) as num?;
+    final num? rawMuscle = json['muscle_mass_kg'] as num?;
+    final num? rawSkeletal = json['skeletal_muscle_pct'] as num?;
+    final num? rawVisceral = json['visceral_fat'] as num?;
+    final num? rawWater =
+        (json['water_pct'] ?? json['body_water_pct']) as num?;
+    final num? rawBmr = (json['bmr_kcal'] ?? json['bmr']) as num?;
+
+    if (rawWeight == null ||
+        rawFat == null ||
+        rawMuscle == null ||
+        rawSkeletal == null ||
+        rawVisceral == null ||
+        rawWater == null ||
+        rawBmr == null) {
+      throw const FormatException(
+        'Respuesta OCR Fitdays incompleta: faltan indicadores numéricos en el JSON.',
+      );
+    }
+
     return FitdaysExtractedMetricsModel(
-      weightKg: (json['weight_kg'] as num?)?.toDouble() ?? 75.0,
-      fatPercentage: (json['fat_percentage'] as num?)?.toDouble() ?? 15.0,
-      muscleMassKg: (json['muscle_mass_kg'] as num?)?.toDouble() ?? 58.0,
-      skeletalMusclePct:
-          (json['skeletal_muscle_pct'] as num?)?.toDouble() ?? 42.0,
-      visceralFat: (json['visceral_fat'] as num?)?.toInt() ?? 6,
-      bodyWaterPct: (json['body_water_pct'] as num?)?.toDouble() ?? 60.0,
-      bmr: (json['bmr'] as num?)?.toInt() ?? 1750,
+      weightKg: rawWeight.toDouble(),
+      fatPercentage: rawFat.toDouble(),
+      muscleMassKg: rawMuscle.toDouble(),
+      skeletalMusclePct: rawSkeletal.toDouble(),
+      visceralFat: rawVisceral.toDouble(),
+      bodyWaterPct: rawWater.toDouble(),
+      bmr: rawBmr.round(),
       ocrConfidence: (json['ocr_confidence'] as num?)?.toDouble() ?? 1.0,
       sourceProvider: (json['source_provider'] as String?) ?? 'FITDAYS_OCR',
     );
@@ -39,11 +60,14 @@ class FitdaysExtractedMetricsModel {
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'weight_kg': weightKg,
+      'body_fat_pct': fatPercentage,
       'fat_percentage': fatPercentage,
       'muscle_mass_kg': muscleMassKg,
       'skeletal_muscle_pct': skeletalMusclePct,
       'visceral_fat': visceralFat,
+      'water_pct': bodyWaterPct,
       'body_water_pct': bodyWaterPct,
+      'bmr_kcal': bmr,
       'bmr': bmr,
       'ocr_confidence': ocrConfidence,
       'source_provider': sourceProvider,
@@ -58,7 +82,7 @@ class BiometricRecord {
   final double fatPercentage;
   final double muscleMassKg;
   final double skeletalMusclePct;
-  final int visceralFat;
+  final double visceralFat;
   final double bodyWaterPct;
   final int bmr;
   final double leanBodyMassKg;
@@ -83,8 +107,11 @@ class BiometricRecord {
   });
 
   factory BiometricRecord.fromJson(Map<String, dynamic> json) {
-    final double weight = (json['weight_kg'] as num?)?.toDouble() ?? 75.0;
-    final double fat = (json['fat_percentage'] as num?)?.toDouble() ?? 15.0;
+    final double weight = (json['weight_kg'] as num?)?.toDouble() ?? 0.0;
+    final double fat =
+        ((json['body_fat_pct'] ?? json['fat_percentage']) as num?)
+                ?.toDouble() ??
+            0.0;
     final double computedLbm = json['lean_body_mass_kg'] != null
         ? (json['lean_body_mass_kg'] as num).toDouble()
         : double.parse((weight * (1.0 - (fat / 100.0))).toStringAsFixed(2));
@@ -95,12 +122,14 @@ class BiometricRecord {
       userId: (json['user_id'] as String?) ?? '',
       weightKg: weight,
       fatPercentage: fat,
-      muscleMassKg: (json['muscle_mass_kg'] as num?)?.toDouble() ?? 58.0,
+      muscleMassKg: (json['muscle_mass_kg'] as num?)?.toDouble() ?? 0.0,
       skeletalMusclePct:
-          (json['skeletal_muscle_pct'] as num?)?.toDouble() ?? 42.0,
-      visceralFat: (json['visceral_fat'] as num?)?.toInt() ?? 6,
-      bodyWaterPct: (json['body_water_pct'] as num?)?.toDouble() ?? 60.0,
-      bmr: (json['bmr'] as num?)?.toInt() ?? 1750,
+          (json['skeletal_muscle_pct'] as num?)?.toDouble() ?? 0.0,
+      visceralFat: (json['visceral_fat'] as num?)?.toDouble() ?? 0.0,
+      bodyWaterPct:
+          ((json['water_pct'] ?? json['body_water_pct']) as num?)?.toDouble() ??
+              0.0,
+      bmr: ((json['bmr_kcal'] ?? json['bmr']) as num?)?.toInt() ?? 0,
       leanBodyMassKg: computedLbm,
       ocrConfidence: (json['ocr_confidence'] as num?)?.toDouble() ?? 1.0,
       sourceProvider: (json['source_provider'] as String?) ?? 'MANUAL_FORM',

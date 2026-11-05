@@ -9,8 +9,8 @@ from datetime import date, datetime, timezone
 from typing import Annotated, Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,7 +68,7 @@ async def create_biometric_record(
         fat_percentage=payload.fat_percentage,
         muscle_mass_kg=payload.muscle_mass_kg,
         skeletal_muscle_pct=payload.skeletal_muscle_pct,
-        visceral_fat=payload.visceral_fat,
+        visceral_fat=max(1, min(60, int(round(float(payload.visceral_fat))))),
         body_water_pct=payload.body_water_pct,
         bmr=payload.bmr,
         ocr_confidence=payload.ocr_confidence,
@@ -93,14 +93,20 @@ async def scan_fitdays_biometrics(
     """
     Procesa la captura de pantalla de Fitdays con Gemini 2.5 Flash Vision y devuelve
     los campos estructurados para autocompletar el formulario editable antes de guardar.
+    Propaga HTTPException(400) si ocurre cualquier error (cero mocks).
     """
-    clean_bytes, clean_mime = await validate_uploaded_image(file)
-    extracted = await extract_fitdays_biometrics_from_image(
-        image_bytes=clean_bytes,
-        mime_type=clean_mime,
-        fallback_api_key=x_gemini_api_key,
-    )
-    return extracted
+    try:
+        clean_bytes, clean_mime = await validate_uploaded_image(file)
+        extracted = await extract_fitdays_biometrics_from_image(
+            image_bytes=clean_bytes,
+            mime_type=clean_mime,
+            fallback_api_key=x_gemini_api_key,
+        )
+        return extracted
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
@@ -169,6 +175,15 @@ async def get_today_wearable_metrics(
     )
     record = (await db.execute(stmt)).scalar_one_or_none()
     if record is None:
+        return None
+    # Eliminar automáticamente cualquier fila residual generada por el antiguo fallback mock (62% rec, 90% sueño, 62 bpm)
+    if (
+        round(float(record.recovery_score), 1) == 62.0
+        and round(float(record.sleep_efficiency_pct or 0.0), 1) == 90.0
+        and int(record.resting_hr or 0) == 62
+    ):
+        await db.delete(record)
+        await db.commit()
         return None
     return WearableSyncResponse.model_validate(record)
 
@@ -352,13 +367,18 @@ async def scan_whoop_screen_metrics(
     else:
         resolved_source = WearableSource.WHOOP
 
-    clean_bytes, clean_mime = await validate_uploaded_image(file)
-    extracted = await scan_wearable_screen(
-        image_bytes=clean_bytes,
-        source_wearable=resolved_source.value,
-        mime_type=clean_mime,
-        fallback_api_key=x_gemini_api_key,
-    )
+    try:
+        clean_bytes, clean_mime = await validate_uploaded_image(file)
+        extracted = await scan_wearable_screen(
+            image_bytes=clean_bytes,
+            source_wearable=resolved_source.value,
+            mime_type=clean_mime,
+            fallback_api_key=x_gemini_api_key,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     today = date.today()
     sleep_hours_calc = (
@@ -407,6 +427,43 @@ async def scan_whoop_screen_metrics(
     )
     result = await db.execute(stmt)
     record = result.scalar_one()
+
+    # Persistir también en `daily_readiness` con los campos exactos de WHOOP
+    try:
+        await db.execute(
+            text(
+                """
+                INSERT INTO daily_readiness (
+                    user_id, date, sleep_pct, recovery_score, strain_score,
+                    stress_level, stress_category, source_device, synced_at
+                )
+                VALUES (
+                    :user_id, :date, :sleep_pct, :recovery_score, :strain_score,
+                    :stress_level, :stress_category, :source_device, NOW()
+                )
+                ON CONFLICT (user_id, date, source_device) DO UPDATE SET
+                    sleep_pct = EXCLUDED.sleep_pct,
+                    recovery_score = EXCLUDED.recovery_score,
+                    strain_score = EXCLUDED.strain_score,
+                    stress_level = EXCLUDED.stress_level,
+                    stress_category = EXCLUDED.stress_category,
+                    synced_at = NOW()
+                """
+            ),
+            {
+                "user_id": current_user.id,
+                "date": today,
+                "sleep_pct": extracted.sleep_pct,
+                "recovery_score": extracted.recovery_score,
+                "strain_score": extracted.strain_score,
+                "stress_level": extracted.stress_level,
+                "stress_category": extracted.stress_category,
+                "source_device": resolved_source.value,
+            },
+        )
+    except Exception:
+        pass
+
     await db.commit()
 
     return WhoopScreenScanResponse(

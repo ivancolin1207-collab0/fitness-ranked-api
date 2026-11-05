@@ -2186,6 +2186,8 @@ class _DeviceKpiBox extends StatelessWidget {
   }
 }
 
+typedef FitdaysReviewSheet = _BiometricCaptureModalSheet;
+
 class _BiometricCaptureModalSheet extends StatefulWidget {
   final HomeViewModel viewModel;
   final FitdaysExtractedMetricsModel? prefilled;
@@ -2222,40 +2224,38 @@ class _BiometricCaptureModalSheetState
 
     _weightCtrl = TextEditingController(
       text: p != null
-          ? p.weightKg.toStringAsFixed(1)
-          : (latest != null ? latest.weightKg.toStringAsFixed(1) : '78.0'),
+          ? p.weightKg.toString()
+          : (latest != null ? latest.weightKg.toString() : ''),
     );
     _fatPctCtrl = TextEditingController(
       text: p != null
-          ? p.fatPercentage.toStringAsFixed(1)
-          : (latest != null ? latest.fatPercentage.toStringAsFixed(1) : '14.5'),
+          ? p.fatPercentage.toString()
+          : (latest != null ? latest.fatPercentage.toString() : ''),
     );
     _muscleKgCtrl = TextEditingController(
       text: p != null
-          ? p.muscleMassKg.toStringAsFixed(1)
-          : (latest != null ? latest.muscleMassKg.toStringAsFixed(1) : '63.2'),
+          ? p.muscleMassKg.toString()
+          : (latest != null ? latest.muscleMassKg.toString() : ''),
     );
     _skeletalPctCtrl = TextEditingController(
       text: p != null
-          ? p.skeletalMusclePct.toStringAsFixed(1)
-          : (latest != null
-              ? latest.skeletalMusclePct.toStringAsFixed(1)
-              : '43.0'),
+          ? p.skeletalMusclePct.toString()
+          : (latest != null ? latest.skeletalMusclePct.toString() : ''),
     );
     _visceralCtrl = TextEditingController(
       text: p != null
           ? p.visceralFat.toString()
-          : (latest != null ? latest.visceralFat.toString() : '6'),
+          : (latest != null ? latest.visceralFat.toString() : ''),
     );
     _waterPctCtrl = TextEditingController(
       text: p != null
-          ? p.bodyWaterPct.toStringAsFixed(1)
-          : (latest != null ? latest.bodyWaterPct.toStringAsFixed(1) : '61.5'),
+          ? p.bodyWaterPct.toString()
+          : (latest != null ? latest.bodyWaterPct.toString() : ''),
     );
     _bmrCtrl = TextEditingController(
       text: p != null
           ? p.bmr.toString()
-          : (latest != null ? latest.bmr.toString() : '1820'),
+          : (latest != null ? latest.bmr.toString() : ''),
     );
   }
 
@@ -2281,9 +2281,9 @@ class _BiometricCaptureModalSheetState
       fatPercentage: double.parse(_fatPctCtrl.text.trim()),
       muscleMassKg: double.parse(_muscleKgCtrl.text.trim()),
       skeletalMusclePct: double.parse(_skeletalPctCtrl.text.trim()),
-      visceralFat: int.parse(_visceralCtrl.text.trim()),
+      visceralFat: double.parse(_visceralCtrl.text.trim()),
       bodyWaterPct: double.parse(_waterPctCtrl.text.trim()),
-      bmr: int.parse(_bmrCtrl.text.trim()),
+      bmr: double.parse(_bmrCtrl.text.trim()).round(),
       ocrConfidence: widget.prefilled?.ocrConfidence ?? 1.0,
       sourceProvider: widget.prefilled != null ? 'FITDAYS_OCR' : 'MANUAL_FORM',
     );
@@ -2377,10 +2377,10 @@ class _BiometricCaptureModalSheetState
                   Expanded(
                     child: _buildNumberField(
                       controller: _visceralCtrl,
-                      label: 'Grasa Visceral (1-60)',
-                      min: 1,
+                      label: 'Grasa Visceral (0.5-60)',
+                      min: 0.5,
                       max: 60,
-                      isInteger: true,
+                      isInteger: false,
                     ),
                   ),
                   const SizedBox(width: 10),

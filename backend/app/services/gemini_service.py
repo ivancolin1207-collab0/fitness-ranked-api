@@ -10,9 +10,10 @@ Servicio de Inteligencia Artificial con Google GenAI SDK (`google-genai` / `goog
 import io
 import json
 import logging
-import math
 import os
 from typing import Any, Optional
+
+from fastapi import HTTPException
 
 from app.core.config import get_settings
 from app.schemas.biometrics import FitdaysExtractedMetrics, WhoopScreenExtractedMetrics
@@ -35,47 +36,136 @@ def _resolve_gemini_api_key(fallback_api_key: Optional[str] = None) -> str:
     return env_key.strip()
 
 
+def _invoke_gemini_vision_json(
+    prompt: str,
+    image_bytes: bytes,
+    mime_type: str = "image/jpeg",
+    fallback_api_key: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Ejecuta Gemini 2.5 Flash Vision usando `google.generativeai` o `google.genai`
+    y devuelve el diccionario JSON parseado. Propaga `HTTPException(status_code=400)`
+    ante cualquier fallo real (cero diccionarios mock).
+    """
+    api_key = _resolve_gemini_api_key(fallback_api_key)
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="GEMINI_API_KEY no configurada en el servidor (Render Environment) ni enviada en X-Gemini-Api-Key.",
+        )
+
+    try:
+        try:
+            import google.generativeai as genai  # type: ignore
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(
+                [
+                    prompt,
+                    {"mime_type": mime_type or "image/jpeg", "data": image_bytes},
+                ]
+            )
+            raw_text = response.text or ""
+        except ImportError:
+            from google import genai as google_genai
+            from google.genai import types
+
+            client = google_genai.Client(api_key=api_key)
+            image_part = types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=mime_type or "image/jpeg",
+            )
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[prompt, image_part],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=2048,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    response_mime_type="application/json",
+                ),
+            )
+            raw_text = response.text or ""
+
+        cleaned_text = (
+            raw_text.replace("```json", "").replace("```", "").strip()
+        )
+        if not cleaned_text:
+            raise ValueError("Gemini Vision devolvió una respuesta vacía.")
+        data = json.loads(cleaned_text)
+        if not isinstance(data, dict):
+            raise ValueError(f"Respuesta JSON inválida de Gemini Vision: {cleaned_text}")
+        return data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Error real en Gemini Vision OCR: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 WHOOP_OCR_SYSTEM_PROMPT = """
-Analiza esta captura de la app oficial de WHOOP. Localiza los 3 círculos superiores:
-1. Círculo izquierdo (azul claro): Porcentaje de Sueño ('SUEÑO >').
-2. Círculo central (amarillo/verde/rojo): Porcentaje de Recuperación ('RECUPERACIÓN >').
-3. Círculo derecho (azul oscuro): Puntuación de Esfuerzo ('ESFUERZO >').
-4. Tarjeta inferior 'MONITOR DE ESTRÉS': Extrae el valor numérico (ej. 2.4) y la categoría ('BAJO', 'MEDIO', 'ALTO').
-Retorna estrictamente este JSON:
-{"sleep_pct": float, "recovery_score": float, "strain_score": float, "stress_level": float, "stress_category": str}
+Analiza esta captura de pantalla de la app oficial de WHOOP (incluyendo si aparece en pantalla dividida).
+Extrae estrictamente la telemetría visible:
+- Círculo de la izquierda ("SUEÑO"): extrae el porcentaje numérico (ej. 80%).
+- Círculo del centro ("RECUPERACIÓN"): extrae el porcentaje numérico (ej. 47%).
+- Círculo de la derecha ("ESFUERZO"): extrae el número decimal (ej. 7.2).
+- Tarjeta "MONITOR DE ESTRÉS": extrae el nivel numérico (ej. 2.4) y el estado ("ALTO", "MEDIO", "BAJO").
+
+Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
+{
+  "sleep_pct": float,
+  "recovery_score": float,
+  "strain_score": float,
+  "stress_level": float,
+  "stress_category": "ALTO" | "MEDIO" | "BAJO"
+}
 """.strip()
 
 HUAWEI_OCR_SYSTEM_PROMPT = """
 Analiza esta captura de pantalla de Huawei Health (Huawei GT / Watch).
-Extrae estrictamente en JSON:
-- `trusleep_score`: Puntuación de sueño TruSleep (0 a 100).
-- `stress_score`: Nivel de estrés (0 a 100).
-- `avg_heart_rate`: Frecuencia cardíaca media o en reposo (bpm).
-- `vo2max`: VO2Max estimado (ml/kg/min).
+Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
+{
+  "trusleep_score": int,
+  "stress_score": int,
+  "avg_heart_rate": int,
+  "vo2max": float
+}
 """.strip()
 
 SAMSUNG_OCR_SYSTEM_PROMPT = """
 Analiza esta captura de pantalla de Samsung Health (Galaxy Watch).
-Extrae estrictamente en JSON:
-- `energy_score`: Puntuación de energía / Energy Score (0 a 100).
-- `sleep_duration_hours`: Horas de sueño (ej. 7.4).
-- `resting_hr`: Frecuencia cardíaca en reposo (bpm).
-- `bia_muscle_pct`: Porcentaje de músculo esquelético BIA si aparece (o 43.8 por defecto).
-- `bia_fat_pct`: Porcentaje de grasa corporal BIA si aparece (o 13.8 por defecto).
+Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
+{
+  "energy_score": int,
+  "sleep_duration_hours": float,
+  "resting_hr": int,
+  "bia_muscle_pct": float,
+  "bia_fat_pct": float
+}
 """.strip()
 
 FITDAYS_OCR_SYSTEM_PROMPT = """
-Eres un sistema experto en metrología corporal y lectura OCR de reportes clínicos de bioimpedancia (Fitdays / InBody).
-Analiza la captura de pantalla adjunta y extrae con precisión exacta los siguientes indicadores numéricos:
-- `weight_kg`: Peso corporal total convertido a kilogramos (si está en lb, divide entre 2.20462).
-- `fat_percentage`: Porcentaje de grasa corporal (%).
-- `muscle_mass_kg`: Masa muscular en kilogramos (kg).
-- `skeletal_muscle_pct`: Porcentaje de músculo esquelético (%).
-- `visceral_fat`: Índice de grasa visceral (entero entre 1 y 60).
-- `body_water_pct`: Porcentaje de agua corporal total (%).
-- `bmr`: Tasa Metabólica Basal en kcal/día (entero).
-- `ocr_confidence`: Nivel de confianza de la lectura entre 0.0 y 1.0.
-Devuelve exclusivamente un objeto JSON válido que cumpla con el esquema `FitdaysExtractedMetrics`.
+Analiza minuciosamente esta imagen del reporte de bioimpedancia de la app Fitdays.
+Extrae con absoluta precisión los siguientes indicadores numéricos observando la tabla:
+- "Peso": valor numérico en kg (ej. si dice 92.4kg -> 92.4)
+- "Grasa Corporal": porcentaje numérico (ej. si dice 32.1% -> 32.1)
+- "Masa Muscular": valor numérico en kg (ej. si dice 58.9kg -> 58.9)
+- "Músculo esquelético": porcentaje o valor numérico (ej. si dice 46.7% -> 46.7)
+- "Grasa Visceral": número entero o decimal (ej. si dice 12.6 -> 12.6)
+- "Agua Corporal": porcentaje numérico (ej. si dice 47.1% -> 47.1)
+- "BMR": valor numérico en kcal (ej. si dice 1827kcal -> 1827)
+
+Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
+{
+  "weight_kg": float,
+  "body_fat_pct": float,
+  "muscle_mass_kg": float,
+  "skeletal_muscle_pct": float,
+  "visceral_fat": float,
+  "water_pct": float,
+  "bmr_kcal": int
+}
 """.strip()
 
 COACH_ADAPTIVE_SYSTEM_PROMPT = """
@@ -101,104 +191,127 @@ def round_to_plate_increment(weight_kg: float, step: float = 2.5) -> float:
     return round(round(weight_kg / step) * step, 2)
 
 
-def _extract_whoop_metrics_from_rings_cv(image_bytes: bytes) -> WhoopScreenExtractedMetrics:
+def parse_fitdays_report(
+    image_bytes: bytes,
+    mime_type: str = "image/jpeg",
+    fallback_api_key: Optional[str] = None,
+) -> dict[str, Any]:
     """
-    Analizador de visión por computadora determinista sobre los 3 anillos circulares
-    y el monitor de estrés de la interfaz oficial de WHOOP (soporta tanto capturas
-    completas como capturas en pantalla dividida).
+    Envía la imagen capturada de Fitdays directamente a Gemini 2.5 Flash Vision
+    con el prompt estricto y devuelve el diccionario JSON real sin mocks.
     """
+    prompt = FITDAYS_OCR_SYSTEM_PROMPT
+    data = _invoke_gemini_vision_json(
+        prompt=prompt,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        fallback_api_key=fallback_api_key,
+    )
+
     try:
-        from PIL import Image
-
-        im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        w0, h0 = im.size
-        # Si es captura en pantalla dividida (ej. Galaxy Fold con WHOOP a la derecha), recortar mitad derecha
-        if w0 / max(1, h0) > 0.68:
-            im = im.crop((w0 // 2, 0, w0, h0))
-
-        w, h = im.size
-        cy = 0.362 * h
-        r_px = 0.112 * w
-
-        ring_degs: dict[str, int] = {}
-        for label, cx_frac in [
-            ("sleep", 0.181),
-            ("recovery", 0.500),
-            ("strain", 0.819),
-        ]:
-            cx = cx_frac * w
-            active_deg = 0
-            for deg in range(360):
-                rad = math.radians(deg - 90)
-                hit = False
-                for dr in range(-4, 5):
-                    x = max(0, min(w - 1, int(round(cx + (r_px + dr) * math.cos(rad)))))
-                    y = max(0, min(h - 1, int(round(cy + (r_px + dr) * math.sin(rad)))))
-                    r_c, g_c, b_c = im.getpixel((x, y))
-                    if max(r_c, g_c, b_c) - min(r_c, g_c, b_c) > 35 and max(r_c, g_c, b_c) > 90:
-                        hit = True
-                        break
-                if hit:
-                    active_deg += 1
-            ring_degs[label] = active_deg
-
-        sleep_pct = float(round((ring_degs["sleep"] + 4) / 3.6))
-        recovery_pct = float(round((ring_degs["recovery"] + 2) / 3.6))
-        strain_val = round((ring_degs["strain"] * 20.3) / 360.0, 1)
-
-        if sleep_pct < 15.0 or recovery_pct < 5.0:
-            sleep_pct = 80.0
-            recovery_pct = 47.0
-            strain_val = 7.2
-
-        # Evaluar color dominante en el cuadrante inferior derecho (Monitor de Estrés)
-        amber_pixels = 0
-        cyan_pixels = 0
-        for y in range(int(0.54 * h), int(0.69 * h), 2):
-            for x in range(int(0.52 * w), int(0.92 * w), 2):
-                r_c, g_c, b_c = im.getpixel((x, y))
-                if r_c > 160 and 100 <= g_c <= 185 and b_c < 90:
-                    amber_pixels += 1
-                elif b_c > 150 and g_c > 130 and r_c < 100:
-                    cyan_pixels += 1
-
-        if amber_pixels >= 8 or recovery_pct < 50.0:
-            stress_cat = "ALTO"
-            stress_lvl = 2.4 if strain_val >= 7.2 else 2.1
-        elif cyan_pixels >= 8 or recovery_pct < 70.0:
-            stress_cat = "MEDIO"
-            stress_lvl = 1.5
-        else:
-            stress_cat = "BAJO"
-            stress_lvl = 0.8
-
-        inferred_rhr = int(round(64 - (recovery_pct - 40.0) * 0.18))
-        inferred_hrv = round(48.0 + (recovery_pct * 0.35), 1)
-        clean_sleep = max(10.0, min(100.0, sleep_pct))
-        clean_rec = max(5.0, min(100.0, recovery_pct))
-
-        return WhoopScreenExtractedMetrics(
-            sleep_pct=clean_sleep,
-            sleep_performance_pct=clean_sleep,
-            recovery_score=clean_rec,
-            strain_score=max(0.0, min(21.0, strain_val)),
-            stress_level=stress_lvl,
-            stress_category=stress_cat,
-            resting_hr=max(38, min(95, inferred_rhr)),
-            hrv_ms=max(20.0, min(180.0, inferred_hrv)),
+        weight_kg = float(data["weight_kg"])
+        body_fat_pct = float(
+            data["body_fat_pct"]
+            if "body_fat_pct" in data and data["body_fat_pct"] is not None
+            else data["fat_percentage"]
+        )
+        muscle_mass_kg = float(data["muscle_mass_kg"])
+        skeletal_muscle_pct = float(data["skeletal_muscle_pct"])
+        visceral_fat = float(data["visceral_fat"])
+        water_pct = float(
+            data["water_pct"]
+            if "water_pct" in data and data["water_pct"] is not None
+            else data["body_water_pct"]
+        )
+        bmr_kcal = int(
+            round(
+                float(
+                    data["bmr_kcal"]
+                    if "bmr_kcal" in data and data["bmr_kcal"] is not None
+                    else data["bmr"]
+                )
+            )
         )
     except Exception as exc:
-        logger.warning("Fallback CV WHOOP usó valores base tras excepción: %s", exc)
-        return WhoopScreenExtractedMetrics(
-            sleep_pct=80.0,
-            sleep_performance_pct=80.0,
-            recovery_score=47.0,
-            strain_score=7.2,
-            stress_level=2.4,
-            stress_category="ALTO",
-            resting_hr=60,
-            hrv_ms=64.0,
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se pudieron extraer todos los campos numéricos del reporte Fitdays: {exc}",
+        ) from exc
+
+    return {
+        "weight_kg": weight_kg,
+        "body_fat_pct": body_fat_pct,
+        "fat_percentage": body_fat_pct,
+        "muscle_mass_kg": muscle_mass_kg,
+        "skeletal_muscle_pct": skeletal_muscle_pct,
+        "visceral_fat": visceral_fat,
+        "water_pct": water_pct,
+        "body_water_pct": water_pct,
+        "bmr_kcal": bmr_kcal,
+        "bmr": bmr_kcal,
+        "ocr_confidence": 1.0,
+        "source_provider": "FITDAYS_OCR",
+    }
+
+
+def parse_whoop_screen(
+    image_bytes: bytes,
+    mime_type: str = "image/jpeg",
+    fallback_api_key: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Extrae estrictamente la telemetría visible en la captura de la app de WHOOP:
+    - Círculo izquierdo ("SUEÑO"): `sleep_pct`
+    - Círculo central ("RECUPERACIÓN"): `recovery_score`
+    - Círculo derecho ("ESFUERZO"): `strain_score`
+    - Tarjeta "MONITOR DE ESTRÉS": `stress_level` y `stress_category`
+    Propaga `HTTPException(status_code=400)` ante cualquier error (cero mocks).
+    """
+    raw_json = _invoke_gemini_vision_json(
+        prompt=WHOOP_OCR_SYSTEM_PROMPT,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        fallback_api_key=fallback_api_key,
+    )
+
+    try:
+        sleep_val = float(
+            raw_json["sleep_pct"]
+            if "sleep_pct" in raw_json and raw_json["sleep_pct"] is not None
+            else raw_json["sleep_performance_pct"]
         )
+        rec_val = float(raw_json["recovery_score"])
+        strain_val = float(raw_json["strain_score"])
+        stress_val = float(raw_json.get("stress_level", 0.0))
+        stress_cat = str(
+            raw_json.get("stress_category")
+            or ("ALTO" if stress_val >= 2.0 else ("MEDIO" if stress_val >= 1.0 else "BAJO"))
+        ).upper()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se pudieron extraer las métricas de la captura de WHOOP: {exc}",
+        ) from exc
+
+    rhr_val = int(
+        raw_json.get("resting_hr")
+        or max(42, min(95, round(64 - (rec_val - 40.0) * 0.18)))
+    )
+    hrv_val = float(
+        raw_json.get("hrv_ms")
+        or round(48.0 + (rec_val * 0.35), 1)
+    )
+
+    return {
+        "sleep_pct": max(0.0, min(100.0, sleep_val)),
+        "sleep_performance_pct": max(0.0, min(100.0, sleep_val)),
+        "recovery_score": max(0.0, min(100.0, rec_val)),
+        "strain_score": max(0.0, min(21.0, strain_val)),
+        "stress_level": max(0.0, min(3.0, stress_val)),
+        "stress_category": stress_cat,
+        "resting_hr": rhr_val,
+        "hrv_ms": hrv_val,
+    }
 
 
 async def scan_wearable_screen(
@@ -210,117 +323,85 @@ async def scan_wearable_screen(
     """
     Escaneo polimórfico de capturas de pantalla por marca de wearable
     ('WHOOP', 'HUAWEI', 'SAMSUNG', 'APPLE_WATCH', 'GARMIN') mediante Gemini 2.5 Flash Vision.
+    Sin diccionarios de prueba ni valores simulados.
     """
     normalized_source = (source_wearable or "WHOOP").upper().strip()
-    api_key = _resolve_gemini_api_key(fallback_api_key)
 
     if "HUAWEI" in normalized_source:
-        prompt = HUAWEI_OCR_SYSTEM_PROMPT
-    elif "SAMSUNG" in normalized_source:
-        prompt = SAMSUNG_OCR_SYSTEM_PROMPT
-    else:
-        prompt = WHOOP_OCR_SYSTEM_PROMPT
-
-    if api_key:
+        raw_json = _invoke_gemini_vision_json(
+            prompt=HUAWEI_OCR_SYSTEM_PROMPT,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            fallback_api_key=fallback_api_key,
+        )
         try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[image_part, prompt],
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt,
-                    temperature=0.1,
-                    top_p=0.8,
-                    max_output_tokens=2048,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    response_mime_type="application/json",
-                ),
-            )
-            raw_json = json.loads(response.text or "{}")
-
-            if "HUAWEI" in normalized_source:
-                trusleep = int(raw_json.get("trusleep_score") or 84)
-                stress_sc = int(raw_json.get("stress_score") or 42)
-                avg_hr = int(raw_json.get("avg_heart_rate") or 66)
-                vo2 = float(raw_json.get("vo2max") or 52.0)
-                rec_from_huawei = float(max(15, min(98, round(100 - stress_sc * 0.55))))
-                return WhoopScreenExtractedMetrics(
-                    sleep_pct=float(trusleep),
-                    sleep_performance_pct=float(trusleep),
-                    recovery_score=rec_from_huawei,
-                    strain_score=round(max(2.0, min(20.5, (stress_sc / 100.0) * 16.0)), 1),
-                    stress_level=round((stress_sc / 100.0) * 3.0, 1),
-                    stress_category="ALTO" if stress_sc >= 68 else ("MEDIO" if stress_sc >= 40 else "BAJO"),
-                    resting_hr=max(40, min(110, avg_hr - 8)),
-                    hrv_ms=round(max(25.0, 95.0 - stress_sc * 0.45), 1),
-                    trusleep_score=trusleep,
-                    stress_score=stress_sc,
-                    avg_heart_rate=avg_hr,
-                    vo2max=vo2,
-                )
-
-            if "SAMSUNG" in normalized_source:
-                energy = int(raw_json.get("energy_score") or 78)
-                sleep_h = float(raw_json.get("sleep_duration_hours") or 7.4)
-                rhr = int(raw_json.get("resting_hr") or 58)
-                bia_m = float(raw_json.get("bia_muscle_pct") or 43.8)
-                bia_f = float(raw_json.get("bia_fat_pct") or 13.8)
-                sleep_pct = max(20.0, min(100.0, round((sleep_h / 8.0) * 100.0)))
-                return WhoopScreenExtractedMetrics(
-                    sleep_pct=sleep_pct,
-                    sleep_performance_pct=sleep_pct,
-                    recovery_score=float(max(5, min(100, energy))),
-                    strain_score=round(max(2.0, min(20.5, (100 - energy) * 0.18 + 4.5)), 1),
-                    stress_level=round(max(0.4, min(3.0, (100 - energy) * 0.028)), 1),
-                    stress_category="ALTO" if energy < 45 else ("MEDIO" if energy < 70 else "BAJO"),
-                    resting_hr=rhr,
-                    hrv_ms=round(40.0 + energy * 0.42, 1),
-                    energy_score=energy,
-                    sleep_duration_hours=sleep_h,
-                    bia_muscle_pct=bia_m,
-                    bia_fat_pct=bia_f,
-                )
-
-            sleep_val = float(
-                raw_json.get("sleep_pct")
-                or raw_json.get("sleep_performance_pct")
-                or 80.0
-            )
-            rec_val = float(raw_json.get("recovery_score") or 47.0)
-            strain_val = float(raw_json.get("strain_score") or 7.2)
-            stress_val = float(raw_json.get("stress_level") or 2.4)
-            stress_cat = str(raw_json.get("stress_category") or "ALTO").upper()
-            rhr_val = int(
-                raw_json.get("resting_hr")
-                or max(42, min(95, round(64 - (rec_val - 40.0) * 0.18)))
-            )
-            hrv_val = float(
-                raw_json.get("hrv_ms")
-                or round(48.0 + (rec_val * 0.35), 1)
-            )
-            return WhoopScreenExtractedMetrics(
-                sleep_pct=max(0.0, min(100.0, sleep_val)),
-                sleep_performance_pct=max(0.0, min(100.0, sleep_val)),
-                recovery_score=max(0.0, min(100.0, rec_val)),
-                strain_score=max(0.0, min(21.0, strain_val)),
-                stress_level=max(0.0, min(3.0, stress_val)),
-                stress_category=stress_cat,
-                resting_hr=rhr_val,
-                hrv_ms=hrv_val,
-            )
+            trusleep = int(raw_json["trusleep_score"])
+            stress_sc = int(raw_json["stress_score"])
+            avg_hr = int(raw_json["avg_heart_rate"])
+            vo2 = float(raw_json["vo2max"])
         except Exception as exc:
-            logger.warning(
-                "Gemini Vision (%s) con fallback a análisis CV: %s",
-                normalized_source,
-                exc,
-            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al extraer métricas de Huawei Health: {exc}",
+            ) from exc
 
-    return _extract_whoop_metrics_from_rings_cv(image_bytes)
+        rec_from_huawei = float(max(5, min(100, round(100 - stress_sc * 0.55))))
+        return WhoopScreenExtractedMetrics(
+            sleep_pct=float(trusleep),
+            sleep_performance_pct=float(trusleep),
+            recovery_score=rec_from_huawei,
+            strain_score=round(max(0.0, min(21.0, (stress_sc / 100.0) * 16.0)), 1),
+            stress_level=round((stress_sc / 100.0) * 3.0, 1),
+            stress_category="ALTO" if stress_sc >= 68 else ("MEDIO" if stress_sc >= 40 else "BAJO"),
+            resting_hr=max(35, min(120, avg_hr - 8)),
+            hrv_ms=round(max(20.0, 95.0 - stress_sc * 0.45), 1),
+            trusleep_score=trusleep,
+            stress_score=stress_sc,
+            avg_heart_rate=avg_hr,
+            vo2max=vo2,
+        )
+
+    if "SAMSUNG" in normalized_source:
+        raw_json = _invoke_gemini_vision_json(
+            prompt=SAMSUNG_OCR_SYSTEM_PROMPT,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            fallback_api_key=fallback_api_key,
+        )
+        try:
+            energy = int(raw_json["energy_score"])
+            sleep_h = float(raw_json["sleep_duration_hours"])
+            rhr = int(raw_json["resting_hr"])
+            bia_m = float(raw_json.get("bia_muscle_pct") or 0.0)
+            bia_f = float(raw_json.get("bia_fat_pct") or 0.0)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al extraer métricas de Samsung Health: {exc}",
+            ) from exc
+
+        sleep_pct = max(0.0, min(100.0, round((sleep_h / 8.0) * 100.0)))
+        return WhoopScreenExtractedMetrics(
+            sleep_pct=sleep_pct,
+            sleep_performance_pct=sleep_pct,
+            recovery_score=float(max(0, min(100, energy))),
+            strain_score=round(max(0.0, min(21.0, (100 - energy) * 0.18 + 4.5)), 1),
+            stress_level=round(max(0.0, min(3.0, (100 - energy) * 0.028)), 1),
+            stress_category="ALTO" if energy < 45 else ("MEDIO" if energy < 70 else "BAJO"),
+            resting_hr=rhr,
+            hrv_ms=round(40.0 + energy * 0.42, 1),
+            energy_score=energy,
+            sleep_duration_hours=sleep_h,
+            bia_muscle_pct=bia_m,
+            bia_fat_pct=bia_f,
+        )
+
+    parsed_whoop = parse_whoop_screen(
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        fallback_api_key=fallback_api_key,
+    )
+    return WhoopScreenExtractedMetrics(**parsed_whoop)
 
 
 async def extract_whoop_screen_metrics(
@@ -344,49 +425,15 @@ async def extract_fitdays_biometrics_from_image(
     fallback_api_key: Optional[str] = None,
 ) -> FitdaysExtractedMetrics:
     """
-    Procesa una imagen de reporte Fitdays mediante Gemini 2.5 Flash Vision
-    y devuelve las métricas biométricas estructuradas y validadas.
+    Procesa una imagen de reporte Fitdays mediante `parse_fitdays_report` (Gemini 2.5 Flash Vision)
+    y devuelve las métricas biométricas estructuradas. Propaga HTTPException(400) si falla.
     """
-    api_key = _resolve_gemini_api_key(fallback_api_key)
-    if api_key:
-        try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[
-                    image_part,
-                    "Extrae todas las métricas biométricas de este reporte Fitdays en formato JSON.",
-                ],
-                config=types.GenerateContentConfig(
-                    system_instruction=FITDAYS_OCR_SYSTEM_PROMPT,
-                    temperature=0.1,
-                    top_p=0.8,
-                    max_output_tokens=2048,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    response_mime_type="application/json",
-                    response_schema=FitdaysExtractedMetrics,
-                ),
-            )
-            return FitdaysExtractedMetrics.model_validate_json(response.text)
-        except Exception as exc:
-            logger.warning("Fallback en OCR Fitdays tras error en Gemini Vision: %s", exc)
-
-    return FitdaysExtractedMetrics(
-        weight_kg=78.4,
-        fat_percentage=14.6,
-        muscle_mass_kg=63.8,
-        skeletal_muscle_pct=45.2,
-        visceral_fat=5,
-        body_water_pct=61.4,
-        bmr=1845,
-        ocr_confidence=0.92,
-        source_provider="FITDAYS_OCR",
+    parsed = parse_fitdays_report(
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        fallback_api_key=fallback_api_key,
     )
+    return FitdaysExtractedMetrics.model_validate(parsed)
 
 
 def deterministic_fallback_prescription(

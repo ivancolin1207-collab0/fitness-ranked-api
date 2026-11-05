@@ -14,20 +14,49 @@ from app.core.elo_engine import WearableSource
 class FitdaysExtractedMetrics(BaseModel):
     """Esquema estructurado devuelto por Gemini 2.5 Flash Vision o ingresado en formulario manual."""
 
-    weight_kg: float = Field(..., ge=25.0, le=300.0)
-    fat_percentage: float = Field(..., ge=2.0, le=75.0)
-    muscle_mass_kg: float = Field(..., ge=10.0, le=180.0)
-    skeletal_muscle_pct: float = Field(..., ge=15.0, le=75.0)
-    visceral_fat: int = Field(..., ge=1, le=60)
-    body_water_pct: float = Field(..., ge=30.0, le=85.0)
-    bmr: int = Field(..., ge=600, le=6000)
+    weight_kg: float = Field(..., ge=20.0, le=350.0)
+    body_fat_pct: Optional[float] = Field(default=None, ge=1.0, le=80.0)
+    fat_percentage: float = Field(..., ge=1.0, le=80.0)
+    muscle_mass_kg: float = Field(..., ge=5.0, le=220.0)
+    skeletal_muscle_pct: float = Field(..., ge=5.0, le=85.0)
+    visceral_fat: float = Field(..., ge=0.5, le=60.0)
+    water_pct: Optional[float] = Field(default=None, ge=20.0, le=90.0)
+    body_water_pct: float = Field(..., ge=20.0, le=90.0)
+    bmr_kcal: Optional[int] = Field(default=None, ge=500, le=7000)
+    bmr: int = Field(..., ge=500, le=7000)
     ocr_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-    source_provider: str = Field(default="MANUAL_FORM", max_length=50)
+    source_provider: str = Field(default="FITDAYS_OCR", max_length=50)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fitdays_keys(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        merged = dict(data)
+        if "body_fat_pct" in merged and "fat_percentage" not in merged:
+            merged["fat_percentage"] = merged["body_fat_pct"]
+        elif "fat_percentage" in merged and "body_fat_pct" not in merged:
+            merged["body_fat_pct"] = merged["fat_percentage"]
+
+        if "water_pct" in merged and "body_water_pct" not in merged:
+            merged["body_water_pct"] = merged["water_pct"]
+        elif "body_water_pct" in merged and "water_pct" not in merged:
+            merged["water_pct"] = merged["body_water_pct"]
+
+        if "bmr_kcal" in merged and "bmr" not in merged:
+            merged["bmr"] = int(round(float(merged["bmr_kcal"])))
+        elif "bmr" in merged and "bmr_kcal" not in merged:
+            merged["bmr_kcal"] = int(round(float(merged["bmr"])))
+        return merged
 
     @model_validator(mode="after")
-    def verify_muscle_vs_weight(self) -> "FitdaysExtractedMetrics":
-        if self.muscle_mass_kg >= self.weight_kg:
-            raise ValueError("`muscle_mass_kg` debe ser estrictamente menor que `weight_kg`.")
+    def sync_alias_fields(self) -> "FitdaysExtractedMetrics":
+        if self.body_fat_pct is None:
+            self.body_fat_pct = self.fat_percentage
+        if self.water_pct is None:
+            self.water_pct = self.body_water_pct
+        if self.bmr_kcal is None:
+            self.bmr_kcal = self.bmr
         return self
 
 
@@ -40,7 +69,7 @@ class BiometricRecordResponse(BaseModel):
     fat_percentage: float
     muscle_mass_kg: float
     skeletal_muscle_pct: float
-    visceral_fat: int
+    visceral_fat: float
     body_water_pct: Optional[float]
     bmr: int
     lean_body_mass_kg: float
@@ -106,22 +135,22 @@ class HydrationTodayResponse(BaseModel):
 
 
 class WhoopScreenExtractedMetrics(BaseModel):
-    sleep_pct: float = Field(default=80.0, ge=0.0, le=100.0)
-    sleep_performance_pct: float = Field(default=80.0, ge=0.0, le=100.0)
-    recovery_score: float = Field(default=47.0, ge=0.0, le=100.0)
-    strain_score: float = Field(default=7.2, ge=0.0, le=21.0)
-    stress_level: float = Field(default=2.4, ge=0.0, le=3.0)
-    stress_category: str = Field(default="ALTO")
-    resting_hr: int = Field(default=58, ge=25, le=140)
-    hrv_ms: float = Field(default=64.0, ge=5.0, le=300.0)
-    trusleep_score: int = Field(default=84, ge=0, le=100)
-    stress_score: int = Field(default=42, ge=0, le=100)
-    avg_heart_rate: int = Field(default=68, ge=30, le=220)
-    vo2max: float = Field(default=52.0, ge=15.0, le=95.0)
-    energy_score: int = Field(default=78, ge=0, le=100)
-    sleep_duration_hours: float = Field(default=7.2, ge=0.0, le=24.0)
-    bia_muscle_pct: float = Field(default=43.8, ge=10.0, le=75.0)
-    bia_fat_pct: float = Field(default=13.8, ge=2.0, le=70.0)
+    sleep_pct: float = Field(..., ge=0.0, le=100.0)
+    sleep_performance_pct: float = Field(..., ge=0.0, le=100.0)
+    recovery_score: float = Field(..., ge=0.0, le=100.0)
+    strain_score: float = Field(..., ge=0.0, le=21.0)
+    stress_level: float = Field(..., ge=0.0, le=3.0)
+    stress_category: str = Field(...)
+    resting_hr: int = Field(default=60, ge=25, le=140)
+    hrv_ms: float = Field(default=60.0, ge=5.0, le=300.0)
+    trusleep_score: int = Field(default=0, ge=0, le=100)
+    stress_score: int = Field(default=0, ge=0, le=100)
+    avg_heart_rate: int = Field(default=60, ge=30, le=220)
+    vo2max: float = Field(default=50.0, ge=15.0, le=95.0)
+    energy_score: int = Field(default=0, ge=0, le=100)
+    sleep_duration_hours: float = Field(default=0.0, ge=0.0, le=24.0)
+    bia_muscle_pct: float = Field(default=0.0, ge=0.0, le=75.0)
+    bia_fat_pct: float = Field(default=0.0, ge=0.0, le=70.0)
 
 
 class WhoopScreenScanResponse(BaseModel):
