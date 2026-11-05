@@ -185,7 +185,35 @@ async def get_today_wearable_metrics(
         await db.delete(record)
         await db.commit()
         return None
-    return WearableSyncResponse.model_validate(record)
+
+    base_resp = WearableSyncResponse.model_validate(record)
+    base_resp.sleep_pct = float(record.sleep_efficiency_pct or 80.0)
+    try:
+        dr_row = (
+            await db.execute(
+                text(
+                    """
+                    SELECT sleep_pct, stress_level, stress_category
+                    FROM daily_readiness
+                    WHERE user_id = :user_id AND date = :date
+                    ORDER BY synced_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"user_id": current_user.id, "date": today},
+            )
+        ).first()
+        if dr_row is not None:
+            if dr_row[0] is not None:
+                base_resp.sleep_pct = float(dr_row[0])
+            if dr_row[1] is not None:
+                base_resp.stress_level = float(dr_row[1])
+                base_resp.whoop_stress_level = float(dr_row[1])
+            if dr_row[2] is not None:
+                base_resp.stress_category = str(dr_row[2])
+    except Exception:
+        await db.rollback()
+    return base_resp
 
 
 @router.post(
@@ -436,19 +464,46 @@ async def scan_whoop_screen_metrics(
     )
     result = await db.execute(stmt)
     record = result.scalar_one()
+    await db.commit()
+    await db.refresh(record)
 
-    # Persistir también en `daily_readiness` con los campos exactos de WHOOP
+    # Persistir atómicamente en `daily_readiness` para la fecha actual
     try:
+        await db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS daily_readiness (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    date DATE NOT NULL DEFAULT CURRENT_DATE,
+                    sleep_pct NUMERIC(5,2) NOT NULL,
+                    recovery_score NUMERIC(5,2) NOT NULL,
+                    strain_score NUMERIC(4,1) NOT NULL,
+                    stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0,
+                    stress_category VARCHAR(20) NOT NULL DEFAULT 'BAJO',
+                    sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7,
+                    source_device VARCHAR(30) NOT NULL DEFAULT 'WHOOP',
+                    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (user_id, date, source_device)
+                )
+                """
+            )
+        )
+        await db.execute(
+            text(
+                "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7"
+            )
+        )
         await db.execute(
             text(
                 """
                 INSERT INTO daily_readiness (
                     user_id, date, sleep_pct, recovery_score, strain_score,
-                    stress_level, stress_category, source_device, synced_at
+                    stress_level, stress_category, sleep_hours, source_device, synced_at
                 )
                 VALUES (
                     :user_id, :date, :sleep_pct, :recovery_score, :strain_score,
-                    :stress_level, :stress_category, :source_device, NOW()
+                    :stress_level, :stress_category, :sleep_hours, :source_device, NOW()
                 )
                 ON CONFLICT (user_id, date, source_device) DO UPDATE SET
                     sleep_pct = EXCLUDED.sleep_pct,
@@ -456,6 +511,7 @@ async def scan_whoop_screen_metrics(
                     strain_score = EXCLUDED.strain_score,
                     stress_level = EXCLUDED.stress_level,
                     stress_category = EXCLUDED.stress_category,
+                    sleep_hours = EXCLUDED.sleep_hours,
                     synced_at = NOW()
                 """
             ),
@@ -467,13 +523,13 @@ async def scan_whoop_screen_metrics(
                 "strain_score": extracted.strain_score,
                 "stress_level": extracted.stress_level,
                 "stress_category": extracted.stress_category,
+                "sleep_hours": sleep_hours_calc,
                 "source_device": resolved_source.value,
             },
         )
+        await db.commit()
     except Exception:
-        pass
-
-    await db.commit()
+        await db.rollback()
 
     return WhoopScreenScanResponse(
         id=record.id,

@@ -98,15 +98,19 @@ async def ensure_postgres_enums() -> None:
     crea la tabla `daily_readiness` y elimina cualquier registro mock histórico.
     """
     try:
-        async with engine.connect() as conn:
-            autocommit_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-            await autocommit_conn.execute(
+        async with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
+            await conn.execute(
                 text("ALTER TYPE wearable_source_enum ADD VALUE IF NOT EXISTS 'SAMSUNG_WATCH'")
             )
-            await autocommit_conn.execute(
+            await conn.execute(
                 text("ALTER TYPE wearable_source_enum ADD VALUE IF NOT EXISTS 'APPLE_WATCH'")
             )
-            await autocommit_conn.execute(
+    except Exception as exc:
+        logger.warning("Aviso en actualización de wearable_source_enum: %s", exc)
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS daily_readiness (
@@ -118,6 +122,7 @@ async def ensure_postgres_enums() -> None:
                         strain_score NUMERIC(4,1) NOT NULL,
                         stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0,
                         stress_category VARCHAR(20) NOT NULL DEFAULT 'BAJO',
+                        sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7,
                         source_device VARCHAR(30) NOT NULL DEFAULT 'WHOOP',
                         synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (user_id, date, source_device)
@@ -125,8 +130,13 @@ async def ensure_postgres_enums() -> None:
                     """
                 )
             )
+            await conn.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7"
+                )
+            )
             # Limpiar filas mock residuales de versiones previas
-            await autocommit_conn.execute(
+            await conn.execute(
                 text(
                     """
                     DELETE FROM wearable_metrics
@@ -134,7 +144,7 @@ async def ensure_postgres_enums() -> None:
                     """
                 )
             )
-            await autocommit_conn.execute(
+            await conn.execute(
                 text(
                     """
                     DELETE FROM biometrics
@@ -143,7 +153,7 @@ async def ensure_postgres_enums() -> None:
                 )
             )
     except Exception as exc:
-        logger.warning("No se pudo actualizar wearable_source_enum o daily_readiness en startup: %s", exc)
+        logger.warning("No se pudo actualizar daily_readiness en startup: %s", exc)
 
 
 @app.get("/", tags=["Healthcheck"])

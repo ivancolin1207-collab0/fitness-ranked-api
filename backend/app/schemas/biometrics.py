@@ -111,6 +111,10 @@ class WearableSyncResponse(BaseModel):
     max_hr: int
     sleep_hours: float
     sleep_efficiency_pct: Optional[float]
+    sleep_pct: Optional[float] = None
+    stress_level: Optional[float] = None
+    stress_category: Optional[str] = None
+    whoop_stress_level: Optional[float] = None
     source_device: WearableSource
     synced_at: datetime
 

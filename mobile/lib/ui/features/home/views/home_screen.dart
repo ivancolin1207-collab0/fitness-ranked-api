@@ -90,6 +90,23 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (BuildContext context, _) {
         final UserProfileModel? user = authViewModel.currentUser;
         final WearableMetricRecord? wearable = viewModel.wearable;
+        final bool hasWhoopData = viewModel.hasWhoopData || wearable != null;
+        final WearableMetricRecord? effectiveWearable = wearable ??
+            (viewModel.hasWhoopData
+                ? WearableMetricRecord(
+                    date: DateTime.now(),
+                    strainScore: viewModel.strainScore,
+                    recoveryScore: viewModel.recoveryScore,
+                    hrvMs: 56.0,
+                    restingHr: 58,
+                    avgHr: 68,
+                    maxHr: 155,
+                    sleepHours: viewModel.sleepHours,
+                    sleepEfficiencyPct: viewModel.sleepPct,
+                    sourceDevice: viewModel.preferredWearable,
+                    whoopStressLevel: viewModel.stressScore,
+                  )
+                : null);
         final BiometricRecord? bio = viewModel.biometrics;
         final String activeSource =
             _normalizedWearableSource(viewModel.preferredWearable);
@@ -213,7 +230,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     physics: const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
                     ),
-                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 28),
+                    padding: const EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      top: 12,
+                      bottom: 120,
+                    ),
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 720),
@@ -228,17 +250,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (viewModel.statusBanner != null)
                               _buildAlertBanner(
                                 viewModel.statusBanner!,
-                                (wearable != null &&
-                                        (wearable.recoveryScore < 40.0 ||
-                                            wearable.sleepEfficiencyPct < 70.0))
+                                (effectiveWearable != null &&
+                                        (effectiveWearable.recoveryScore < 40.0 ||
+                                            effectiveWearable.sleepEfficiencyPct < 70.0))
                                     ? ApexTheme.warningAmber
-                                    : (wearable != null
+                                    : (effectiveWearable != null
                                         ? ApexTheme.readinessGreen
                                         : ApexTheme.cyanElectric),
                               ),
                             _buildWearableSourceBar(context, activeSource),
                             const SizedBox(height: 10),
-                            if (wearable == null)
+                            if (!hasWhoopData || effectiveWearable == null)
                               _buildWaitingWearableSyncCard(
                                 context,
                                 activeSource,
@@ -246,12 +268,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             else ...<Widget>[
                               _buildPolymorphicWearableDashboard(
                                 context,
-                                wearable,
+                                effectiveWearable,
                                 activeSource,
                               ),
                               const SizedBox(height: 10),
                               _buildWearableTelemetryRow(
-                                wearable,
+                                effectiveWearable,
                                 activeSource,
                               ),
                             ],
@@ -268,6 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _buildEmptyBiometricsCard(context),
                             const SizedBox(height: 10),
                             _buildLbmTrendChartCard(),
+                            const SizedBox(height: 110),
                           ],
                         ),
                       ),
@@ -882,14 +905,22 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     WearableMetricRecord wearable,
   ) {
-    final double sleepPct =
-        (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0);
-    final double recovery =
-        (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0);
-    final double strain =
-        (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0);
-    final double stress =
-        (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0);
+    final double sleepPct = (viewModel.hasWhoopData
+            ? viewModel.sleepPct
+            : (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct))
+        .clamp(0.0, 100.0);
+    final double recovery = (viewModel.hasWhoopData
+            ? viewModel.recoveryScore
+            : (viewModel.whoopRecovery ?? wearable.recoveryScore))
+        .clamp(0.0, 100.0);
+    final double strain = (viewModel.hasWhoopData
+            ? viewModel.strainScore
+            : (viewModel.whoopStrain ?? wearable.strainScore))
+        .clamp(0.0, 21.0);
+    final double stress = (viewModel.hasWhoopData
+            ? viewModel.stressScore
+            : (viewModel.whoopStress ?? wearable.whoopStressLevel))
+        .clamp(0.0, 3.0);
 
     final bool isCompromised = recovery < 34.0;
     final Color recColor = recovery < 34.0
@@ -901,8 +932,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'ZONA VERDE • SOBRECARGA'
             : 'ZONA AMARILLA • MANTENIMIENTO');
 
-    final String stressCategory = viewModel.whoopStressCategory ??
-        (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'));
+    final String stressCategory = viewModel.hasWhoopData
+        ? viewModel.stressCategory
+        : (viewModel.whoopStressCategory ??
+            (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO')));
     final Color stressColor = stressCategory == 'ALTO' || stress >= 2.0
         ? ApexTheme.warningAmber
         : (stressCategory == 'MEDIO' || stress >= 1.0
@@ -1590,7 +1623,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Analizando telemetría de Whoop con Gemini Vision...'),
+          content: Text('Procesando telemetría de Whoop con Gemini Vision...'),
+          duration: Duration(seconds: 2),
         ),
       );
     }
@@ -1615,23 +1649,28 @@ class _HomeScreenState extends State<HomeScreen> {
           ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8)
                   as num)
               .toDouble();
-      final String? strCat = result['stress_category'] as String?;
-      final double? slpHours = (result['sleep_hours'] as num?)?.toDouble();
+      final String strCat = (result['stress_category'] as String?) ?? 'MEDIO';
+      final double slpHours =
+          (result['sleep_hours'] as num?)?.toDouble() ?? 7.7;
 
-      // Actualizar inmediatamente el ViewModel / State
-      viewModel.updateFromWhoopScan(
-        recoveryScore: recScore,
-        strainScore: strScore,
-        sleepScore: slpScore,
-        stressScore: strLevel,
+      // 1. Asignar los datos parseados al ViewModel
+      viewModel.setWhoopData(
+        hasData: true,
+        recovery: recScore,
+        strain: strScore,
+        sleep: slpScore,
+        stressLevel: strLevel,
         stressCategory: strCat,
         sleepHours: slpHours,
         hrvMs: (result['hrv_ms'] as num?)?.toInt(),
-        restingHr: (result['rhr_bpm'] as num?)?.toInt(),
-        healthMetricsInRange:
-            (result['health_monitor_metrics_ok'] as num?)?.toInt(),
+        restingHr: ((result['rhr_bpm'] ?? result['resting_hr']) as num?)?.toInt(),
+        healthMetricsInRange: ((result['health_monitor_metrics_ok'] ??
+                result['whoop_health_metrics_in_range']) as num?)
+            ?.toInt(),
         sourceDevice: activeSource,
       );
+
+      // 2. Forzar reconstrucción del árbol de widgets
       if (mounted) {
         setState(() {});
       }
@@ -1642,17 +1681,20 @@ class _HomeScreenState extends State<HomeScreen> {
           SnackBar(
             backgroundColor: const Color(0xFF10B981),
             content: Text(
-              'Whoop sincronizado: Recuperación ${recScore.round()}% | Esfuerzo ${strScore.toStringAsFixed(1)}',
+              'Telemetría actualizada: Recuperación ${recScore.round()}% | Strain ${strScore.toStringAsFixed(1)}',
             ),
           ),
         );
       }
-    } else if (context.mounted && viewModel.errorMessage != null) {
+    } else if (context.mounted) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: ApexTheme.deloadCrimson,
-          content: Text(viewModel.errorMessage!),
+          backgroundColor: const Color(0xFFEF4444),
+          content: Text(
+            viewModel.errorMessage ??
+                'Error al procesar la captura. Inténtalo nuevamente.',
+          ),
         ),
       );
     }

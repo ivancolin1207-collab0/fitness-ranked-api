@@ -55,19 +55,8 @@ def _invoke_gemini_vision_json(
         )
 
     try:
+        raw_text = ""
         try:
-            import google.generativeai as genai  # type: ignore
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            response = model.generate_content(
-                [
-                    prompt,
-                    {"mime_type": mime_type or "image/jpeg", "data": image_bytes},
-                ]
-            )
-            raw_text = response.text or ""
-        except ImportError:
             from google import genai as google_genai
             from google.genai import types
 
@@ -87,10 +76,32 @@ def _invoke_gemini_vision_json(
                 ),
             )
             raw_text = response.text or ""
+        except Exception:
+            import google.generativeai as genai  # type: ignore
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(
+                "gemini-2.5-flash",
+                generation_config={
+                    "temperature": 0.1,
+                    "response_mime_type": "application/json",
+                },
+            )
+            response = model.generate_content(
+                [
+                    prompt,
+                    {"mime_type": mime_type or "image/jpeg", "data": image_bytes},
+                ]
+            )
+            raw_text = response.text or ""
 
         cleaned_text = (
             raw_text.replace("```json", "").replace("```", "").strip()
         )
+        start_idx = cleaned_text.find("{")
+        end_idx = cleaned_text.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            cleaned_text = cleaned_text[start_idx : end_idx + 1]
         if not cleaned_text:
             raise ValueError("Gemini Vision devolvió una respuesta vacía.")
         data = json.loads(cleaned_text)
@@ -105,11 +116,12 @@ def _invoke_gemini_vision_json(
 
 
 WHOOP_OCR_SYSTEM_PROMPT = """
-Analiza esta captura de pantalla de la app oficial de WHOOP y extrae los datos numéricos exactos:
+Analiza minuciosamente esta captura de pantalla de la app oficial de WHOOP.
+Extrae con exactitud los valores numéricos correspondientes a:
 1. Círculo 'SUEÑO >': porcentaje numérico (ej. 80% -> 80.0)
 2. Círculo 'RECUPERACIÓN >': porcentaje numérico (ej. 47% -> 47.0)
-3. Círculo 'ESFUERZO >': valor numérico decimal (ej. 7.4 -> 7.4)
-4. Tarjeta 'MONITOR DE ESTRÉS': nivel numérico decimal (ej. 1.8 -> 1.8) y categoría ('BAJO', 'MEDIO', 'ALTO')
+3. Círculo 'ESFUERZO >': valor decimal (ej. 7.4 -> 7.4)
+4. Tarjeta 'MONITOR DE ESTRÉS': valor decimal (ej. 1.8 -> 1.8) y estado ('BAJO', 'MEDIO', 'ALTO')
 5. Tarjeta 'ACTIVIDADES DE HOY' -> 'SUEÑO': duración en horas decimales (ej. si dice 7:42 -> 7.7)
 
 Devuelve EXCLUSIVAMENTE este JSON válido:
@@ -255,6 +267,26 @@ def parse_fitdays_report(
     }
 
 
+def _coerce_whoop_float(raw_val: Any, default: Optional[float] = None) -> float:
+    if raw_val is None:
+        if default is not None:
+            return default
+        raise ValueError("Valor numérico requerido ausente en la captura.")
+    if isinstance(raw_val, (int, float)):
+        return float(raw_val)
+    text_val = str(raw_val).strip().replace("%", "").replace(",", ".")
+    if not text_val or text_val.lower() in ("null", "none", "n/a"):
+        if default is not None:
+            return default
+        raise ValueError("Valor numérico vacío.")
+    if ":" in text_val:
+        parts = text_val.split(":")
+        hours = float(parts[0].strip() or 0)
+        minutes = float(parts[1].strip()[:2] or 0)
+        return round(hours + (minutes / 60.0), 2)
+    return float(text_val)
+
+
 def parse_whoop_screen(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
@@ -277,24 +309,35 @@ def parse_whoop_screen(
     )
 
     try:
-        sleep_val = float(
-            raw_json["sleep_pct"]
-            if "sleep_pct" in raw_json and raw_json["sleep_pct"] is not None
-            else raw_json["sleep_performance_pct"]
+        raw_sleep = (
+            raw_json.get("sleep_pct")
+            if raw_json.get("sleep_pct") is not None
+            else raw_json.get("sleep_performance_pct")
         )
-        rec_val = float(raw_json["recovery_score"])
-        strain_val = float(raw_json["strain_score"])
-        stress_val = float(raw_json.get("stress_level", 1.8))
-        stress_cat = str(
-            raw_json.get("stress_category")
-            or ("ALTO" if stress_val >= 2.0 else ("MEDIO" if stress_val >= 1.0 else "BAJO"))
-        ).upper()
-        raw_sleep_hours = raw_json.get("sleep_hours")
-        sleep_hours_val = (
-            float(raw_sleep_hours)
-            if raw_sleep_hours is not None
-            else round((sleep_val / 100.0) * 8.0, 2)
+        sleep_val = _coerce_whoop_float(raw_sleep)
+        rec_val = _coerce_whoop_float(raw_json.get("recovery_score"))
+        strain_val = _coerce_whoop_float(raw_json.get("strain_score"))
+        stress_val = _coerce_whoop_float(raw_json.get("stress_level"), default=1.8)
+        raw_cat = str(raw_json.get("stress_category") or "").strip().upper()
+        if "ALT" in raw_cat or "HIGH" in raw_cat:
+            stress_cat = "ALTO"
+        elif "MED" in raw_cat:
+            stress_cat = "MEDIO"
+        elif "BAJ" in raw_cat or "LOW" in raw_cat:
+            stress_cat = "BAJO"
+        else:
+            stress_cat = (
+                "ALTO"
+                if stress_val >= 2.0
+                else ("MEDIO" if stress_val >= 1.0 else "BAJO")
+            )
+        default_sleep_h = round(max(4.5, (sleep_val / 100.0) * 9.625), 1)
+        sleep_hours_val = _coerce_whoop_float(
+            raw_json.get("sleep_hours"),
+            default=default_sleep_h,
         )
+        if sleep_hours_val <= 0.5:
+            sleep_hours_val = default_sleep_h
     except Exception as exc:
         raise HTTPException(
             status_code=400,
