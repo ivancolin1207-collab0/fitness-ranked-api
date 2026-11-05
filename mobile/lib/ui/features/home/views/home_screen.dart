@@ -7,7 +7,6 @@ import '../../../core/app_theme.dart';
 import '../../auth/view_models/auth_view_model.dart';
 import '../../auth/views/profile_setup_screen.dart';
 import '../view_models/home_view_model.dart';
-import 'dual_readiness_ring_painter.dart';
 
 class HomeScreen extends StatelessWidget {
   final HomeViewModel viewModel;
@@ -19,6 +18,47 @@ class HomeScreen extends StatelessWidget {
     required this.authViewModel,
   });
 
+  String _normalizedWearableSource(String raw) {
+    if (raw == 'SAMSUNG_HEALTH' || raw == 'SAMSUNG_WATCH') {
+      return 'SAMSUNG_WATCH';
+    }
+    if (raw == 'APPLE_WATCH') {
+      return 'APPLE_WATCH';
+    }
+    if (raw == 'HUAWEI_GT') {
+      return 'HUAWEI_GT';
+    }
+    return 'WHOOP';
+  }
+
+  String _wearableRegisterButtonText(String source) {
+    switch (_normalizedWearableSource(source)) {
+      case 'HUAWEI_GT':
+        return 'REGISTRAR MÉTRICAS HUAWEI';
+      case 'SAMSUNG_WATCH':
+        return 'REGISTRAR MÉTRICAS SAMSUNG';
+      case 'APPLE_WATCH':
+        return 'REGISTRAR MÉTRICAS APPLE WATCH';
+      case 'WHOOP':
+      default:
+        return 'REGISTRAR MÉTRICAS WHOOP';
+    }
+  }
+
+  String _wearableBrandTitle(String source) {
+    switch (_normalizedWearableSource(source)) {
+      case 'HUAWEI_GT':
+        return 'HUAWEI GT / WATCH';
+      case 'SAMSUNG_WATCH':
+        return 'SAMSUNG GALAXY WATCH';
+      case 'APPLE_WATCH':
+        return 'APPLE WATCH';
+      case 'WHOOP':
+      default:
+        return 'WHOOP 4.0';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -27,21 +67,30 @@ class HomeScreen extends StatelessWidget {
         final UserProfileModel? user = authViewModel.currentUser;
         final WearableMetricRecord? wearable = viewModel.wearable;
         final BiometricRecord? bio = viewModel.biometrics;
+        final String activeSource =
+            _normalizedWearableSource(viewModel.preferredWearable);
 
         return Scaffold(
           appBar: AppBar(
+            toolbarHeight: kToolbarHeight,
+            titleSpacing: 12,
             title: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 const Text(
                   'BIOMETRÍA & READINESS',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w900),
                 ),
                 if (user != null)
                   Text(
                     '@${user.username} • ${user.fullName ?? "Atleta"} • ${user.trainingGoal}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 11,
+                      fontSize: 10.5,
                       color: ApexTheme.cyanElectric,
                       fontWeight: FontWeight.w700,
                     ),
@@ -49,40 +98,86 @@ class HomeScreen extends StatelessWidget {
               ],
             ),
             actions: <Widget>[
-              ActionChip(
-                backgroundColor: ApexTheme.cardGraphite,
-                side: const BorderSide(color: ApexTheme.voltAccent),
-                label: Text(
-                  viewModel.unitSystem,
-                  style: const TextStyle(
-                    color: ApexTheme.voltAccent,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                  ),
-                ),
-                onPressed: viewModel.toggleUnitSystem,
-              ),
-              IconButton(
-                tooltip: 'Editar Perfil',
-                icon: const Icon(Icons.manage_accounts_outlined),
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (BuildContext ctx) => ProfileSetupScreen(
-                        viewModel: authViewModel,
-                        onCompleted: () => Navigator.of(ctx).pop(),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  spacing: 4,
+                  children: <Widget>[
+                    ActionChip(
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 0,
                       ),
+                      backgroundColor: ApexTheme.cardGraphite,
+                      side: const BorderSide(color: ApexTheme.voltAccent),
+                      label: Text(
+                        viewModel.unitSystem,
+                        style: const TextStyle(
+                          color: ApexTheme.voltAccent,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 11,
+                        ),
+                      ),
+                      onPressed: viewModel.toggleUnitSystem,
                     ),
-                  );
-                },
-              ),
-              IconButton(
-                tooltip: 'Cerrar sesión',
-                icon: const Icon(
-                  Icons.logout_rounded,
-                  color: ApexTheme.textMuted,
+                    IconButton(
+                      tooltip: 'Editar Perfil',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: const Icon(
+                        Icons.manage_accounts_outlined,
+                        size: 19,
+                      ),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (BuildContext ctx) => ProfileSetupScreen(
+                              viewModel: authViewModel,
+                              onCompleted: () => Navigator.of(ctx).pop(),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    IconButton(
+                      tooltip: 'Servidor Cloud / IP',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: const Icon(
+                        Icons.dns_outlined,
+                        color: ApexTheme.cyanElectric,
+                        size: 18,
+                      ),
+                      onPressed: () => _showServerInfoDialog(context),
+                    ),
+                    IconButton(
+                      tooltip: 'Cerrar sesión',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: const Icon(
+                        Icons.logout_rounded,
+                        color: ApexTheme.textMuted,
+                        size: 19,
+                      ),
+                      onPressed: authViewModel.logout,
+                    ),
+                  ],
                 ),
-                onPressed: authViewModel.logout,
               ),
             ],
           ),
@@ -90,41 +185,63 @@ class HomeScreen extends StatelessWidget {
               ? const Center(child: CircularProgressIndicator())
               : RefreshIndicator(
                   onRefresh: viewModel.initializeDashboard,
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
-                        children: <Widget>[
-                          if (viewModel.errorMessage != null)
-                            _buildAlertBanner(
-                              viewModel.errorMessage!,
-                              ApexTheme.deloadCrimson,
-                            ),
-                          if (viewModel.statusBanner != null)
-                            _buildAlertBanner(
-                              viewModel.statusBanner!,
-                              ApexTheme.readinessGreen,
-                            ),
-                          _buildWearableSourceBar(context),
-                          const SizedBox(height: 12),
-                          if (wearable == null)
-                            _buildWaitingWearableSyncCard(context)
-                          else ...<Widget>[
-                            _buildDualRingHeroCard(context, wearable),
-                            const SizedBox(height: 14),
-                            _buildWearableTelemetryRow(wearable),
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 28),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            if (viewModel.errorMessage != null)
+                              _buildAlertBanner(
+                                viewModel.errorMessage!,
+                                ApexTheme.deloadCrimson,
+                              ),
+                            if (viewModel.statusBanner != null)
+                              _buildAlertBanner(
+                                viewModel.statusBanner!,
+                                (wearable != null &&
+                                        (wearable.recoveryScore < 40.0 ||
+                                            wearable.sleepEfficiencyPct < 70.0))
+                                    ? ApexTheme.warningAmber
+                                    : (wearable != null
+                                        ? ApexTheme.readinessGreen
+                                        : ApexTheme.cyanElectric),
+                              ),
+                            _buildWearableSourceBar(context, activeSource),
+                            const SizedBox(height: 10),
+                            if (wearable == null)
+                              _buildWaitingWearableSyncCard(
+                                context,
+                                activeSource,
+                              )
+                            else ...<Widget>[
+                              _buildPolymorphicWearableDashboard(
+                                context,
+                                wearable,
+                                activeSource,
+                              ),
+                              const SizedBox(height: 10),
+                              _buildWearableTelemetryRow(
+                                wearable,
+                                activeSource,
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            _buildDualBiometricCaptureActions(context),
+                            const SizedBox(height: 10),
+                            if (bio != null)
+                              _buildBodyCompositionCard(context, bio)
+                            else
+                              _buildEmptyBiometricsCard(context),
+                            const SizedBox(height: 10),
+                            _buildLbmTrendChartCard(),
                           ],
-                          const SizedBox(height: 16),
-                          _buildDualBiometricCaptureActions(context),
-                          const SizedBox(height: 14),
-                          if (bio != null)
-                            _buildBodyCompositionCard(context, bio)
-                          else
-                            _buildEmptyBiometricsCard(context),
-                          const SizedBox(height: 14),
-                          _buildLbmTrendChartCard(),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -134,37 +251,88 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  void _showServerInfoDialog(BuildContext context) {
+    final TextEditingController ctrl = TextEditingController(
+      text: authViewModel.apiBaseUrl,
+    );
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: ApexTheme.cardGraphite,
+          title: const Text(
+            'Servidor Backend Activo',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          content: TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(
+              labelText: 'URL API (Render / Local)',
+              isDense: true,
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: ApexTheme.voltAccent,
+                foregroundColor: Colors.black,
+              ),
+              onPressed: () async {
+                await authViewModel.setServerUrl(ctrl.text.trim());
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildAlertBanner(String text, Color accent) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent),
+        color: accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.7)),
       ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: accent,
-          fontWeight: FontWeight.w600,
-          fontSize: 12,
-        ),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.info_outline_rounded, color: accent, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: accent,
+                fontWeight: FontWeight.w600,
+                fontSize: 11.5,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildWearableSourceBar(BuildContext context) {
-    final String selected = viewModel.preferredWearable;
+  Widget _buildWearableSourceBar(BuildContext context, String selectedSource) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
           children: <Widget>[
             const Icon(
               Icons.watch_rounded,
               color: ApexTheme.cyanElectric,
-              size: 18,
+              size: 17,
             ),
             const SizedBox(width: 8),
             const Expanded(
@@ -179,7 +347,8 @@ class HomeScreen extends StatelessWidget {
             ),
             DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: selected,
+                value: selectedSource,
+                isDense: true,
                 dropdownColor: ApexTheme.cardGraphite,
                 style: const TextStyle(
                   color: ApexTheme.voltAccent,
@@ -192,12 +361,16 @@ class HomeScreen extends StatelessWidget {
                     child: Text('WHOOP 4.0'),
                   ),
                   DropdownMenuItem<String>(
-                    value: 'HEALTH_CONNECT',
-                    child: Text('HEALTH CONNECT'),
+                    value: 'HUAWEI_GT',
+                    child: Text('HUAWEI GT / WATCH'),
                   ),
                   DropdownMenuItem<String>(
-                    value: 'HUAWEI_GT',
-                    child: Text('HUAWEI GT'),
+                    value: 'SAMSUNG_WATCH',
+                    child: Text('SAMSUNG GALAXY WATCH'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'APPLE_WATCH',
+                    child: Text('APPLE WATCH'),
                   ),
                 ],
                 onChanged: (String? val) {
@@ -213,84 +386,103 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildWaitingWearableSyncCard(BuildContext context) {
-    final String sourceName = viewModel.preferredWearable == 'WHOOP'
-        ? 'Whoop'
-        : viewModel.preferredWearable;
+  Widget _buildWaitingWearableSyncCard(
+    BuildContext context,
+    String activeSource,
+  ) {
+    final String brand = _wearableBrandTitle(activeSource);
+    final String registerBtnText = _wearableRegisterButtonText(activeSource);
 
     return Card(
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         side: const BorderSide(color: ApexTheme.cyanElectric, width: 1.2),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Column(
           children: <Widget>[
             const Icon(
               Icons.sync_problem_rounded,
               color: ApexTheme.cyanElectric,
-              size: 42,
+              size: 32,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             Text(
-              'Esperando sincronización de $sourceName',
+              'Sin telemetría de $brand sincronizada hoy',
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 16,
+                fontSize: 14.5,
                 fontWeight: FontWeight.w900,
                 color: ApexTheme.textPrimary,
               ),
             ),
-            const SizedBox(height: 6),
-            const Text(
-              'Aún no se han recibido métricas reales de Recovery, Strain, HRV, FC en reposo y Sueño para el día de hoy.',
+            const SizedBox(height: 4),
+            Text(
+              'Sincroniza Health Connect o usa "$registerBtnText" para activar la prescripción adaptativa de Gemini Coach.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
+              style: const TextStyle(
+                fontSize: 11.5,
                 color: ApexTheme.textMuted,
-                height: 1.35,
+                height: 1.3,
               ),
             ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              alignment: WrapAlignment.center,
+            const SizedBox(height: 12),
+            Row(
+              spacing: 8,
               children: <Widget>[
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: ApexTheme.voltAccent,
-                    foregroundColor: Colors.black,
-                  ),
-                  onPressed: viewModel.isSyncingWearable
-                      ? null
-                      : viewModel.forceSyncWearable,
-                  icon: viewModel.isSyncingWearable
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.black,
-                          ),
-                        )
-                      : const Icon(Icons.sync_rounded),
-                  label: const Text(
-                    'FORZAR SYNC',
-                    style: TextStyle(fontWeight: FontWeight.w900),
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: ApexTheme.voltAccent,
+                      foregroundColor: Colors.black,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    onPressed: viewModel.isSyncingWearable
+                        ? null
+                        : viewModel.forceSyncWearable,
+                    icon: viewModel.isSyncingWearable
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
+                        : const Icon(Icons.sync_rounded, size: 16),
+                    label: const Text(
+                      'FORZAR SYNC',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
                   ),
                 ),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: ApexTheme.cyanElectric,
-                    side: const BorderSide(color: ApexTheme.cyanElectric),
-                  ),
-                  onPressed: () => _openWearableManualSyncModal(context),
-                  icon: const Icon(Icons.edit_attributes_outlined),
-                  label: Text(
-                    'REGISTRAR $sourceName HOY',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ApexTheme.cyanElectric,
+                      side: const BorderSide(color: ApexTheme.cyanElectric),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    onPressed: () =>
+                        _openWearableManualSyncModal(context, activeSource),
+                    icon: const Icon(Icons.bolt_rounded, size: 15),
+                    label: Text(
+                      registerBtnText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 10.5,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -301,164 +493,639 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDualRingHeroCard(
+  /// Renderiza polimórficamente el tablero del wearable seleccionado.
+  Widget _buildPolymorphicWearableDashboard(
+    BuildContext context,
+    WearableMetricRecord wearable,
+    String activeSource,
+  ) {
+    switch (activeSource) {
+      case 'HUAWEI_GT':
+        return _buildHuaweiGtCard(context, wearable);
+      case 'SAMSUNG_WATCH':
+        return _buildSamsungWatchCard(context, wearable);
+      case 'APPLE_WATCH':
+        return _buildAppleWatchCard(context, wearable);
+      case 'WHOOP':
+      default:
+        return _buildWhoopOfficialCard(context, wearable);
+    }
+  }
+
+  /// 1. Tarjeta Oficial WHOOP 4.0:
+  /// - 3 Anillos Superiores: SUEÑO (%), RECUPERACIÓN (%), ESFUERZO (0-21)
+  /// - Monitor de Salud (5/5 métricas) y Monitor de Estrés (0.0-3.0 Bajo/Medio/Alto)
+  /// - Prescripción Cognitiva de Gemini por Sueño y Estrés
+  Widget _buildWhoopOfficialCard(
     BuildContext context,
     WearableMetricRecord wearable,
   ) {
-    final double recovery = wearable.recoveryScore;
-    final double strain = wearable.strainScore;
-    final Color recColor = ApexTheme.readinessColor(recovery);
-    final String zoneLabel = recovery < 40.0
-        ? 'ZONA ROJA • DESCARGA (-15% CARGA)'
-        : (recovery > 80.0
-            ? 'ZONA VERDE • SOBRECARGA (+2.5 KG)'
-            : 'ZONA AMARILLA • MANTENIMIENTO');
+    final double sleepPct = wearable.sleepEfficiencyPct.clamp(0.0, 100.0);
+    final double recovery = wearable.recoveryScore.clamp(0.0, 100.0);
+    final double strain = wearable.strainScore.clamp(0.0, 21.0);
+    final double stress = wearable.whoopStressLevel.clamp(0.0, 3.0);
+
+    final bool isCompromised =
+        recovery < 40.0 || sleepPct < 70.0 || stress >= 2.0;
+    final Color recColor = recovery < 34.0
+        ? ApexTheme.deloadCrimson
+        : (recovery < 67.0 ? ApexTheme.warningAmber : ApexTheme.readinessGreen);
+
+    final String stressCategory =
+        stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO');
+    final Color stressColor = stress >= 2.0
+        ? ApexTheme.warningAmber
+        : (stress >= 1.0 ? ApexTheme.cyanElectric : ApexTheme.readinessGreen);
+
+    final String geminiRationale = isCompromised
+        ? 'Recuperación comprometida (${recovery.toStringAsFixed(0)}%) y estrés elevado. Redujimos el volumen prescrito para evitar fatiga del SNC.'
+        : (recovery >= 80.0
+            ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%). Gemini Coach activa sobrecarga progresiva (+2.5 kg).'
+            : 'Recuperación estable (${recovery.toStringAsFixed(0)}%). Gemini Coach mantiene volumen objetivo.');
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(14),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
+            // Cabecera WHOOP + Badge de Zona
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                SizedBox(
-                  width: 146,
-                  height: 146,
-                  child: CustomPaint(
-                    painter: DualReadinessRingPainter(
-                      recoveryScore: recovery,
-                      strainScore: strain,
-                    ),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          Text(
-                            '${recovery.toStringAsFixed(0)}%',
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900,
-                              color: recColor,
-                            ),
-                          ),
-                          const Text(
-                            'RECOVERY',
-                            style: TextStyle(
-                              fontSize: 10,
-                              letterSpacing: 1.1,
-                              color: ApexTheme.textMuted,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'STRAIN ${strain.toStringAsFixed(1)}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: ApexTheme.cyanElectric,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                const Text(
+                  'WHOOP 4.0 • TELEMETRÍA DIARIA',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.1,
+                    color: ApexTheme.textPrimary,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: recColor.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          zoneLabel,
-                          style: TextStyle(
-                            color: recColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Fuente activa: ${wearable.sourceDevice}',
-                        style: const TextStyle(
-                          color: ApexTheme.cyanElectric,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Gemini Coach ajusta tus series en vivo según tu HRV, sueño y recuperación real.',
-                        style: TextStyle(
-                          color: ApexTheme.textPrimary,
-                          fontSize: 12,
-                          height: 1.3,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: <Widget>[
-                           OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                              foregroundColor: ApexTheme.voltAccent,
-                              side: const BorderSide(
-                                color: ApexTheme.voltAccent,
-                              ),
-                            ),
-                            onPressed: viewModel.isSyncingWearable
-                                ? null
-                                : viewModel.forceSyncWearable,
-                            icon: const Icon(Icons.sync_rounded, size: 15),
-                            label: const Text(
-                              'Forzar Sync',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          TextButton(
-                            style: TextButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            onPressed: () =>
-                                _openWearableManualSyncModal(context),
-                            child: const Text(
-                              'Actualizar datos',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: ApexTheme.cyanElectric,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (isCompromised ? ApexTheme.deloadCrimson : recColor)
+                        .withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isCompromised
+                        ? 'ZONA ROJA • DELOAD (-20% CARGA)'
+                        : (recovery >= 67.0
+                            ? 'ZONA VERDE • SOBRECARGA'
+                            : 'ZONA AMARILLA • MANTENIMIENTO'),
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w900,
+                      color: isCompromised ? ApexTheme.deloadCrimson : recColor,
+                    ),
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            // 3 Anillos Oficiales Whoop: SUEÑO %, RECUPERACIÓN %, ESFUERZO
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: <Widget>[
+                _WhoopCircleGauge(
+                  label: 'SUEÑO >',
+                  valueText: '${sleepPct.toStringAsFixed(0)}%',
+                  progress: (sleepPct / 100.0).clamp(0.0, 1.0),
+                  color: const Color(0xFF75A8D3),
+                ),
+                _WhoopCircleGauge(
+                  label: 'RECUPERACIÓN >',
+                  valueText: '${recovery.toStringAsFixed(0)}%',
+                  progress: (recovery / 100.0).clamp(0.0, 1.0),
+                  color: recColor,
+                ),
+                _WhoopCircleGauge(
+                  label: 'ESFUERZO >',
+                  valueText: strain.toStringAsFixed(1),
+                  progress: (strain / 21.0).clamp(0.0, 1.0),
+                  color: const Color(0xFF0095FF),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            // Tarjetas duales: MONITOR DE SALUD y MONITOR DE ESTRÉS
+            Row(
+              spacing: 10,
+              children: <Widget>[
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: ApexTheme.obsidianBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: ApexTheme.readinessGreen.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Text(
+                          'MONITOR DE SALUD',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                            color: ApexTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: <Widget>[
+                            Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: ApexTheme.readinessGreen
+                                    .withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: const Icon(
+                                Icons.check_rounded,
+                                size: 13,
+                                color: ApexTheme.readinessGreen,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  const Text(
+                                    'DENTRO DEL RANGO',
+                                    style: TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w900,
+                                      color: ApexTheme.readinessGreen,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${wearable.whoopHealthMetricsInRange}/5 métricas',
+                                    style: const TextStyle(
+                                      fontSize: 10.5,
+                                      color: ApexTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: ApexTheme.obsidianBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: stressColor.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Text(
+                          'MONITOR DE ESTRÉS',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                            color: ApexTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: <Widget>[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: stressColor.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                stress.toStringAsFixed(1),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                  color: stressColor,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 7),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    stressCategory,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                      color: stressColor,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'Escala 0.0–3.0',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: ApexTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            // Racional Cognitivo de Gemini Coach
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: ApexTheme.obsidianBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isCompromised
+                      ? ApexTheme.deloadCrimson.withValues(alpha: 0.6)
+                      : ApexTheme.cyanElectric.withValues(alpha: 0.4),
+                ),
+              ),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 16,
+                    color: isCompromised
+                        ? ApexTheme.deloadCrimson
+                        : ApexTheme.cyanElectric,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      geminiRationale,
+                      style: const TextStyle(
+                        fontSize: 11.2,
+                        color: ApexTheme.textPrimary,
+                        height: 1.25,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildWearableCardActionFooter(context, 'WHOOP'),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildWearableTelemetryRow(WearableMetricRecord wearable) {
+  /// 2. Tarjeta HUAWEI GT / WATCH (Cero menciones a Whoop):
+  /// - Nivel de Estrés (0-100), Puntuación TruSleep, Frecuencia Cardíaca Media y VO2Max
+  Widget _buildHuaweiGtCard(
+    BuildContext context,
+    WearableMetricRecord wearable,
+  ) {
+    final int stress = wearable.huaweiStressScore.clamp(1, 100);
+    final int truSleep = wearable.huaweiTruSleepScore.clamp(1, 100);
+    final int avgHr = wearable.avgHr;
+    final double vo2Max = wearable.huaweiVo2Max;
+    final bool isHighStress = stress >= 68 || truSleep < 70;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                const Text(
+                  'HUAWEI HEALTH • GT TELEMETRY',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.9,
+                    color: ApexTheme.cyanElectric,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (isHighStress
+                            ? ApexTheme.deloadCrimson
+                            : ApexTheme.readinessGreen)
+                        .withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isHighStress
+                        ? 'DESCARGA ACTIVA (-15% CARGA)'
+                        : 'ESTADO FISIOLÓGICO ÓPTIMO',
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w900,
+                      color: isHighStress
+                          ? ApexTheme.deloadCrimson
+                          : ApexTheme.readinessGreen,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              spacing: 8,
+              children: <Widget>[
+                Expanded(
+                  child: _DeviceKpiBox(
+                    title: 'NIVEL DE ESTRÉS',
+                    value: '$stress / 100',
+                    subtitle: stress >= 68 ? 'Elevado' : 'Normal (Calma)',
+                    accent: stress >= 68
+                        ? ApexTheme.warningAmber
+                        : ApexTheme.cyanElectric,
+                  ),
+                ),
+                Expanded(
+                  child: _DeviceKpiBox(
+                    title: 'PUNTUACIÓN TRUSLEEP',
+                    value: '$truSleep pts',
+                    subtitle: '${wearable.sleepHours.toStringAsFixed(1)} h sueño',
+                    accent: ApexTheme.readinessGreen,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              spacing: 8,
+              children: <Widget>[
+                Expanded(
+                  child: _DeviceKpiBox(
+                    title: 'FC MEDIA DIARIA',
+                    value: '$avgHr bpm',
+                    subtitle: 'Reposo: ${wearable.restingHr} bpm',
+                    accent: ApexTheme.voltAccent,
+                  ),
+                ),
+                Expanded(
+                  child: _DeviceKpiBox(
+                    title: 'VO2MAX ESTIMADO',
+                    value: '${vo2Max.toStringAsFixed(1)} ml/kg',
+                    subtitle: 'Capacidad aeróbica',
+                    accent: ApexTheme.cyanElectric,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _buildWearableCardActionFooter(context, 'HUAWEI_GT'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 3. Tarjeta SAMSUNG GALAXY WATCH (Cero menciones a Whoop):
+  /// - Puntuación de Energía (Energy Score), Tiempo de Sueño y Composición Corporal BIA
+  Widget _buildSamsungWatchCard(
+    BuildContext context,
+    WearableMetricRecord wearable,
+  ) {
+    final int energyScore = wearable.samsungEnergyScore.clamp(1, 100);
+    final Color scoreColor = ApexTheme.readinessColor(energyScore.toDouble());
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                const Text(
+                  'SAMSUNG GALAXY WATCH • BIOACTIVE SENSOR',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.7,
+                    color: ApexTheme.cyanElectric,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scoreColor.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'ENERGY SCORE $energyScore',
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w900,
+                      color: scoreColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              spacing: 8,
+              children: <Widget>[
+                Expanded(
+                  child: _DeviceKpiBox(
+                    title: 'PUNTUACIÓN DE ENERGÍA',
+                    value: '$energyScore / 100',
+                    subtitle: energyScore < 45
+                        ? 'Descarga sugerida por Gemini'
+                        : 'Listo para sobrecarga',
+                    accent: scoreColor,
+                  ),
+                ),
+                Expanded(
+                  child: _DeviceKpiBox(
+                    title: 'TIEMPO DE SUEÑO',
+                    value: '${wearable.sleepHours.toStringAsFixed(1)} h',
+                    subtitle:
+                        'Eficiencia: ${wearable.sleepEfficiencyPct.toStringAsFixed(0)}%',
+                    accent: ApexTheme.cyanElectric,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _DeviceKpiBox(
+              title: 'COMPOSICIÓN CORPORAL BIA (GALAXY SENSOR)',
+              value:
+                  'Músculo Esquelético: ${wearable.samsungBiaMusclePct.toStringAsFixed(1)}%  •  Grasa BIA: ${wearable.samsungBiaFatPct.toStringAsFixed(1)}%',
+              subtitle:
+                  'Sincronizado con índice alométrico LBM^0.67 y Gemini Coach',
+              accent: ApexTheme.voltAccent,
+            ),
+            const SizedBox(height: 10),
+            _buildWearableCardActionFooter(context, 'SAMSUNG_WATCH'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 4. Tarjeta APPLE WATCH (Cero menciones a Whoop):
+  /// - 3 Anillos (Moverse kcal, Ejercicio min, De Pie h) y Variabilidad HRV
+  Widget _buildAppleWatchCard(
+    BuildContext context,
+    WearableMetricRecord wearable,
+  ) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                Text(
+                  'APPLE WATCH • ANILLOS DE ACTIVIDAD & HRV',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.7,
+                    color: ApexTheme.textPrimary,
+                  ),
+                ),
+                Icon(
+                  Icons.watch_outlined,
+                  size: 16,
+                  color: ApexTheme.voltAccent,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: <Widget>[
+                _WhoopCircleGauge(
+                  label: 'MOVERSE',
+                  valueText: '${wearable.appleMoveKcal} kcal',
+                  progress: (wearable.appleMoveKcal / 800.0).clamp(0.0, 1.0),
+                  color: const Color(0xFFFA114F),
+                ),
+                _WhoopCircleGauge(
+                  label: 'EJERCICIO',
+                  valueText: '${wearable.appleExerciseMinutes} min',
+                  progress:
+                      (wearable.appleExerciseMinutes / 60.0).clamp(0.0, 1.0),
+                  color: const Color(0xFF92E82A),
+                ),
+                _WhoopCircleGauge(
+                  label: 'DE PIE',
+                  valueText: '${wearable.appleStandHours} h',
+                  progress: (wearable.appleStandHours / 12.0).clamp(0.0, 1.0),
+                  color: const Color(0xFF00D9FF),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _DeviceKpiBox(
+              title: 'VARIABILIDAD HRV (SDNN / RMSSD)',
+              value: '${wearable.hrvMs.toStringAsFixed(0)} ms',
+              subtitle:
+                  'FC en reposo: ${wearable.restingHr} bpm • Sueño: ${wearable.sleepHours.toStringAsFixed(1)} h',
+              accent: ApexTheme.cyanElectric,
+            ),
+            const SizedBox(height: 10),
+            _buildWearableCardActionFooter(context, 'APPLE_WATCH'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWearableCardActionFooter(
+    BuildContext context,
+    String activeSource,
+  ) {
+    final String registerBtnText = _wearableRegisterButtonText(activeSource);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: <Widget>[
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            foregroundColor: ApexTheme.voltAccent,
+            side: const BorderSide(color: ApexTheme.voltAccent),
+          ),
+          onPressed:
+              viewModel.isSyncingWearable ? null : viewModel.forceSyncWearable,
+          icon: const Icon(Icons.sync_rounded, size: 14),
+          label: const Text(
+            'FORZAR SYNC',
+            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
+          ),
+        ),
+        FilledButton.tonalIcon(
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            backgroundColor: ApexTheme.cyanElectric.withValues(alpha: 0.16),
+            foregroundColor: ApexTheme.cyanElectric,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          onPressed: () =>
+              _openWearableManualSyncModal(context, activeSource),
+          icon: const Icon(Icons.tune_rounded, size: 14),
+          label: Text(
+            registerBtnText,
+            style: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWearableTelemetryRow(
+    WearableMetricRecord wearable,
+    String activeSource,
+  ) {
     return Row(
+      spacing: 8,
       children: <Widget>[
         Expanded(
           child: _MetricTile(
@@ -468,7 +1135,6 @@ class HomeScreen extends StatelessWidget {
             icon: Icons.monitor_heart_outlined,
           ),
         ),
-        const SizedBox(width: 10),
         Expanded(
           child: _MetricTile(
             label: 'FC REPOSO',
@@ -477,11 +1143,12 @@ class HomeScreen extends StatelessWidget {
             icon: Icons.favorite_border_rounded,
           ),
         ),
-        const SizedBox(width: 10),
         Expanded(
           child: _MetricTile(
-            label: 'SUEÑO',
-            value: '${wearable.sleepHours.toStringAsFixed(1)} h',
+            label: activeSource == 'WHOOP' ? 'SUEÑO (%)' : 'SUEÑO (H)',
+            value: activeSource == 'WHOOP'
+                ? '${wearable.sleepEfficiencyPct.toStringAsFixed(0)}%'
+                : '${wearable.sleepHours.toStringAsFixed(1)} h',
             accent: ApexTheme.readinessGreen,
             icon: Icons.bedtime_outlined,
           ),
@@ -492,6 +1159,7 @@ class HomeScreen extends StatelessWidget {
 
   Widget _buildDualBiometricCaptureActions(BuildContext context) {
     return Row(
+      spacing: 8,
       children: <Widget>[
         Expanded(
           child: FilledButton.icon(
@@ -499,42 +1167,48 @@ class HomeScreen extends StatelessWidget {
               backgroundColor: ApexTheme.cardGraphite,
               foregroundColor: ApexTheme.voltAccent,
               side: const BorderSide(color: ApexTheme.voltAccent),
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(vertical: 11),
             ),
             onPressed: () => _openBiometricFormModal(context, null),
-            icon: const Icon(Icons.edit_note_rounded, size: 20),
+            icon: const Icon(Icons.edit_note_rounded, size: 18),
             label: const Text(
               'CAPTURA MANUAL',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11.5),
             ),
           ),
         ),
-        const SizedBox(width: 10),
         Expanded(
           child: FilledButton.icon(
             style: FilledButton.styleFrom(
               backgroundColor: ApexTheme.voltAccent,
               foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(vertical: 11),
             ),
             onPressed: viewModel.isScanningOcr
                 ? null
                 : () => _showOcrSourcePicker(context),
             icon: viewModel.isScanningOcr
                 ? const SizedBox(
-                    width: 16,
-                    height: 16,
+                    width: 15,
+                    height: 15,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       color: Colors.black,
                     ),
                   )
-                : const Icon(Icons.document_scanner_rounded, size: 18),
+                : const Icon(Icons.document_scanner_rounded, size: 17),
             label: Text(
-              viewModel.isScanningOcr
-                  ? 'ESCANEANDO...'
-                  : 'ESCANEAR FITDAYS',
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+              viewModel.isScanningOcr ? 'ESCANEANDO...' : 'ESCANEAR FITDAYS',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 11.5,
+              ),
             ),
           ),
         ),
@@ -545,24 +1219,25 @@ class HomeScreen extends StatelessWidget {
   Widget _buildEmptyBiometricsCard(BuildContext context) {
     return const Card(
       child: Padding(
-        padding: EdgeInsets.all(20),
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Column(
           children: <Widget>[
             Icon(
               Icons.monitor_weight_outlined,
               color: ApexTheme.voltAccent,
-              size: 38,
+              size: 32,
             ),
-            SizedBox(height: 8),
+            SizedBox(height: 6),
             Text(
               'SIN REGISTROS DE COMPOSICIÓN CORPORAL',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
             ),
             SizedBox(height: 4),
             Text(
-              'Usa "Captura Manual" o "Escanear Fitdays" para registrar tu peso, % grasa, masa muscular, grasa visceral, agua corporal y BMR en PostgreSQL.',
+              'Usa "Captura Manual" o "Escanear Fitdays" (JPEG 90 • Gemini Vision) para registrar peso, % grasa, masa muscular y BMR en PostgreSQL.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
+              style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
             ),
           ],
         ),
@@ -578,7 +1253,7 @@ class HomeScreen extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -587,10 +1262,12 @@ class HomeScreen extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'COMPOSICIÓN CORPORAL (${bio.sourceProvider})',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
+                      letterSpacing: 0.4,
                       color: ApexTheme.textMuted,
                     ),
                   ),
@@ -616,10 +1293,10 @@ class HomeScreen extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Wrap(
-              spacing: 16,
-              runSpacing: 14,
+              spacing: 14,
+              runSpacing: 10,
               children: <Widget>[
                 _BioStatItem(
                   label: 'PESO TOTAL',
@@ -672,7 +1349,7 @@ class HomeScreen extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -681,14 +1358,14 @@ class HomeScreen extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
-                letterSpacing: 0.5,
+                letterSpacing: 0.4,
                 color: ApexTheme.textMuted,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             if (spots.isEmpty)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
+                padding: EdgeInsets.symmetric(vertical: 14),
                 child: Center(
                   child: Text(
                     'Registra tu primera captura biométrica para graficar tu tendencia real.',
@@ -698,7 +1375,7 @@ class HomeScreen extends StatelessWidget {
               )
             else
               SizedBox(
-                height: 140,
+                height: 125,
                 child: LineChart(
                   LineChartData(
                     gridData: const FlGridData(show: false),
@@ -754,7 +1431,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Gemini Vision extraerá los datos y abrirá el formulario para que los revises antes de guardar.',
+                  'La imagen se transcodifica automáticamente a JPEG (calidad 90 • image/jpeg) para Gemini Vision.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
                 ),
@@ -822,7 +1499,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  void _openWearableManualSyncModal(BuildContext context) {
+  void _openWearableManualSyncModal(BuildContext context, String activeSource) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -831,8 +1508,127 @@ class HomeScreen extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (BuildContext sheetContext) {
-        return _WearableDirectSyncModalSheet(viewModel: viewModel);
+        return _WearablePolymorphicSyncModalSheet(
+          viewModel: viewModel,
+          activeSource: activeSource,
+        );
       },
+    );
+  }
+}
+
+class _WhoopCircleGauge extends StatelessWidget {
+  final String label;
+  final String valueText;
+  final double progress;
+  final Color color;
+
+  const _WhoopCircleGauge({
+    required this.label,
+    required this.valueText,
+    required this.progress,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        SizedBox(
+          width: 78,
+          height: 78,
+          child: Stack(
+            alignment: Alignment.center,
+            children: <Widget>[
+              SizedBox(
+                width: 74,
+                height: 74,
+                child: CircularProgressIndicator(
+                  value: progress.clamp(0.05, 1.0),
+                  strokeWidth: 6.5,
+                  backgroundColor: Colors.white10,
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
+              Text(
+                valueText,
+                style: const TextStyle(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w900,
+                  color: ApexTheme.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 9.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+            color: ApexTheme.textMuted,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeviceKpiBox extends StatelessWidget {
+  final String title;
+  final String value;
+  final String subtitle;
+  final Color accent;
+
+  const _DeviceKpiBox({
+    required this.title,
+    required this.value,
+    required this.subtitle,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: ApexTheme.obsidianBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              color: ApexTheme.textMuted,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: accent,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 10.5,
+              color: ApexTheme.textPrimary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -874,37 +1670,39 @@ class _BiometricCaptureModalSheetState
     _weightCtrl = TextEditingController(
       text: p != null
           ? p.weightKg.toStringAsFixed(1)
-          : (latest != null ? latest.weightKg.toStringAsFixed(1) : ''),
+          : (latest != null ? latest.weightKg.toStringAsFixed(1) : '78.0'),
     );
     _fatPctCtrl = TextEditingController(
       text: p != null
           ? p.fatPercentage.toStringAsFixed(1)
-          : (latest != null ? latest.fatPercentage.toStringAsFixed(1) : ''),
+          : (latest != null ? latest.fatPercentage.toStringAsFixed(1) : '14.5'),
     );
     _muscleKgCtrl = TextEditingController(
       text: p != null
           ? p.muscleMassKg.toStringAsFixed(1)
-          : (latest != null ? latest.muscleMassKg.toStringAsFixed(1) : ''),
+          : (latest != null ? latest.muscleMassKg.toStringAsFixed(1) : '63.2'),
     );
     _skeletalPctCtrl = TextEditingController(
       text: p != null
           ? p.skeletalMusclePct.toStringAsFixed(1)
-          : (latest != null ? latest.skeletalMusclePct.toStringAsFixed(1) : ''),
+          : (latest != null
+              ? latest.skeletalMusclePct.toStringAsFixed(1)
+              : '43.0'),
     );
     _visceralCtrl = TextEditingController(
       text: p != null
           ? p.visceralFat.toString()
-          : (latest != null ? latest.visceralFat.toString() : ''),
+          : (latest != null ? latest.visceralFat.toString() : '6'),
     );
     _waterPctCtrl = TextEditingController(
       text: p != null
           ? p.bodyWaterPct.toStringAsFixed(1)
-          : (latest != null ? latest.bodyWaterPct.toStringAsFixed(1) : ''),
+          : (latest != null ? latest.bodyWaterPct.toStringAsFixed(1) : '61.5'),
     );
     _bmrCtrl = TextEditingController(
       text: p != null
           ? p.bmr.toString()
-          : (latest != null ? latest.bmr.toString() : ''),
+          : (latest != null ? latest.bmr.toString() : '1820'),
     );
   }
 
@@ -951,7 +1749,7 @@ class _BiometricCaptureModalSheetState
       padding: EdgeInsets.only(
         left: 20,
         right: 20,
-        top: 20,
+        top: 18,
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
       child: SingleChildScrollView(
@@ -976,7 +1774,7 @@ class _BiometricCaptureModalSheetState
                 'Verifica los 7 indicadores biométricos antes de guardar en Render PostgreSQL.',
                 style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               Row(
                 children: <Widget>[
                   Expanded(
@@ -998,7 +1796,7 @@ class _BiometricCaptureModalSheetState
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Row(
                 children: <Widget>[
                   Expanded(
@@ -1020,7 +1818,7 @@ class _BiometricCaptureModalSheetState
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Row(
                 children: <Widget>[
                   Expanded(
@@ -1043,7 +1841,7 @@ class _BiometricCaptureModalSheetState
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               _buildNumberField(
                 controller: _bmrCtrl,
                 label: 'BMR / Metabolismo Basal (kcal)',
@@ -1051,12 +1849,12 @@ class _BiometricCaptureModalSheetState
                 max: 5500,
                 isInteger: true,
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 16),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
                   backgroundColor: ApexTheme.voltAccent,
                   foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed:
                     widget.viewModel.isSavingBiometrics ? null : _submit,
@@ -1085,6 +1883,7 @@ class _BiometricCaptureModalSheetState
       keyboardType: TextInputType.numberWithOptions(decimal: !isInteger),
       decoration: InputDecoration(
         labelText: label,
+        isDense: true,
         filled: true,
         fillColor: ApexTheme.obsidianBg,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -1101,55 +1900,120 @@ class _BiometricCaptureModalSheetState
   }
 }
 
-class _WearableDirectSyncModalSheet extends StatefulWidget {
+/// Modal Polimórfico de Captura Rápida de Métricas según el Wearable activo
+/// (WHOOP 4.0, HUAWEI GT, SAMSUNG GALAXY WATCH, APPLE WATCH).
+class _WearablePolymorphicSyncModalSheet extends StatefulWidget {
   final HomeViewModel viewModel;
+  final String activeSource;
 
-  const _WearableDirectSyncModalSheet({
+  const _WearablePolymorphicSyncModalSheet({
     required this.viewModel,
+    required this.activeSource,
   });
 
   @override
-  State<_WearableDirectSyncModalSheet> createState() =>
-      _WearableDirectSyncModalSheetState();
+  State<_WearablePolymorphicSyncModalSheet> createState() =>
+      _WearablePolymorphicSyncModalSheetState();
 }
 
-class _WearableDirectSyncModalSheetState
-    extends State<_WearableDirectSyncModalSheet> {
+class _WearablePolymorphicSyncModalSheetState
+    extends State<_WearablePolymorphicSyncModalSheet> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  late final TextEditingController _recoveryCtrl;
-  late final TextEditingController _strainCtrl;
+
+  // Campos compartidos / Whoop
+  late double _recoverySlider;
+  late double _strainSlider;
+  late double _whoopSleepPctSlider;
+  late double _whoopStressSlider;
   late final TextEditingController _hrvCtrl;
   late final TextEditingController _rhrCtrl;
-  late final TextEditingController _sleepCtrl;
+  late final TextEditingController _sleepHoursCtrl;
+
+  // Campos Huawei GT
+  late final TextEditingController _huaweiStressCtrl;
+  late final TextEditingController _huaweiTruSleepCtrl;
+  late final TextEditingController _huaweiAvgHrCtrl;
+  late final TextEditingController _huaweiVo2MaxCtrl;
+
+  // Campos Samsung Watch
+  late final TextEditingController _samsungEnergyCtrl;
+  late final TextEditingController _samsungMusclePctCtrl;
+  late final TextEditingController _samsungFatPctCtrl;
+
+  // Campos Apple Watch
+  late final TextEditingController _appleMoveKcalCtrl;
+  late final TextEditingController _appleExerciseMinCtrl;
+  late final TextEditingController _appleStandHoursCtrl;
 
   @override
   void initState() {
     super.initState();
     final WearableMetricRecord? w = widget.viewModel.wearable;
-    _recoveryCtrl = TextEditingController(
-      text: w != null ? w.recoveryScore.toStringAsFixed(0) : '',
-    );
-    _strainCtrl = TextEditingController(
-      text: w != null ? w.strainScore.toStringAsFixed(1) : '',
-    );
+    // Pre-llenado con los valores reales del Whoop del atleta (35% Rec, 9.6 Strain, 72% Sueño, 2.2 Estrés)
+    _recoverySlider = (w?.recoveryScore ?? 35.0).clamp(0.0, 100.0);
+    _strainSlider = (w?.strainScore ?? 9.6).clamp(0.0, 21.0);
+    _whoopSleepPctSlider = (w?.sleepEfficiencyPct ?? 72.0).clamp(0.0, 100.0);
+    _whoopStressSlider = (w?.whoopStressLevel ?? 2.2).clamp(0.0, 3.0);
+
     _hrvCtrl = TextEditingController(
-      text: w != null ? w.hrvMs.toStringAsFixed(0) : '',
+      text: (w?.hrvMs ?? 54.0).toStringAsFixed(0),
     );
     _rhrCtrl = TextEditingController(
-      text: w != null ? w.restingHr.toString() : '',
+      text: (w?.restingHr ?? 58).toString(),
     );
-    _sleepCtrl = TextEditingController(
-      text: w != null ? w.sleepHours.toStringAsFixed(1) : '',
+    _sleepHoursCtrl = TextEditingController(
+      text: (w?.sleepHours ?? 6.8).toStringAsFixed(1),
+    );
+
+    _huaweiStressCtrl = TextEditingController(
+      text: (w?.huaweiStressScore ?? 45).toString(),
+    );
+    _huaweiTruSleepCtrl = TextEditingController(
+      text: (w?.huaweiTruSleepScore ?? 82).toString(),
+    );
+    _huaweiAvgHrCtrl = TextEditingController(
+      text: (w?.avgHr ?? 68).toString(),
+    );
+    _huaweiVo2MaxCtrl = TextEditingController(
+      text: (w?.huaweiVo2Max ?? 52.0).toStringAsFixed(1),
+    );
+
+    _samsungEnergyCtrl = TextEditingController(
+      text: (w?.samsungEnergyScore ?? 78).toString(),
+    );
+    _samsungMusclePctCtrl = TextEditingController(
+      text: (w?.samsungBiaMusclePct ?? 43.8).toStringAsFixed(1),
+    );
+    _samsungFatPctCtrl = TextEditingController(
+      text: (w?.samsungBiaFatPct ?? 13.8).toStringAsFixed(1),
+    );
+
+    _appleMoveKcalCtrl = TextEditingController(
+      text: (w?.appleMoveKcal ?? 720).toString(),
+    );
+    _appleExerciseMinCtrl = TextEditingController(
+      text: (w?.appleExerciseMinutes ?? 52).toString(),
+    );
+    _appleStandHoursCtrl = TextEditingController(
+      text: (w?.appleStandHours ?? 12).toString(),
     );
   }
 
   @override
   void dispose() {
-    _recoveryCtrl.dispose();
-    _strainCtrl.dispose();
     _hrvCtrl.dispose();
     _rhrCtrl.dispose();
-    _sleepCtrl.dispose();
+    _sleepHoursCtrl.dispose();
+    _huaweiStressCtrl.dispose();
+    _huaweiTruSleepCtrl.dispose();
+    _huaweiAvgHrCtrl.dispose();
+    _huaweiVo2MaxCtrl.dispose();
+    _samsungEnergyCtrl.dispose();
+    _samsungMusclePctCtrl.dispose();
+    _samsungFatPctCtrl.dispose();
+    _appleMoveKcalCtrl.dispose();
+    _appleExerciseMinCtrl.dispose();
+    _appleStandHoursCtrl.dispose();
     super.dispose();
   }
 
@@ -1158,18 +2022,78 @@ class _WearableDirectSyncModalSheetState
       return;
     }
 
-    final int rhr = int.parse(_rhrCtrl.text.trim());
+    final int rhr = (int.tryParse(_rhrCtrl.text.trim()) ?? 58).clamp(30, 130);
+    final double hrv =
+        (double.tryParse(_hrvCtrl.text.trim()) ?? 54.0).clamp(10.0, 250.0);
+    final double sleepH =
+        (double.tryParse(_sleepHoursCtrl.text.trim()) ?? 6.8).clamp(0.0, 24.0);
+
+    double computedRecovery = _recoverySlider;
+    double computedStrain = _strainSlider;
+    double computedSleepPct = _whoopSleepPctSlider;
+
+    final int huaweiStress =
+        (int.tryParse(_huaweiStressCtrl.text.trim()) ?? 45).clamp(1, 100);
+    final int huaweiTruSleep =
+        (int.tryParse(_huaweiTruSleepCtrl.text.trim()) ?? 82).clamp(1, 100);
+    final int huaweiAvgHr =
+        (int.tryParse(_huaweiAvgHrCtrl.text.trim()) ?? 68).clamp(35, 200);
+    final double huaweiVo2 =
+        (double.tryParse(_huaweiVo2MaxCtrl.text.trim()) ?? 52.0)
+            .clamp(15.0, 90.0);
+
+    final int samsungEnergy =
+        (int.tryParse(_samsungEnergyCtrl.text.trim()) ?? 78).clamp(1, 100);
+    final double samsungMuscle =
+        (double.tryParse(_samsungMusclePctCtrl.text.trim()) ?? 43.8)
+            .clamp(15.0, 75.0);
+    final double samsungFat =
+        (double.tryParse(_samsungFatPctCtrl.text.trim()) ?? 13.8)
+            .clamp(3.0, 60.0);
+
+    final int appleMove =
+        (int.tryParse(_appleMoveKcalCtrl.text.trim()) ?? 720).clamp(0, 5000);
+    final int appleEx =
+        (int.tryParse(_appleExerciseMinCtrl.text.trim()) ?? 52).clamp(0, 600);
+    final int appleStand =
+        (int.tryParse(_appleStandHoursCtrl.text.trim()) ?? 12).clamp(0, 24);
+
+    if (widget.activeSource == 'HUAWEI_GT') {
+      computedRecovery =
+          ((100 - huaweiStress) * 0.45 + huaweiTruSleep * 0.55).clamp(10.0, 99.0);
+      computedSleepPct = huaweiTruSleep.toDouble();
+    } else if (widget.activeSource == 'SAMSUNG_WATCH') {
+      computedRecovery = samsungEnergy.toDouble();
+      computedSleepPct = ((sleepH / 8.0) * 100.0).clamp(40.0, 100.0);
+    } else if (widget.activeSource == 'APPLE_WATCH') {
+      computedRecovery = ((hrv / 85.0) * 82.0).clamp(25.0, 98.0);
+      computedStrain = ((appleMove / 1000.0) * 16.0).clamp(2.0, 20.5);
+    }
+
     final WearableMetricRecord record = WearableMetricRecord(
       date: DateTime.now(),
-      recoveryScore: double.parse(_recoveryCtrl.text.trim()),
-      strainScore: double.parse(_strainCtrl.text.trim()),
-      hrvMs: double.parse(_hrvCtrl.text.trim()),
+      recoveryScore: double.parse(computedRecovery.toStringAsFixed(0)),
+      strainScore: double.parse(computedStrain.toStringAsFixed(1)),
+      hrvMs: hrv,
       restingHr: rhr,
-      avgHr: (rhr + 14).clamp(45, 190),
-      maxHr: 168,
-      sleepHours: double.parse(_sleepCtrl.text.trim()),
-      sleepEfficiencyPct: 90.0,
-      sourceDevice: widget.viewModel.preferredWearable,
+      avgHr: widget.activeSource == 'HUAWEI_GT'
+          ? huaweiAvgHr
+          : (rhr + 14).clamp(45, 190),
+      maxHr: 172,
+      sleepHours: sleepH,
+      sleepEfficiencyPct: double.parse(computedSleepPct.toStringAsFixed(0)),
+      sourceDevice: widget.activeSource,
+      whoopStressLevel: double.parse(_whoopStressSlider.toStringAsFixed(1)),
+      whoopHealthMetricsInRange: 5,
+      huaweiStressScore: huaweiStress,
+      huaweiTruSleepScore: huaweiTruSleep,
+      huaweiVo2Max: huaweiVo2,
+      samsungEnergyScore: samsungEnergy,
+      samsungBiaMusclePct: samsungMuscle,
+      samsungBiaFatPct: samsungFat,
+      appleMoveKcal: appleMove,
+      appleExerciseMinutes: appleEx,
+      appleStandHours: appleStand,
     );
 
     final bool ok =
@@ -1181,12 +2105,13 @@ class _WearableDirectSyncModalSheetState
 
   @override
   Widget build(BuildContext context) {
-    final String source = widget.viewModel.preferredWearable;
+    final String src = widget.activeSource;
+
     return Padding(
       padding: EdgeInsets.only(
         left: 20,
         right: 20,
-        top: 20,
+        top: 18,
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
       child: SingleChildScrollView(
@@ -1196,98 +2121,11 @@ class _WearableDirectSyncModalSheetState
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Text(
-                'SINCRONIZAR TELEMETRÍA $source DE HOY',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: ApexTheme.cyanElectric,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: TextFormField(
-                      controller: _recoveryCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Recovery (0-100%)',
-                      ),
-                      validator: (String? v) {
-                        final double? d = double.tryParse((v ?? '').trim());
-                        if (d == null || d < 0 || d > 100) return '0 - 100%';
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _strainCtrl,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(
-                        labelText: 'Strain (0-21)',
-                      ),
-                      validator: (String? v) {
-                        final double? d = double.tryParse((v ?? '').trim());
-                        if (d == null || d < 0 || d > 21) return '0 - 21';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: TextFormField(
-                      controller: _hrvCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'HRV RMSSD (ms)',
-                      ),
-                      validator: (String? v) {
-                        final double? d = double.tryParse((v ?? '').trim());
-                        if (d == null || d < 10 || d > 250) return '10 - 250 ms';
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _rhrCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'FC Reposo (bpm)',
-                      ),
-                      validator: (String? v) {
-                        final int? d = int.tryParse((v ?? '').trim());
-                        if (d == null || d < 30 || d > 130) return '30 - 130';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _sleepCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Horas de Sueño (h)',
-                ),
-                validator: (String? v) {
-                  final double? d = double.tryParse((v ?? '').trim());
-                  if (d == null || d < 0 || d > 24) return '0 - 24 h';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 18),
+              if (src == 'WHOOP') ..._buildWhoopModalFields(),
+              if (src == 'HUAWEI_GT') ..._buildHuaweiModalFields(),
+              if (src == 'SAMSUNG_WATCH') ..._buildSamsungModalFields(),
+              if (src == 'APPLE_WATCH') ..._buildAppleWatchModalFields(),
+              const SizedBox(height: 16),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
                   backgroundColor: ApexTheme.cyanElectric,
@@ -1295,9 +2133,15 @@ class _WearableDirectSyncModalSheetState
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed: _submit,
-                icon: const Icon(Icons.check_rounded),
+                icon: const Icon(Icons.check_circle_outline_rounded),
                 label: Text(
-                  'SINCRONIZAR $source CON POSTGRESQL',
+                  src == 'WHOOP'
+                      ? 'GUARDAR MÉTRICAS WHOOP EN POSTGRESQL'
+                      : (src == 'HUAWEI_GT'
+                          ? 'GUARDAR MÉTRICAS HUAWEI EN POSTGRESQL'
+                          : (src == 'SAMSUNG_WATCH'
+                              ? 'GUARDAR MÉTRICAS SAMSUNG EN POSTGRESQL'
+                              : 'GUARDAR MÉTRICAS APPLE WATCH EN POSTGRESQL')),
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
@@ -1305,6 +2149,392 @@ class _WearableDirectSyncModalSheetState
           ),
         ),
       ),
+    );
+  }
+
+  List<Widget> _buildWhoopModalFields() {
+    final Color recColor = ApexTheme.readinessColor(_recoverySlider);
+    return <Widget>[
+      const Text(
+        'REGISTRAR MÉTRICAS WHOOP 4.0',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w900,
+          color: ApexTheme.cyanElectric,
+        ),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Ingresa Recuperación %, Strain (0-21), Sueño %, FC Reposo, HRV y Nivel de Estrés (0-3).',
+        style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+      ),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: ApexTheme.obsidianBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: recColor.withValues(alpha: 0.6)),
+        ),
+        child: Column(
+          children: <Widget>[
+            _buildSliderHeader(
+              'RECUPERACIÓN (0–100%)',
+              '${_recoverySlider.toStringAsFixed(0)}%',
+              recColor,
+            ),
+            Slider(
+              value: _recoverySlider,
+              min: 0,
+              max: 100,
+              divisions: 100,
+              activeColor: recColor,
+              onChanged: (double v) => setState(() => _recoverySlider = v),
+            ),
+            _buildSliderHeader(
+              'ESFUERZO / STRAIN (0–21)',
+              _strainSlider.toStringAsFixed(1),
+              ApexTheme.cyanElectric,
+            ),
+            Slider(
+              value: _strainSlider,
+              min: 0,
+              max: 21,
+              divisions: 210,
+              activeColor: ApexTheme.cyanElectric,
+              onChanged: (double v) => setState(() => _strainSlider = v),
+            ),
+            _buildSliderHeader(
+              'SUEÑO % (0–100%)',
+              '${_whoopSleepPctSlider.toStringAsFixed(0)}%',
+              const Color(0xFF75A8D3),
+            ),
+            Slider(
+              value: _whoopSleepPctSlider,
+              min: 0,
+              max: 100,
+              divisions: 100,
+              activeColor: const Color(0xFF75A8D3),
+              onChanged: (double v) =>
+                  setState(() => _whoopSleepPctSlider = v),
+            ),
+            _buildSliderHeader(
+              'NIVEL DE ESTRÉS WHOOP (0.0–3.0)',
+              '${_whoopStressSlider.toStringAsFixed(1)} (${_whoopStressSlider >= 2.0 ? "ALTO" : (_whoopStressSlider >= 1.0 ? "MEDIO" : "BAJO")})',
+              ApexTheme.warningAmber,
+            ),
+            Slider(
+              value: _whoopStressSlider,
+              min: 0.0,
+              max: 3.0,
+              divisions: 30,
+              activeColor: ApexTheme.warningAmber,
+              onChanged: (double v) => setState(() => _whoopStressSlider = v),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _hrvCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'HRV (ms)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _rhrCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'FC Reposo (bpm)',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _buildHuaweiModalFields() {
+    return <Widget>[
+      const Text(
+        'REGISTRAR MÉTRICAS HUAWEI GT / WATCH',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w900,
+          color: ApexTheme.cyanElectric,
+        ),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Ingresa Nivel de Estrés (0-100), Puntuación TruSleep, FC Media y VO2Max.',
+        style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+      ),
+      const SizedBox(height: 12),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _huaweiStressCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Nivel Estrés (0-100)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _huaweiTruSleepCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Puntuación TruSleep',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _huaweiAvgHrCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'FC Media (bpm)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _huaweiVo2MaxCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'VO2Max (ml/kg/min)',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _hrvCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'HRV (ms)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _sleepHoursCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Horas de Sueño (h)',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _buildSamsungModalFields() {
+    return <Widget>[
+      const Text(
+        'REGISTRAR MÉTRICAS SAMSUNG GALAXY WATCH',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w900,
+          color: ApexTheme.cyanElectric,
+        ),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Ingresa Puntuación de Energía (Energy Score), Tiempo de Sueño y Composición Corporal BIA.',
+        style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+      ),
+      const SizedBox(height: 12),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _samsungEnergyCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Energy Score (0-100)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _sleepHoursCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Tiempo de Sueño (h)',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _samsungMusclePctCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'BIA % Músculo',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _samsungFatPctCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'BIA % Grasa',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _buildAppleWatchModalFields() {
+    return <Widget>[
+      const Text(
+        'REGISTRAR MÉTRICAS APPLE WATCH',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w900,
+          color: ApexTheme.cyanElectric,
+        ),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Ingresa los 3 Anillos (Moverse kcal, Ejercicio min, De Pie h) y Variabilidad HRV.',
+        style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+      ),
+      const SizedBox(height: 12),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _appleMoveKcalCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Moverse (kcal)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _appleExerciseMinCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Ejercicio (min)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _appleStandHoursCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'De Pie (h)',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _hrvCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Variabilidad HRV (ms)',
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _rhrCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'FC Reposo (bpm)',
+                isDense: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  Widget _buildSliderHeader(String title, String val, Color color) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: <Widget>[
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
+            color: ApexTheme.textMuted,
+          ),
+        ),
+        Text(
+          val,
+          style: TextStyle(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w900,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1326,16 +2556,18 @@ class _MetricTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Icon(icon, color: accent, size: 18),
-            const SizedBox(height: 8),
+            Icon(icon, color: accent, size: 17),
+            const SizedBox(height: 6),
             Text(
               value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.w900,
                 color: ApexTheme.textPrimary,
               ),
@@ -1343,8 +2575,10 @@ class _MetricTile extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 10,
+                fontSize: 9.5,
                 fontWeight: FontWeight.w700,
                 color: ApexTheme.textMuted,
               ),
@@ -1370,23 +2604,23 @@ class _BioStatItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 145,
+      width: 140,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
             label,
             style: const TextStyle(
-              fontSize: 10,
+              fontSize: 9.5,
               color: ApexTheme.textMuted,
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             value,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: FontWeight.w900,
               color: highlight ? ApexTheme.voltAccent : ApexTheme.textPrimary,
             ),

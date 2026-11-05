@@ -103,3 +103,31 @@ class Duel1v1ResolutionResponse(BaseModel):
     opponent_elo_after: int
     opponent_delta: int
     resolved_at: datetime
+
+
+class SquadMemberEntry(BaseModel):
+    user_id: Optional[UUID] = None
+    username: str
+    role: str = "MEMBER"
+    weekly_lbm_score: float
+    weekly_dots_score: float
+    weekly_compliance_pct: float
+
+
+class SquadLeaderboardEntryResponse(BaseModel):
+    rank: int
+    team_id: UUID
+    name: str
+    tag: str
+    member_count: int
+    total_lbm_allometric_score: float
+    total_dots_score: float
+    avg_consistency_pct: float
+    combined_squad_points: float
+    is_user_squad: bool = False
+    members: list[SquadMemberEntry] = Field(default_factory=list)
+
+
+class SquadJoinOrCreateRequest(BaseModel):
+    squad_name: str = Field(..., min_length=2, max_length=60)
+    squad_tag: str = Field(default="APEX", min_length=2, max_length=8)

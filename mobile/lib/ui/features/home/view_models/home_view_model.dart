@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../data/models/biometric_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
+import '../../../../data/services/health_connect_service.dart';
 
 class HomeViewModel extends ChangeNotifier {
   final FitnessRepository _repository;
@@ -66,6 +67,9 @@ class HomeViewModel extends ChangeNotifier {
       _biometrics = results[1] as BiometricRecord?;
       _biometricsHistory =
           (results[2] as List<BiometricRecord>?) ?? <BiometricRecord>[];
+      if (_wearable == null) {
+        _statusBanner = 'Sin telemetría sincronizada en Health Connect hoy';
+      }
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
     } finally {
@@ -83,6 +87,9 @@ class HomeViewModel extends ChangeNotifier {
   Future<void> setPreferredWearableSource(String source) async {
     _preferredWearable = source;
     await _repository.setPreferredWearable(source);
+    if (_wearable != null) {
+      _wearable = _wearable!.copyWith(sourceDevice: source);
+    }
     notifyListeners();
     await forceSyncWearable();
   }
@@ -94,19 +101,12 @@ class HomeViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final WearableMetricRecord? synced =
-          await _repository.syncTodayWearableData(
+      final HealthConnectPollResult result =
+          await _repository.forcePollHealthConnectAndSync(
         sourceDevice: _preferredWearable,
-        forceSensorPoll: true,
       );
-      _wearable = synced;
-      if (synced != null) {
-        _statusBanner =
-            'Sincronización $_preferredWearable completada (Recovery: ${synced.recoveryScore.toStringAsFixed(0)}%)';
-      } else {
-        _statusBanner =
-            'Sin telemetría de hoy en Health Connect para $_preferredWearable. Verifica permisos o sincroniza manualmente.';
-      }
+      _wearable = result.record;
+      _statusBanner = result.statusMessage;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
     } finally {
@@ -123,9 +123,27 @@ class HomeViewModel extends ChangeNotifier {
     try {
       final WearableMetricRecord saved =
           await _repository.pushWearableRecord(record);
-      _wearable = saved;
-      _statusBanner =
-          'Telemetría ${saved.sourceDevice} guardada en PostgreSQL (Recovery: ${saved.recoveryScore.toStringAsFixed(0)}%)';
+      _wearable = saved.copyWith(
+        sourceDevice: _preferredWearable,
+        sleepEfficiencyPct: record.sleepEfficiencyPct,
+        whoopStressLevel: record.whoopStressLevel,
+        whoopHealthMetricsInRange: record.whoopHealthMetricsInRange,
+        huaweiStressScore: record.huaweiStressScore,
+        huaweiTruSleepScore: record.huaweiTruSleepScore,
+        huaweiVo2Max: record.huaweiVo2Max,
+        samsungEnergyScore: record.samsungEnergyScore,
+        samsungBiaMusclePct: record.samsungBiaMusclePct,
+        samsungBiaFatPct: record.samsungBiaFatPct,
+        appleMoveKcal: record.appleMoveKcal,
+        appleExerciseMinutes: record.appleExerciseMinutes,
+        appleStandHours: record.appleStandHours,
+      );
+      final bool isLowReadiness = _wearable!.recoveryScore < 40.0 ||
+          _wearable!.sleepEfficiencyPct < 70.0 ||
+          (_preferredWearable == 'WHOOP' && _wearable!.whoopStressLevel >= 2.0);
+      _statusBanner = isLowReadiness
+          ? 'Recuperación comprometida (${_wearable!.recoveryScore.toStringAsFixed(0)}%) y estrés elevado. Redujimos el volumen prescrito para evitar fatiga del SNC.'
+          : 'Telemetría $_preferredWearable guardada en PostgreSQL (Readiness: ${_wearable!.recoveryScore.toStringAsFixed(0)}%)';
       return true;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
@@ -153,7 +171,8 @@ class HomeViewModel extends ChangeNotifier {
 
     final XFile? picked = await _imagePicker.pickImage(
       source: source,
-      imageQuality: 92,
+      imageQuality: 90,
+      maxWidth: 1600,
     );
     if (picked == null) {
       return null;

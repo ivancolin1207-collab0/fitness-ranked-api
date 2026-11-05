@@ -194,49 +194,33 @@ async def validate_uploaded_image(file: UploadFile) -> tuple[bytes, str]:
     """
     # TODO(security): Integrar escaneo antivirus en sandbox (ClamAV API) si los archivos se persisten en almacenamiento externo.
     settings = get_settings()
-    allowed_mimes = {"image/png", "image/jpeg", "image/webp"}
-    if file.content_type not in allowed_mimes:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Formato de archivo no permitido. Usa PNG, JPEG o WEBP.",
-        )
+    max_bytes = max(settings.MAX_UPLOAD_SIZE_BYTES, 10 * 1024 * 1024)
 
-    raw_bytes = await file.read(settings.MAX_UPLOAD_SIZE_BYTES + 1)
+    raw_bytes = await file.read(max_bytes + 1)
     if len(raw_bytes) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El archivo de imagen está vacío.",
         )
-    if len(raw_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+    if len(raw_bytes) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="La imagen supera el límite máximo permitido de 5 MB.",
-        )
-
-    # Inspección de magic bytes reales
-    is_png = raw_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-    is_jpeg = raw_bytes.startswith(b"\xff\xd8\xff")
-    is_webp = raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP"
-
-    if not (is_png or is_jpeg or is_webp):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="La firma binaria (magic bytes) no corresponde a una imagen válida.",
+            detail="La imagen supera el límite máximo permitido de 10 MB.",
         )
 
     try:
         with Image.open(io.BytesIO(raw_bytes)) as img:
             img.verify()
-        # Re-abrir y re-codificar sin EXIF (CDR)
+        # Re-abrir y re-codificar sin EXIF (CDR) a JPEG RGB calidad 90
         with Image.open(io.BytesIO(raw_bytes)) as clean_img:
             rgb_img = clean_img.convert("RGB")
             out_buf = io.BytesIO()
-            rgb_img.save(out_buf, format="JPEG", quality=92)
+            rgb_img.save(out_buf, format="JPEG", quality=90, optimize=True)
             sanitized_bytes = out_buf.getvalue()
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Archivo de imagen corrupto o estructura inválida.",
+            detail="Archivo de imagen corrupto o formato no soportado.",
         ) from exc
 
     return sanitized_bytes, "image/jpeg"

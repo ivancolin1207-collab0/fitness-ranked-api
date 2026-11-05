@@ -35,30 +35,24 @@ class UserProfileModel {
 
   factory UserProfileModel.fromJson(Map<String, dynamic> json) {
     return UserProfileModel(
-      id: json['id'] as String,
-      username: json['username'] as String,
+      id: (json['id'] as String?) ?? '',
+      username: (json['username'] as String?) ?? 'atleta',
       fullName: json['full_name'] as String?,
       maskedEmail: (json['masked_email'] as String?) ?? '',
       birthDate: json['birth_date'] != null
           ? DateTime.tryParse(json['birth_date'].toString())
           : null,
-      ageYears: json['age_years'] != null
-          ? (json['age_years'] as num).toInt()
-          : null,
+      ageYears: (json['age_years'] as num?)?.toInt(),
       biologicalSex: (json['biological_sex'] as String?) ?? 'MALE',
-      heightCm: json['height_cm'] != null
-          ? (json['height_cm'] as num).toDouble()
-          : 175.0,
+      heightCm: (json['height_cm'] as num?)?.toDouble() ?? 175.0,
       trainingGoal: (json['training_goal'] as String?) ?? 'HIPERTROFIA',
       preferredWearable: (json['preferred_wearable'] as String?) ?? 'WHOOP',
       unitSystem: (json['unit_system'] as String?) ?? 'KG',
       onboardingCompleted: (json['onboarding_completed'] as bool?) ?? false,
-      currentElo: json['current_elo'] != null
-          ? (json['current_elo'] as num).toInt()
-          : 1200,
+      currentElo: (json['current_elo'] as num?)?.toInt() ?? 1200,
       currentTier: (json['current_tier'] as String?) ?? 'Plata',
       createdAt: json['created_at'] != null
-          ? DateTime.parse(json['created_at'] as String)
+          ? (DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now())
           : DateTime.now(),
     );
   }
@@ -77,11 +71,10 @@ class AuthTokenResponseModel {
 
   factory AuthTokenResponseModel.fromJson(Map<String, dynamic> json) {
     return AuthTokenResponseModel(
-      accessToken: json['access_token'] as String,
+      accessToken: (json['access_token'] as String?) ?? '',
       tokenType: (json['token_type'] as String?) ?? 'bearer',
-      expiresInSeconds: json['expires_in_seconds'] != null
-          ? (json['expires_in_seconds'] as num).toInt()
-          : 3600,
+      expiresInSeconds:
+          (json['expires_in_seconds'] as num?)?.toInt() ?? 3600,
     );
   }
 }

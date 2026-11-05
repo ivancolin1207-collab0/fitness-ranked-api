@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../core/constants/api_constants.dart';
+import '../../core/services/ocr_service.dart';
 import '../models/auth_models.dart';
 import '../models/biometric_models.dart';
 import '../models/leaderboard_models.dart';
@@ -336,26 +337,13 @@ class ApiClientService {
     required String jwtToken,
   }) async {
     final Uri uri = Uri.parse('$_baseUrl/api/v1/biometrics/scan');
-    final http.MultipartRequest request = http.MultipartRequest('POST', uri);
-    request.headers[HttpHeaders.authorizationHeader] = 'Bearer $jwtToken';
-
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        imageFile.path,
-      ),
+    const OcrService ocrService = OcrService();
+    return ocrService.scanFitdaysReport(
+      imageFile: imageFile,
+      endpointUri: uri,
+      accessToken: jwtToken,
+      httpClient: _httpClient,
     );
-
-    final http.StreamedResponse streamed =
-        await request.send().timeout(ApiConstants.ocrUploadTimeout);
-    final http.Response response = await http.Response.fromStream(streamed);
-
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      final Map<String, dynamic> data =
-          jsonDecode(response.body) as Map<String, dynamic>;
-      return FitdaysExtractedMetricsModel.fromJson(data);
-    }
-    throw HttpException(_extractErrorDetail(response));
   }
 
   /// POST /api/v1/biometrics (Guarda el formulario manual o revisado tras OCR)
@@ -713,6 +701,54 @@ class ApiClientService {
       return HeadToHeadDuelModel.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>,
       );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
+  /// GET /api/v1/leaderboard/squads
+  Future<List<SquadLeaderboardEntryModel>> fetchSquadsLeaderboard({
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.get(
+        Uri.parse('$base/api/v1/leaderboard/squads'),
+        headers: _buildHeaders(jwtToken),
+      ),
+    );
+
+    if (response.statusCode == 200) {
+      final List<dynamic> list = jsonDecode(response.body) as List<dynamic>;
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(SquadLeaderboardEntryModel.fromJson)
+          .toList();
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
+  /// POST /api/v1/leaderboard/squads/join
+  Future<List<SquadLeaderboardEntryModel>> joinOrCreateSquad({
+    required String squadName,
+    required String squadTag,
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.post(
+        Uri.parse('$base/api/v1/leaderboard/squads/join'),
+        headers: _buildHeaders(jwtToken),
+        body: jsonEncode(<String, dynamic>{
+          'squad_name': squadName.trim(),
+          'squad_tag': squadTag.trim().toUpperCase(),
+        }),
+      ),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final List<dynamic> list = jsonDecode(response.body) as List<dynamic>;
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(SquadLeaderboardEntryModel.fromJson)
+          .toList();
     }
     throw HttpException(_extractErrorDetail(response));
   }

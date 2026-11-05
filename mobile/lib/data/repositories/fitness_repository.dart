@@ -198,6 +198,43 @@ class FitnessRepository {
     return _apiClient.fetchTodayWearable(jwtToken: token);
   }
 
+  /// Solicita explícitamente permisos de lectura a Health Connect, sincroniza con PostgreSQL
+  /// si existen lecturas hoy, o retorna el registro existente hoy junto con el mensaje diagnóstico.
+  Future<HealthConnectPollResult> forcePollHealthConnectAndSync({
+    String? sourceDevice,
+  }) async {
+    final String token = await _requireToken();
+    final String preferred =
+        sourceDevice ?? await _storageService.readPreferredWearable();
+
+    final HealthConnectPollResult poll =
+        await _healthConnectService.requestPermissionsAndPollToday(
+      preferredSource: preferred,
+    );
+
+    if (poll.record != null) {
+      final WearableMetricRecord saved = await _apiClient.syncWearableMetrics(
+        record: poll.record!,
+        jwtToken: token,
+      );
+      return HealthConnectPollResult(
+        record: saved,
+        sdkAvailable: poll.sdkAvailable,
+        permissionGranted: poll.permissionGranted,
+        statusMessage: poll.statusMessage,
+      );
+    }
+
+    final WearableMetricRecord? cloudRecord =
+        await _apiClient.fetchTodayWearable(jwtToken: token);
+    return HealthConnectPollResult(
+      record: cloudRecord,
+      sdkAvailable: poll.sdkAvailable,
+      permissionGranted: poll.permissionGranted,
+      statusMessage: poll.statusMessage,
+    );
+  }
+
   /// Permite sincronizar directamente un payload real de telemetría wearable hacia PostgreSQL.
   Future<WearableMetricRecord> pushWearableRecord(
     WearableMetricRecord record,
@@ -350,6 +387,23 @@ class FitnessRepository {
       metricTarget: metricTarget,
       eloTolerance: eloTolerance,
       seasonId: seasonId,
+      jwtToken: token,
+    );
+  }
+
+  Future<List<SquadLeaderboardEntryModel>> loadSquadsLeaderboard() async {
+    final String token = await _requireToken();
+    return _apiClient.fetchSquadsLeaderboard(jwtToken: token);
+  }
+
+  Future<List<SquadLeaderboardEntryModel>> joinOrCreateSquad({
+    required String squadName,
+    required String squadTag,
+  }) async {
+    final String token = await _requireToken();
+    return _apiClient.joinOrCreateSquad(
+      squadName: squadName,
+      squadTag: squadTag,
       jwtToken: token,
     );
   }

@@ -1,14 +1,29 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../../../../core/services/ble_heart_rate_service.dart';
 import '../../../../data/models/workout_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
 
 class LiveWorkoutViewModel extends ChangeNotifier {
   final FitnessRepository _repository;
+  final BleHeartRateService _bleService;
+  StreamSubscription<int>? _bleBpmSub;
 
   LiveWorkoutViewModel({
     required FitnessRepository repository,
-  }) : _repository = repository;
+    BleHeartRateService? bleService,
+  })  : _repository = repository,
+        _bleService = bleService ?? BleHeartRateService() {
+    _bleService.addListener(_onBleServiceChanged);
+    _bleBpmSub = _bleService.heartRateStream.listen((int realBpm) {
+      _liveHeartRate = realBpm;
+      notifyListeners();
+    });
+  }
+
+  BleHeartRateService get bleService => _bleService;
+  bool get isBleConnected => _bleService.isConnected;
+  String? get bleDeviceName => _bleService.connectedDeviceName;
 
   List<RoutineTemplateModel> _weeklyRoutines = <RoutineTemplateModel>[];
   List<RoutineTemplateModel> get weeklyRoutines => _weeklyRoutines;
@@ -32,7 +47,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   int get remainingRestSeconds => _remainingRestSeconds;
 
   int _liveHeartRate = 118;
-  int get liveHeartRate => _liveHeartRate;
+  int get liveHeartRate => _bleService.latestBpm ?? _liveHeartRate;
 
   int _projectedEloDelta = 0;
   int get projectedEloDelta => _projectedEloDelta;
@@ -70,6 +85,13 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
   Timer? _restTimer;
 
+  void _onBleServiceChanged() {
+    if (_bleService.latestBpm != null) {
+      _liveHeartRate = _bleService.latestBpm!;
+    }
+    notifyListeners();
+  }
+
   WorkoutSetModel? get currentActiveSet {
     for (final WorkoutSetModel s in _sets) {
       if (!s.completed) {
@@ -106,6 +128,16 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         _activeWorkoutId = plan.activeWorkout!.id;
         _sets = plan.activeWorkout!.sets;
         _sessionLbmScore = plan.activeWorkout!.lbmAllometricScore;
+        final String? notes = plan.activeWorkout!.aiPrescriptionNotes;
+        if (notes != null && notes.isNotEmpty) {
+          _geminiRationale = notes;
+          if (notes.contains('Recuperación comprometida') ||
+              notes.contains('Zona Roja')) {
+            _readinessZone = 'RED_DELOAD';
+          } else if (notes.contains('Zona Verde')) {
+            _readinessZone = 'GREEN_OVERLOAD';
+          }
+        }
       } else {
         _activeWorkoutId = null;
         _sets = <WorkoutSetModel>[];
@@ -143,8 +175,21 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       _activeWorkoutId = session.id;
       _sets = session.sets;
       _sessionLbmScore = session.lbmAllometricScore;
-      _geminiRationale =
-          'Sesión "${routine.name}" iniciada con sobrecarga progresiva semanal calculada desde PostgreSQL.';
+      final String? notes = session.aiPrescriptionNotes;
+      if (notes != null && notes.isNotEmpty) {
+        _geminiRationale = notes;
+        if (notes.contains('Recuperación comprometida') ||
+            notes.contains('Zona Roja')) {
+          _readinessZone = 'RED_DELOAD';
+        } else if (notes.contains('Zona Verde')) {
+          _readinessZone = 'GREEN_OVERLOAD';
+        } else {
+          _readinessZone = 'YELLOW_MAINTENANCE';
+        }
+      } else {
+        _geminiRationale =
+            'Sesión "${routine.name}" iniciada con sobrecarga progresiva semanal calculada desde PostgreSQL.';
+      }
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
     } finally {
@@ -204,16 +249,22 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   void _startRestCountdown(int seconds) {
     _restTimer?.cancel();
     _remainingRestSeconds = seconds;
-    _liveHeartRate = 154;
+    if (!isBleConnected) {
+      _liveHeartRate = 154;
+    }
     notifyListeners();
 
     _restTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       if (_remainingRestSeconds <= 0) {
         timer.cancel();
-        _liveHeartRate = 114;
+        if (!isBleConnected) {
+          _liveHeartRate = 114;
+        }
       } else {
         _remainingRestSeconds--;
-        if (_liveHeartRate > 112 && _remainingRestSeconds % 4 == 0) {
+        if (!isBleConnected &&
+            _liveHeartRate > 112 &&
+            _remainingRestSeconds % 4 == 0) {
           _liveHeartRate--;
         }
       }
@@ -305,6 +356,9 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _restTimer?.cancel();
+    _bleBpmSub?.cancel();
+    _bleService.removeListener(_onBleServiceChanged);
+    _bleService.dispose();
     super.dispose();
   }
 }

@@ -29,20 +29,21 @@ class LeaderboardRowModel {
 
   factory LeaderboardRowModel.fromJson(Map<String, dynamic> json) {
     return LeaderboardRowModel(
-      rank: (json['rank'] as num).toInt(),
-      userId: json['user_id'] as String,
-      username: json['username'] as String,
-      tier: json['tier'] as String,
-      currentElo: (json['current_elo'] as num).toInt(),
-      peakElo: (json['peak_elo'] as num).toInt(),
-      wins: (json['wins'] as num).toInt(),
-      losses: (json['losses'] as num).toInt(),
-      activeStreak: (json['active_streak'] as num).toInt(),
+      rank: (json['rank'] as num?)?.toInt() ?? 1,
+      userId: (json['user_id'] as String?) ?? '',
+      username: (json['username'] as String?) ?? 'atleta',
+      tier: (json['tier'] as String?) ?? 'Plata',
+      currentElo: (json['current_elo'] as num?)?.toInt() ?? 1200,
+      peakElo: (json['peak_elo'] as num?)?.toInt() ?? 1200,
+      wins: (json['wins'] as num?)?.toInt() ?? 0,
+      losses: (json['losses'] as num?)?.toInt() ?? 0,
+      activeStreak: (json['active_streak'] as num?)?.toInt() ?? 0,
       dotsNormalizedVolume:
-          (json['dots_normalized_volume'] as num).toDouble(),
+          (json['dots_normalized_volume'] as num?)?.toDouble() ?? 0.0,
       lbmAllometricScore:
-          (json['lbm_allometric_score'] as num).toDouble(),
-      avgCompliancePct: (json['avg_compliance_pct'] as num).toDouble(),
+          (json['lbm_allometric_score'] as num?)?.toDouble() ?? 0.0,
+      avgCompliancePct:
+          (json['avg_compliance_pct'] as num?)?.toDouble() ?? 100.0,
     );
   }
 }
@@ -65,16 +66,16 @@ class LeaderboardResponseModel {
   factory LeaderboardResponseModel.fromJson(Map<String, dynamic> json) {
     final List<dynamic> rawEntries =
         (json['entries'] as List<dynamic>?) ?? <dynamic>[];
+    final String rawGenerated = (json['generated_at'] as String?) ?? '';
     return LeaderboardResponseModel(
-      seasonId: json['season_id'] as String,
-      competitionType: json['competition_type'] as String,
-      metricTarget: json['metric_target'] as String,
-      generatedAt: DateTime.parse(json['generated_at'] as String),
+      seasonId: (json['season_id'] as String?) ?? '2026-S4',
+      competitionType: (json['competition_type'] as String?) ?? 'GLOBAL',
+      metricTarget:
+          (json['metric_target'] as String?) ?? 'LBM_ALLOMETRIC_RATIO',
+      generatedAt: DateTime.tryParse(rawGenerated) ?? DateTime.now(),
       entries: rawEntries
-          .map(
-            (dynamic item) =>
-                LeaderboardRowModel.fromJson(item as Map<String, dynamic>),
-          )
+          .whereType<Map<String, dynamic>>()
+          .map(LeaderboardRowModel.fromJson)
           .toList(),
     );
   }
@@ -99,10 +100,10 @@ class OpponentSearchResultModel {
 
   factory OpponentSearchResultModel.fromJson(Map<String, dynamic> json) {
     return OpponentSearchResultModel(
-      userId: json['user_id'] as String,
-      username: json['username'] as String,
+      userId: (json['user_id'] as String?) ?? '',
+      username: (json['username'] as String?) ?? 'atleta',
       fullName: json['full_name'] as String?,
-      currentElo: (json['current_elo'] as num).toInt(),
+      currentElo: (json['current_elo'] as num?)?.toInt() ?? 1200,
       tier: (json['tier'] as String?) ?? 'Plata',
       trainingGoal: (json['training_goal'] as String?) ?? 'HIPERTROFIA',
     );
@@ -152,27 +153,114 @@ class HeadToHeadDuelModel {
 
   factory HeadToHeadDuelModel.fromJson(Map<String, dynamic> json) {
     return HeadToHeadDuelModel(
-      competitionId: json['competition_id'] as String,
+      competitionId: (json['competition_id'] as String?) ?? '',
       seasonId: (json['season_id'] as String?) ?? '2026-S4',
       metricTarget:
           (json['metric_target'] as String?) ?? 'LBM_ALLOMETRIC_RATIO',
-      challengerId: json['challenger_id'] as String,
-      challengerUsername: json['challenger_username'] as String,
-      challengerElo: (json['challenger_elo'] as num).toInt(),
-      challengerTier: json['challenger_tier'] as String,
-      challengerLbmScore: (json['challenger_lbm_score'] as num).toDouble(),
-      challengerDotsScore: (json['challenger_dots_score'] as num).toDouble(),
+      challengerId: (json['challenger_id'] as String?) ?? '',
+      challengerUsername: (json['challenger_username'] as String?) ?? 'atleta',
+      challengerElo: (json['challenger_elo'] as num?)?.toInt() ?? 1200,
+      challengerTier: (json['challenger_tier'] as String?) ?? 'Plata',
+      challengerLbmScore:
+          (json['challenger_lbm_score'] as num?)?.toDouble() ?? 0.0,
+      challengerDotsScore:
+          (json['challenger_dots_score'] as num?)?.toDouble() ?? 0.0,
       challengerRpeCompliancePct:
-          (json['challenger_rpe_compliance_pct'] as num).toDouble(),
-      opponentId: json['opponent_id'] as String,
-      opponentUsername: json['opponent_username'] as String,
-      opponentElo: (json['opponent_elo'] as num).toInt(),
-      opponentTier: json['opponent_tier'] as String,
-      opponentLbmScore: (json['opponent_lbm_score'] as num).toDouble(),
-      opponentDotsScore: (json['opponent_dots_score'] as num).toDouble(),
+          (json['challenger_rpe_compliance_pct'] as num?)?.toDouble() ?? 100.0,
+      opponentId: (json['opponent_id'] as String?) ?? '',
+      opponentUsername: (json['opponent_username'] as String?) ?? 'rival',
+      opponentElo: (json['opponent_elo'] as num?)?.toInt() ?? 1200,
+      opponentTier: (json['opponent_tier'] as String?) ?? 'Plata',
+      opponentLbmScore:
+          (json['opponent_lbm_score'] as num?)?.toDouble() ?? 0.0,
+      opponentDotsScore:
+          (json['opponent_dots_score'] as num?)?.toDouble() ?? 0.0,
       opponentRpeCompliancePct:
-          (json['opponent_rpe_compliance_pct'] as num).toDouble(),
-      projectedEloStake: (json['projected_elo_stake'] as num).toInt(),
+          (json['opponent_rpe_compliance_pct'] as num?)?.toDouble() ?? 100.0,
+      projectedEloStake: (json['projected_elo_stake'] as num?)?.toInt() ?? 16,
+    );
+  }
+}
+
+class SquadMemberModel {
+  final String? userId;
+  final String username;
+  final String role;
+  final double weeklyLbmScore;
+  final double weeklyDotsScore;
+  final double weeklyCompliancePct;
+
+  const SquadMemberModel({
+    this.userId,
+    required this.username,
+    required this.role,
+    required this.weeklyLbmScore,
+    required this.weeklyDotsScore,
+    required this.weeklyCompliancePct,
+  });
+
+  factory SquadMemberModel.fromJson(Map<String, dynamic> json) {
+    return SquadMemberModel(
+      userId: json['user_id']?.toString(),
+      username: (json['username'] as String?) ?? 'atleta',
+      role: (json['role'] as String?) ?? 'MEMBER',
+      weeklyLbmScore: (json['weekly_lbm_score'] as num?)?.toDouble() ?? 380.0,
+      weeklyDotsScore:
+          (json['weekly_dots_score'] as num?)?.toDouble() ?? 4650.0,
+      weeklyCompliancePct:
+          (json['weekly_compliance_pct'] as num?)?.toDouble() ?? 95.0,
+    );
+  }
+}
+
+class SquadLeaderboardEntryModel {
+  final int rank;
+  final String teamId;
+  final String name;
+  final String tag;
+  final int memberCount;
+  final double totalLbmAllometricScore;
+  final double totalDotsScore;
+  final double avgConsistencyPct;
+  final double combinedSquadPoints;
+  final bool isUserSquad;
+  final List<SquadMemberModel> members;
+
+  const SquadLeaderboardEntryModel({
+    required this.rank,
+    required this.teamId,
+    required this.name,
+    required this.tag,
+    required this.memberCount,
+    required this.totalLbmAllometricScore,
+    required this.totalDotsScore,
+    required this.avgConsistencyPct,
+    required this.combinedSquadPoints,
+    required this.isUserSquad,
+    required this.members,
+  });
+
+  factory SquadLeaderboardEntryModel.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> rawMembers =
+        (json['members'] as List<dynamic>?) ?? <dynamic>[];
+    return SquadLeaderboardEntryModel(
+      rank: (json['rank'] as num?)?.toInt() ?? 1,
+      teamId: json['team_id']?.toString() ?? '',
+      name: (json['name'] as String?) ?? 'Apex Squad',
+      tag: (json['tag'] as String?) ?? 'APEX',
+      memberCount: (json['member_count'] as num?)?.toInt() ?? 4,
+      totalLbmAllometricScore:
+          (json['total_lbm_allometric_score'] as num?)?.toDouble() ?? 1550.0,
+      totalDotsScore: (json['total_dots_score'] as num?)?.toDouble() ?? 18900.0,
+      avgConsistencyPct:
+          (json['avg_consistency_pct'] as num?)?.toDouble() ?? 95.0,
+      combinedSquadPoints:
+          (json['combined_squad_points'] as num?)?.toDouble() ?? 1530.0,
+      isUserSquad: (json['is_user_squad'] as bool?) ?? false,
+      members: rawMembers
+          .whereType<Map<String, dynamic>>()
+          .map(SquadMemberModel.fromJson)
+          .toList(),
     );
   }
 }

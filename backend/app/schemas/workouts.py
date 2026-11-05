@@ -47,6 +47,7 @@ class RoutineExerciseItemResponse(BaseModel):
     base_weight_kg: float
     recommended_weight_kg: float
     progressive_overload_applied: bool = False
+    weekly_variant_suggestion: Optional[str] = None
     target_reps: int
     target_rpe: float
 

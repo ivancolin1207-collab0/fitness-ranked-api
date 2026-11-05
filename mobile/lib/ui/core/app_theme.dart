@@ -36,20 +36,25 @@ class ApexTheme {
       appBarTheme: const AppBarTheme(
         backgroundColor: obsidianBg,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        toolbarHeight: kToolbarHeight,
+        titleSpacing: 12,
         centerTitle: false,
         titleTextStyle: TextStyle(
           color: textPrimary,
-          fontSize: 20,
+          fontSize: 16.5,
           fontWeight: FontWeight.w800,
-          letterSpacing: 0.6,
+          letterSpacing: 0.3,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
       cardTheme: CardThemeData(
         color: cardGraphite,
         elevation: 0,
+        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: const BorderSide(color: cardBorder, width: 1.2),
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: cardBorder, width: 1.1),
         ),
       ),
     );

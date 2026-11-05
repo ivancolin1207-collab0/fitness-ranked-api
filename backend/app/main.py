@@ -18,7 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1 import auth, biometrics, leaderboard, workouts
 from app.core.config import get_settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, engine
 
 logger = logging.getLogger("apexmetrix_api")
 logging.basicConfig(
@@ -89,6 +89,22 @@ app.include_router(auth.router, include_in_schema=False)
 app.include_router(biometrics.router, include_in_schema=False)
 app.include_router(workouts.router, include_in_schema=False)
 app.include_router(leaderboard.router, include_in_schema=False)
+
+
+@app.on_event("startup")
+async def ensure_postgres_enums() -> None:
+    """Garantiza que wearable_source_enum incluya SAMSUNG_WATCH y APPLE_WATCH en PostgreSQL."""
+    try:
+        async with engine.connect() as conn:
+            autocommit_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await autocommit_conn.execute(
+                text("ALTER TYPE wearable_source_enum ADD VALUE IF NOT EXISTS 'SAMSUNG_WATCH'")
+            )
+            await autocommit_conn.execute(
+                text("ALTER TYPE wearable_source_enum ADD VALUE IF NOT EXISTS 'APPLE_WATCH'")
+            )
+    except Exception as exc:
+        logger.warning("No se pudo actualizar wearable_source_enum en startup: %s", exc)
 
 
 @app.get("/", tags=["Healthcheck"])

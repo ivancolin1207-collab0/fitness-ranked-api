@@ -103,6 +103,64 @@ async def _compute_recommended_weight_for_exercise(
     return round_to_plate_increment(max(base_weight_kg, avg_actual_w)), False
 
 
+_EXERCISE_VARIANT_ROTATIONS: dict[str, list[str]] = {
+    "barbell back squat": [
+        "Sentadilla en Máquina Smith",
+        "Hack Squat Profunda",
+        "Front Squat con Barra",
+    ],
+    "sentadilla": [
+        "Sentadilla en Máquina Smith",
+        "Hack Squat Profunda",
+        "Prensa Inclinada 45°",
+    ],
+    "barbell bench press": [
+        "Press Mancuernas Inclinado",
+        "Press Convergente en Máquina",
+        "Press Banca con Pausa",
+    ],
+    "press banca": [
+        "Press Mancuernas Inclinado",
+        "Press en Máquina Convergente",
+        "Fondos Lastrados en Paralelas",
+    ],
+    "romanian deadlift": [
+        "Peso Muerto con Mancuernas",
+        "Curl Femoral Sentado",
+        "Buenos Días en Máquina Smith",
+    ],
+    "deadlift": [
+        "Peso Muerto en Barra Hexagonal (Trap Bar)",
+        "Rack Pull Medio",
+        "Peso Muerto Rumano Pesado",
+    ],
+    "overhead press": [
+        "Press Militar con Mancuernas Sentado",
+        "Press Vikingo / Landmine Press",
+        "Press de Hombros en Máquina",
+    ],
+    "weighted pull-ups": [
+        "Jalón al Pecho Agarre Neutro",
+        "Remo con Pecho Apoyado (T-Bar)",
+        "Dominadas Supinas Lastradas",
+    ],
+}
+
+
+def _resolve_weekly_exercise_variant(exercise_name: str, iso_week: int) -> str:
+    """Sugiere una variante biomecánica rotativa según la semana ISO para evitar mesetas y sobrecarga articular."""
+    low = exercise_name.strip().lower()
+    for key, variants in _EXERCISE_VARIANT_ROTATIONS.items():
+        if key in low:
+            return variants[iso_week % len(variants)]
+    fallback_variants = [
+        f"{exercise_name} (Tempo Controlado 3-1-1)",
+        f"{exercise_name} con Mancuernas / Polea",
+        f"{exercise_name} en Máquina Guiada",
+    ]
+    return fallback_variants[iso_week % len(fallback_variants)]
+
+
 async def _build_routine_response(
     db: AsyncSession,
     routine: RoutineTemplate,
@@ -110,6 +168,7 @@ async def _build_routine_response(
 ) -> RoutineTemplateResponse:
     items_out: list[RoutineExerciseItemResponse] = []
     step_kg = float(routine.progression_step_kg)
+    current_iso_week = date.today().isocalendar()[1]
 
     for item in routine.items:
         base_w = float(item.base_weight_kg)
@@ -121,6 +180,9 @@ async def _build_routine_response(
             target_rpe=float(item.target_rpe),
             progression_step_kg=step_kg,
         )
+        variant_suggestion = _resolve_weekly_exercise_variant(
+            item.exercise.name, current_iso_week
+        )
         items_out.append(
             RoutineExerciseItemResponse(
                 exercise_id=item.exercise_id,
@@ -131,6 +193,7 @@ async def _build_routine_response(
                 base_weight_kg=base_w,
                 recommended_weight_kg=rec_w,
                 progressive_overload_applied=overloaded,
+                weekly_variant_suggestion=variant_suggestion,
                 target_reps=int(item.target_reps),
                 target_rpe=float(item.target_rpe),
             )
@@ -555,12 +618,19 @@ async def start_workout_from_routine(
     recovery_pct = (
         float(today_wearable.recovery_score) if today_wearable is not None else None
     )
+    sleep_eff_pct = (
+        float(today_wearable.sleep_efficiency_pct)
+        if (today_wearable is not None and today_wearable.sleep_efficiency_pct is not None)
+        else 85.0
+    )
     overload_step = 2.5 if current_user.unit_system.value == "KG" else 2.27
+    is_red_deload = (recovery_pct is not None and recovery_pct < 40.0) or (sleep_eff_pct < 70.0)
 
-    if recovery_pct is not None and recovery_pct < 40.0:
+    if is_red_deload:
+        display_rec = recovery_pct if recovery_pct is not None else 35.0
         notes = (
-            f"Recuperación {today_wearable.source_device.value} en Zona Roja ({recovery_pct:.0f}%). "
-            "Gemini aplicó descarga protectora (-15% de peso)."
+            f"Recuperación comprometida ({display_rec:.0f}%) y estrés elevado. "
+            "Redujimos el volumen prescrito para evitar fatiga del SNC."
         )
     elif recovery_pct is not None and recovery_pct > 80.0:
         notes = (
@@ -594,9 +664,10 @@ async def start_workout_from_routine(
         working_w = ex_item.recommended_weight_kg
         working_rpe = ex_item.target_rpe
 
-        if recovery_pct is not None and recovery_pct < 40.0:
-            working_w = round_to_plate_increment(working_w * 0.85)
-            working_rpe = min(7.0, working_rpe)
+        if is_red_deload:
+            deload_factor = 0.80 if (recovery_pct is not None and recovery_pct < 40.0 and sleep_eff_pct < 75.0) else 0.83
+            working_w = round_to_plate_increment(working_w * deload_factor)
+            working_rpe = min(6.5, working_rpe)
         elif (
             recovery_pct is not None
             and recovery_pct > 80.0

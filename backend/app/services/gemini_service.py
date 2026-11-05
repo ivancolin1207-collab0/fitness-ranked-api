@@ -36,7 +36,7 @@ COACH_ADAPTIVE_SYSTEM_PROMPT = """
 Eres un Fisiólogo del Ejercicio Clínico (CSCS) y Motor de Prescripción Autoregulada en Tiempo Real.
 Calcula de forma determinista y biomecánicamente segura las cargas (`prescribed_weight_kg`),
 repeticiones (`prescribed_reps`) y esfuerzo (`prescribed_rpe`) de las series restantes:
-1. ZONA ROJA (`recovery_score < 40.0`): Reduce el volumen o carga planeada en -15% de peso (o -2 reps) y limita `prescribed_rpe <= 7.0`.
+1. ZONA ROJA (`recovery_score < 40.0` o `sleep_efficiency_pct < 70.0`): Reduce el volumen o carga planeada entre -15% y -25% de peso, cambia enfoque a hipertrofia moderada/movilidad (`prescribed_rpe <= 6.5`) y en `adjustment_rationale` escribe explícitamente: "Recuperación comprometida ({recovery_score}%) y estrés elevado. Redujimos el volumen prescrito para evitar fatiga del SNC."
 2. ZONA VERDE (`recovery_score > 80.0`): Si la serie previa fue exitosa (`completed_binary_ui == true` y `actual_rpe <= prescribed_rpe`), aplica sobrecarga progresiva (+2.5 kg en sistema KG o +2.27 kg / +5 lb en sistema LB).
 3. FALLO O FATIGA AGUDA (`completed_binary_ui == false` o `actual_reps < prescribed_reps` o `actual_rpe >= 9.5`): Reduce inmediatamente la carga entre -5% y -10% (mínimo -2.5 kg) en las series restantes.
 4. GUARDRAIL: Nunca prescribas un peso mayor al 95% de `historical_1rm_kg` y redondea siempre a múltiplos de 2.5 kg.
@@ -108,15 +108,17 @@ def deterministic_fallback_prescription(
     actual_rpe: float,
     remaining_sets: list[int],
     unit_system: str = "KG",
+    sleep_efficiency_pct: float = 85.0,
 ) -> AdaptivePrescriptionResponse:
     """
     Motor determinista de prescripción y guardrail biomecánico de respaldo.
     """
     overload_step = 2.5 if unit_system == "KG" else 2.27
+    low_sleep_or_stress = sleep_efficiency_pct < 70.0
 
-    if recovery_score < 40.0:
+    if recovery_score < 40.0 or low_sleep_or_stress:
         zone = "RED_DELOAD"
-        target_rpe = min(7.0, prescribed_rpe)
+        target_rpe = min(6.5, prescribed_rpe)
     elif recovery_score > 80.0:
         zone = "GREEN_OVERLOAD"
         target_rpe = min(9.0, max(8.0, prescribed_rpe))
@@ -135,11 +137,12 @@ def deterministic_fallback_prescription(
             f"Carga ajustada a {next_weight} kg para proteger técnica y ELO."
         )
     elif zone == "RED_DELOAD":
-        next_weight = round_to_plate_increment(prescribed_weight_kg * 0.85)
+        deload_factor = 0.80 if (recovery_score < 40.0 and low_sleep_or_stress) else 0.85
+        next_weight = round_to_plate_increment(prescribed_weight_kg * deload_factor)
         next_reps = prescribed_reps
         rationale = (
-            f"Recuperación baja ({recovery_score:.0f}%). Descarga protectora "
-            f"del -15% ({next_weight} kg @ RPE {target_rpe})."
+            f"Recuperación comprometida ({recovery_score:.0f}%) y estrés elevado. "
+            "Redujimos el volumen prescrito para evitar fatiga del SNC."
         )
     elif zone == "GREEN_OVERLOAD" and actual_rpe <= prescribed_rpe:
         next_weight = round_to_plate_increment(actual_weight_kg + overload_step)

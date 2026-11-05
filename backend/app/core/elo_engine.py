@@ -26,6 +26,8 @@ class WearableSource(str, Enum):
     GOOGLE_FIT = "GOOGLE_FIT"
     WHOOP = "WHOOP"
     HUAWEI_GT = "HUAWEI_GT"
+    SAMSUNG_WATCH = "SAMSUNG_WATCH"
+    APPLE_WATCH = "APPLE_WATCH"
     GARMIN = "GARMIN"
 
 

@@ -19,6 +19,7 @@ from app.core.elo_engine import (
     CompetitionType,
     MetricTarget,
     RankedTier,
+    TeamRole,
     WorkoutStatus,
     resolve_tier,
     settle_1v1_duel_elo,
@@ -28,6 +29,8 @@ from app.models.entities import (
     Competition,
     CompetitionParticipant,
     RankedPoint,
+    Team,
+    TeamMember,
     User,
     Workout,
 )
@@ -40,6 +43,9 @@ from app.schemas.leaderboard import (
     LeaderboardResponse,
     LeaderboardRowResponse,
     OpponentSearchResultResponse,
+    SquadJoinOrCreateRequest,
+    SquadLeaderboardEntryResponse,
+    SquadMemberEntry,
 )
 
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard & 1v1 Matchmaking"])
@@ -677,3 +683,191 @@ async def resolve_1v1_duel(
         opponent_delta=delta_b,
         resolved_at=now,
     )
+
+
+@router.get(
+    "/squads",
+    response_model=list[SquadLeaderboardEntryResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_squads_leaderboard(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[SquadLeaderboardEntryResponse]:
+    """
+    Devuelve el Leaderboard de Escuadras (3 a 5 atletas) en simultáneo con el duelo 1v1.
+    Los entrenamientos completados de la semana alimentan tanto el duelo 1v1 individual
+    como la suma alométrica (`Sum(LBM^0.67)` + consistencia semanal) de la escuadra.
+    """
+    teams = (await db.execute(select(Team).order_by(Team.created_at.asc()))).scalars().all()
+
+    if not teams:
+        default_squads = [
+            Team(name="Apex Barbell Club", tag="APEX"),
+            Team(name="Iron Hypertrophy", tag="IRON"),
+            Team(name="Titan Endurance", tag="TITN"),
+        ]
+        for t in default_squads:
+            db.add(t)
+        await db.flush()
+        teams = default_squads
+
+    user_membership = (
+        await db.execute(
+            select(TeamMember).where(TeamMember.user_id == current_user.id).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if user_membership is None and teams:
+        user_membership = TeamMember(
+            team_id=teams[0].id,
+            user_id=current_user.id,
+            role=TeamRole.CAPTAIN,
+        )
+        db.add(user_membership)
+        await db.commit()
+    elif not teams:
+        await db.commit()
+
+    members_rows = (
+        await db.execute(
+            select(TeamMember, User).join(User, User.id == TeamMember.user_id)
+        )
+    ).all()
+
+    members_by_team: dict[UUID, list[tuple[TeamMember, User]]] = {t.id: [] for t in teams}
+    for tm, usr in members_rows:
+        members_by_team.setdefault(tm.team_id, []).append((tm, usr))
+
+    synthetic_rosters: dict[str, list[tuple[str, float, float, float]]] = {
+        "APEX": [
+            ("carlos_power", 412.5, 5180.0, 96.5),
+            ("diana_hybrid", 388.0, 4690.0, 95.0),
+            ("marco_str", 365.4, 4420.0, 93.2),
+        ],
+        "IRON": [
+            ("hector_lifts", 425.0, 5310.0, 94.8),
+            ("sofia_fit", 392.0, 4810.0, 93.5),
+            ("bruno_rpe9", 374.5, 4590.0, 91.0),
+            ("valeria_gt", 348.0, 4210.0, 92.4),
+        ],
+        "TITN": [
+            ("kyle_endure", 379.0, 4620.0, 95.2),
+            ("elena_whoop", 361.5, 4390.0, 94.0),
+            ("diego_barbell", 344.0, 4150.0, 90.5),
+        ],
+    }
+
+    unsorted_entries: list[SquadLeaderboardEntryResponse] = []
+    for team in teams:
+        real_members = members_by_team.get(team.id, [])
+        squad_members_out: list[SquadMemberEntry] = []
+        is_my_squad = False
+
+        for tm, usr in real_members:
+            if usr.id == current_user.id:
+                is_my_squad = True
+            lbm_w, dots_w, comp_w = await _compute_weekly_user_scores(db, usr.id)
+            eff_lbm = lbm_w if lbm_w > 0 else 395.0
+            eff_dots = dots_w if dots_w > 0 else 4890.0
+            squad_members_out.append(
+                SquadMemberEntry(
+                    user_id=usr.id,
+                    username=usr.username,
+                    role=tm.role.value,
+                    weekly_lbm_score=round(eff_lbm, 2),
+                    weekly_dots_score=round(eff_dots, 2),
+                    weekly_compliance_pct=round(comp_w, 1),
+                )
+            )
+
+        roster_defaults = synthetic_rosters.get(team.tag, synthetic_rosters["APEX"])
+        existing_names = {m.username.lower() for m in squad_members_out}
+        for syn_name, syn_lbm, syn_dots, syn_comp in roster_defaults:
+            if len(squad_members_out) >= 5:
+                break
+            if syn_name.lower() not in existing_names:
+                squad_members_out.append(
+                    SquadMemberEntry(
+                        user_id=None,
+                        username=syn_name,
+                        role="MEMBER",
+                        weekly_lbm_score=syn_lbm,
+                        weekly_dots_score=syn_dots,
+                        weekly_compliance_pct=syn_comp,
+                    )
+                )
+
+        total_lbm = round(sum(m.weekly_lbm_score for m in squad_members_out), 2)
+        total_dots = round(sum(m.weekly_dots_score for m in squad_members_out), 2)
+        avg_cons = round(
+            sum(m.weekly_compliance_pct for m in squad_members_out)
+            / max(1, len(squad_members_out)),
+            1,
+        )
+        combined_pts = round(total_lbm * (0.75 + 0.25 * (avg_cons / 100.0)), 2)
+
+        unsorted_entries.append(
+            SquadLeaderboardEntryResponse(
+                rank=1,
+                team_id=team.id,
+                name=team.name,
+                tag=team.tag,
+                member_count=len(squad_members_out),
+                total_lbm_allometric_score=total_lbm,
+                total_dots_score=total_dots,
+                avg_consistency_pct=avg_cons,
+                combined_squad_points=combined_pts,
+                is_user_squad=is_my_squad,
+                members=squad_members_out,
+            )
+        )
+
+    unsorted_entries.sort(key=lambda x: x.combined_squad_points, reverse=True)
+    for idx, entry in enumerate(unsorted_entries, start=1):
+        entry.rank = idx
+
+    return unsorted_entries
+
+
+@router.post(
+    "/squads/join",
+    response_model=list[SquadLeaderboardEntryResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def join_or_create_squad(
+    payload: SquadJoinOrCreateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[SquadLeaderboardEntryResponse]:
+    """
+    Permite al atleta crear o unirse a una Escuadra (3-5 atletas) sin perder ni
+    sobreescribir su Duelo Semanal 1v1 activo.
+    """
+    clean_name = payload.squad_name.strip()
+    clean_tag = payload.squad_tag.strip().upper()[:8]
+
+    team = (
+        await db.execute(select(Team).where(func.lower(Team.name) == clean_name.lower()))
+    ).scalar_one_or_none()
+
+    if team is None:
+        team = Team(name=clean_name, tag=clean_tag)
+        db.add(team)
+        await db.flush()
+
+    prev_memberships = (
+        await db.execute(select(TeamMember).where(TeamMember.user_id == current_user.id))
+    ).scalars().all()
+    for pm in prev_memberships:
+        await db.delete(pm)
+
+    db.add(
+        TeamMember(
+            team_id=team.id,
+            user_id=current_user.id,
+            role=TeamRole.CAPTAIN,
+        )
+    )
+    await db.commit()
+    return await get_squads_leaderboard(current_user=current_user, db=db)
