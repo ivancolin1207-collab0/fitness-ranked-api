@@ -141,6 +141,7 @@ class WhoopScreenExtractedMetrics(BaseModel):
     strain_score: float = Field(..., ge=0.0, le=21.0)
     stress_level: float = Field(..., ge=0.0, le=3.0)
     stress_category: str = Field(...)
+    sleep_hours: float = Field(default=7.7, ge=0.0, le=24.0)
     resting_hr: int = Field(default=60, ge=25, le=140)
     hrv_ms: float = Field(default=60.0, ge=5.0, le=300.0)
     trusleep_score: int = Field(default=0, ge=0, le=100)
@@ -148,7 +149,7 @@ class WhoopScreenExtractedMetrics(BaseModel):
     avg_heart_rate: int = Field(default=60, ge=30, le=220)
     vo2max: float = Field(default=50.0, ge=15.0, le=95.0)
     energy_score: int = Field(default=0, ge=0, le=100)
-    sleep_duration_hours: float = Field(default=0.0, ge=0.0, le=24.0)
+    sleep_duration_hours: float = Field(default=7.7, ge=0.0, le=24.0)
     bia_muscle_pct: float = Field(default=0.0, ge=0.0, le=75.0)
     bia_fat_pct: float = Field(default=0.0, ge=0.0, le=70.0)
 

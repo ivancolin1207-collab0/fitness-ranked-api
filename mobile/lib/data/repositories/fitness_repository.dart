@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import '../../core/services/auth_service.dart';
 import '../models/auth_models.dart';
 import '../models/biometric_models.dart';
@@ -274,7 +275,10 @@ class FitnessRepository {
       try {
         final WearableMetricRecord? existingCloud =
             await _apiClient.fetchTodayWearable(jwtToken: token);
-        if (existingCloud != null) {
+        if (existingCloud != null &&
+            !(existingCloud.recoveryScore.round() == 62 &&
+                existingCloud.sleepEfficiencyPct.round() == 90 &&
+                existingCloud.restingHr == 62)) {
           return existingCloud;
         }
       } catch (_) {}
@@ -291,7 +295,15 @@ class FitnessRepository {
       );
     }
 
-    return _apiClient.fetchTodayWearable(jwtToken: token);
+    final WearableMetricRecord? fallbackCloud =
+        await _apiClient.fetchTodayWearable(jwtToken: token);
+    if (fallbackCloud != null &&
+        fallbackCloud.recoveryScore.round() == 62 &&
+        fallbackCloud.sleepEfficiencyPct.round() == 90 &&
+        fallbackCloud.restingHr == 62) {
+      return null;
+    }
+    return fallbackCloud;
   }
 
   /// Solicita explícitamente permisos de lectura a Health Connect, sincroniza con PostgreSQL
@@ -323,8 +335,14 @@ class FitnessRepository {
 
     final WearableMetricRecord? cloudRecord =
         await _apiClient.fetchTodayWearable(jwtToken: token);
+    final WearableMetricRecord? sanitizedCloud = (cloudRecord != null &&
+            cloudRecord.recoveryScore.round() == 62 &&
+            cloudRecord.sleepEfficiencyPct.round() == 90 &&
+            cloudRecord.restingHr == 62)
+        ? null
+        : cloudRecord;
     return HealthConnectPollResult(
-      record: cloudRecord,
+      record: sanitizedCloud,
       sdkAvailable: poll.sdkAvailable,
       permissionGranted: poll.permissionGranted,
       statusMessage: poll.statusMessage,
@@ -339,6 +357,20 @@ class FitnessRepository {
     return _apiClient.syncWearableMetrics(
       record: record,
       jwtToken: token,
+    );
+  }
+
+  /// Escanea una captura de pantalla de WHOOP desde bytes (`POST /api/v1/wearables/scan-whoop`)
+  /// y sincroniza las métricas extraídas en PostgreSQL.
+  Future<Map<String, dynamic>> scanWhoopScreenshot(
+    Uint8List bytes, {
+    String sourceDevice = 'WHOOP',
+  }) async {
+    final String token = await _requireToken();
+    return _apiClient.scanWhoopScreenshotBytes(
+      bytes: bytes,
+      jwtToken: token,
+      sourceDevice: sourceDevice,
     );
   }
 

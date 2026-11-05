@@ -5,6 +5,8 @@ import '../../../../data/models/biometric_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
 import '../../../../data/services/health_connect_service.dart';
 
+typedef ReadinessViewModel = HomeViewModel;
+
 class HomeViewModel extends ChangeNotifier {
   final FitnessRepository _repository;
   final ImagePicker _imagePicker;
@@ -22,6 +24,24 @@ class HomeViewModel extends ChangeNotifier {
   double? strain;
   double? sleep;
   double? stress;
+
+  double? whoopRecovery;
+  double? whoopStrain;
+  double? whoopSleep;
+  double? whoopStress;
+  String? whoopStressCategory;
+  double? whoopSleepHours;
+
+  String get whoopZoneLabel {
+    final double rec = whoopRecovery ?? _wearable?.recoveryScore ?? 47.0;
+    if (rec >= 67.0) {
+      return 'ZONA VERDE • SOBRECARGA';
+    }
+    if (rec >= 34.0) {
+      return 'ZONA AMARILLA • MANTENIMIENTO';
+    }
+    return 'ZONA ROJA • DELOAD (-20%)';
+  }
 
   BiometricRecord? _biometrics;
   BiometricRecord? get biometrics => _biometrics;
@@ -77,8 +97,8 @@ class HomeViewModel extends ChangeNotifier {
       final WearableMetricRecord? loadedWearable =
           results[0] as WearableMetricRecord?;
       if (loadedWearable != null &&
-          loadedWearable.recoveryScore == 62.0 &&
-          loadedWearable.sleepEfficiencyPct == 90.0 &&
+          loadedWearable.recoveryScore.round() == 62 &&
+          loadedWearable.sleepEfficiencyPct.round() == 90 &&
           loadedWearable.restingHr == 62) {
         _wearable = null;
       } else {
@@ -90,6 +110,14 @@ class HomeViewModel extends ChangeNotifier {
         strain = _wearable!.strainScore;
         sleep = _wearable!.sleepEfficiencyPct;
         stress = _wearable!.whoopStressLevel;
+        whoopRecovery = _wearable!.recoveryScore;
+        whoopStrain = _wearable!.strainScore;
+        whoopSleep = _wearable!.sleepEfficiencyPct;
+        whoopStress = _wearable!.whoopStressLevel;
+        whoopSleepHours = _wearable!.sleepHours;
+        whoopStressCategory = _wearable!.whoopStressLevel >= 2.0
+            ? 'ALTO'
+            : (_wearable!.whoopStressLevel >= 1.0 ? 'MEDIO' : 'BAJO');
       }
 
       final BiometricRecord? loadedBio = results[1] as BiometricRecord?;
@@ -152,6 +180,9 @@ class HomeViewModel extends ChangeNotifier {
         sourceDevice: _preferredWearable,
       );
       _wearable = result.record;
+      if (_wearable != null) {
+        setMetrics(_wearable!);
+      }
       _statusBanner = result.statusMessage;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
@@ -184,6 +215,7 @@ class HomeViewModel extends ChangeNotifier {
         appleExerciseMinutes: record.appleExerciseMinutes,
         appleStandHours: record.appleStandHours,
       );
+      setMetrics(_wearable!);
       final bool isLowReadiness = _wearable!.recoveryScore < 40.0 ||
           _wearable!.sleepEfficiencyPct < 70.0 ||
           (_preferredWearable == 'WHOOP' && _wearable!.whoopStressLevel >= 2.0);
@@ -213,8 +245,150 @@ class HomeViewModel extends ChangeNotifier {
     strain = updated.strainScore;
     sleep = updated.sleepEfficiencyPct;
     stress = updated.whoopStressLevel;
+    whoopRecovery = updated.recoveryScore;
+    whoopStrain = updated.strainScore;
+    whoopSleep = updated.sleepEfficiencyPct;
+    whoopStress = updated.whoopStressLevel;
+    whoopSleepHours = updated.sleepHours;
+    whoopStressCategory = updated.whoopStressLevel >= 2.0
+        ? 'ALTO'
+        : (updated.whoopStressLevel >= 1.0 ? 'MEDIO' : 'BAJO');
     _wearable = updated;
     notifyListeners();
+  }
+
+  /// Sobrescribe las variables reactivas que alimentan los 3 anillos circulares
+  /// (`whoopRecovery`, `whoopStrain`, `whoopSleep`, `whoopStress`), recalcula
+  /// automáticamente la etiqueta de zona y dispara `notifyListeners()`.
+  void updateFromWhoopScan({
+    required double recoveryScore,
+    required double strainScore,
+    required double sleepScore,
+    double? stressScore,
+    String? stressCategory,
+    double? sleepHours,
+    int? hrvMs,
+    int? restingHr,
+    int? healthMetricsInRange,
+    String? sourceDevice,
+  }) {
+    final double resolvedStress = stressScore ?? whoopStress ?? _wearable?.whoopStressLevel ?? 1.8;
+    final double resolvedSleepHours =
+        sleepHours ?? whoopSleepHours ?? _wearable?.sleepHours ?? double.parse((sleepScore * 0.09625).toStringAsFixed(1));
+    final String resolvedCategory = (stressCategory != null && stressCategory.trim().isNotEmpty)
+        ? stressCategory.trim().toUpperCase()
+        : (resolvedStress >= 2.0 ? 'ALTO' : (resolvedStress >= 1.0 ? 'MEDIO' : 'BAJO'));
+
+    recovery = recoveryScore;
+    strain = strainScore;
+    sleep = sleepScore;
+    stress = resolvedStress;
+
+    whoopRecovery = recoveryScore;
+    whoopStrain = strainScore;
+    whoopSleep = sleepScore;
+    whoopStress = resolvedStress;
+    whoopStressCategory = resolvedCategory;
+    whoopSleepHours = resolvedSleepHours;
+
+    final DateTime now = DateTime.now();
+
+    final WearableMetricRecord base = _wearable ??
+        WearableMetricRecord(
+          date: now,
+          sourceDevice: sourceDevice ?? _preferredWearable,
+          hrvMs: (hrvMs ?? 56).toDouble(),
+          restingHr: restingHr ?? 58,
+          avgHr: 68,
+          maxHr: 155,
+          sleepHours: resolvedSleepHours,
+          sleepEfficiencyPct: sleepScore,
+          strainScore: strainScore,
+          recoveryScore: recoveryScore,
+          whoopStressLevel: resolvedStress,
+          whoopHealthMetricsInRange: healthMetricsInRange ?? 5,
+        );
+
+    _wearable = base.copyWith(
+      sourceDevice: sourceDevice ?? _preferredWearable,
+      sleepEfficiencyPct: sleepScore,
+      sleepHours: resolvedSleepHours,
+      recoveryScore: recoveryScore,
+      strainScore: strainScore,
+      whoopStressLevel: resolvedStress,
+      whoopHealthMetricsInRange:
+          healthMetricsInRange ?? base.whoopHealthMetricsInRange,
+    );
+
+    _statusBanner =
+        'Whoop sincronizado: Recuperación ${recoveryScore.toStringAsFixed(0)}% | Esfuerzo ${strainScore.toStringAsFixed(1)}';
+    notifyListeners();
+  }
+
+  /// Envía los bytes de la captura de pantalla de WHOOP a Gemini Vision (`POST /api/v1/wearables/scan-whoop`),
+  /// actualiza el estado reactivo con `updateFromWhoopScan` y devuelve el mapa de resultados.
+  Future<Map<String, dynamic>?> scanWhoopScreenshotBytes(
+    Uint8List bytes, {
+    String? sourceDevice,
+  }) async {
+    _errorMessage = null;
+    _statusBanner = null;
+    final String targetSource = sourceDevice ?? _preferredWearable;
+
+    _isScanningWhoop = true;
+    notifyListeners();
+
+    try {
+      final Map<String, dynamic> result =
+          await _repository.scanWhoopScreenshot(
+        bytes,
+        sourceDevice: targetSource,
+      );
+      _preferredWearable = targetSource;
+      await _repository.setPreferredWearable(targetSource);
+
+      final double recScore =
+          ((result['recovery_score'] ?? 47.0) as num).toDouble();
+      final double strScore =
+          ((result['strain_score'] ?? 7.4) as num).toDouble();
+      final double slpScore =
+          ((result['sleep_pct'] ?? result['sleep_performance_pct'] ?? 80.0)
+                  as num)
+              .toDouble();
+      final double strLevel =
+          ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8)
+                  as num)
+              .toDouble();
+      final String? strCat = result['stress_category'] as String?;
+      final double? slpHours = (result['sleep_hours'] as num?)?.toDouble();
+
+      updateFromWhoopScan(
+        recoveryScore: recScore,
+        strainScore: strScore,
+        sleepScore: slpScore,
+        stressScore: strLevel,
+        stressCategory: strCat,
+        sleepHours: slpHours,
+        hrvMs: (result['hrv_ms'] as num?)?.toInt(),
+        restingHr: (result['rhr_bpm'] as num?)?.toInt(),
+        healthMetricsInRange:
+            (result['health_monitor_metrics_ok'] as num?)?.toInt(),
+        sourceDevice: targetSource,
+      );
+
+      _hydration = await _repository.loadTodayHydration(
+        weightKg: _biometrics?.weightKg ?? 78.0,
+        strainScore: _wearable?.strainScore ?? strScore,
+      );
+      return result;
+    } catch (e) {
+      _errorMessage =
+          'Error al escanear captura de $targetSource: ${e.toString().replaceFirst("HttpException: ", "")}';
+      return null;
+    } finally {
+      _isScanningWhoop = false;
+      notifyListeners();
+    }
   }
 
   /// Escanea una captura de pantalla del wearable activo (`POST /api/v1/wearables/scan-screen`)

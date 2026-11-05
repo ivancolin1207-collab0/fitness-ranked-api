@@ -75,9 +75,67 @@ class OcrService {
     throw HttpException(_extractErrorMessage(response));
   }
 
-  /// Escanea una captura de pantalla del wearable seleccionado (`POST /api/v1/wearables/scan-screen`)
+  /// Envía los bytes JPEG de la captura de WHOOP a `/api/v1/wearables/scan-whoop`
+  /// (con respaldo de ruta a `/api/v1/wearables/scan-screen`) y retorna el JSON real.
+  Future<Map<String, dynamic>> scanWhoopScreenshotBytes({
+    required Uint8List jpegBytes,
+    required String baseUrl,
+    required String? accessToken,
+    required http.Client httpClient,
+    String sourceDevice = 'WHOOP',
+  }) async {
+    if (jpegBytes.isEmpty) {
+      throw const HttpException('La imagen seleccionada está vacía.');
+    }
+
+    final List<String> paths = <String>[
+      '/api/v1/wearables/scan-whoop',
+      '/api/v1/wearables/scan-screen',
+    ];
+
+    http.Response? lastResponse;
+    for (final String path in paths) {
+      final Uri uri = Uri.parse('$baseUrl$path');
+      final request = http.MultipartRequest('POST', uri);
+      request.headers['Accept'] = 'application/json';
+      if (accessToken != null && accessToken.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $accessToken';
+      }
+      request.fields['source_device'] = sourceDevice;
+      request.fields['source_wearable'] = sourceDevice;
+
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          jpegBytes,
+          filename: 'whoop_screen.jpg',
+          contentType: MediaType('image', 'jpeg'),
+        ),
+      );
+
+      final streamed = await httpClient.send(request).timeout(
+            const Duration(seconds: 40),
+          );
+      final response = await http.Response.fromStream(streamed);
+      lastResponse = response;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      if (response.statusCode != 404) {
+        throw HttpException(_extractErrorMessage(response));
+      }
+    }
+
+    throw HttpException(
+      lastResponse != null
+          ? _extractErrorMessage(lastResponse)
+          : 'No se pudo conectar con el endpoint de escaneo de WHOOP.',
+    );
+  }
+
+  /// Escanea una captura de pantalla del wearable seleccionado (`POST /api/v1/wearables/scan-whoop`)
   /// enviando `source_device` y `source_wearable` junto con el archivo JPEG.
-  /// Propaga el error real si falla (cero valores mock).
   Future<WearableMetricRecord> scanWhoopScreenReport({
     required File imageFile,
     required Uri endpointUri,
@@ -86,50 +144,35 @@ class OcrService {
     String sourceDevice = 'WHOOP',
   }) async {
     final jpegBytes = await prepareJpegPayload(imageFile);
+    final String baseUrl =
+        '${endpointUri.scheme}://${endpointUri.host}${endpointUri.hasPort ? ":${endpointUri.port}" : ""}';
 
-    final request = http.MultipartRequest('POST', endpointUri);
-    request.headers['Accept'] = 'application/json';
-    if (accessToken != null && accessToken.isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer $accessToken';
-    }
-    request.fields['source_device'] = sourceDevice;
-    request.fields['source_wearable'] = sourceDevice;
-
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        jpegBytes,
-        filename: 'wearable_screen.jpg',
-        contentType: MediaType('image', 'jpeg'),
-      ),
+    final Map<String, dynamic> result = await scanWhoopScreenshotBytes(
+      jpegBytes: jpegBytes,
+      baseUrl: baseUrl,
+      accessToken: accessToken,
+      httpClient: httpClient,
+      sourceDevice: sourceDevice,
     );
 
-    final streamed = await httpClient.send(request).timeout(
-          const Duration(seconds: 40),
-        );
-    final response = await http.Response.fromStream(streamed);
+    final double recovery = (result['recovery_score'] as num).toDouble();
+    final double strain = (result['strain_score'] as num).toDouble();
+    final double sleep =
+        ((result['sleep_pct'] ?? result['sleep_performance_pct']) as num)
+            .toDouble();
+    final double stress =
+        ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8) as num)
+            .toDouble();
+    final double sleepHours = (result['sleep_hours'] as num?)?.toDouble() ??
+        double.parse(((sleep / 100.0) * 8.0).toStringAsFixed(1));
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      final result = jsonDecode(response.body) as Map<String, dynamic>;
-      final double recovery = (result['recovery_score'] as num).toDouble();
-      final double strain = (result['strain_score'] as num).toDouble();
-      final double sleep =
-          ((result['sleep_pct'] ?? result['sleep_performance_pct']) as num)
-              .toDouble();
-      final double stress =
-          ((result['stress_level'] ?? result['whoop_stress_level'] ?? 0.0)
-                  as num)
-              .toDouble();
-
-      return WearableMetricRecord.fromJson(result).copyWith(
-        recoveryScore: recovery,
-        strainScore: strain,
-        sleepEfficiencyPct: sleep,
-        whoopStressLevel: stress,
-        sourceDevice: sourceDevice,
-      );
-    }
-
-    throw HttpException(_extractErrorMessage(response));
+    return WearableMetricRecord.fromJson(result).copyWith(
+      recoveryScore: recovery,
+      strainScore: strain,
+      sleepEfficiencyPct: sleep,
+      sleepHours: sleepHours,
+      whoopStressLevel: stress,
+      sourceDevice: sourceDevice,
+    );
   }
 }

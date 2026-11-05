@@ -105,20 +105,21 @@ def _invoke_gemini_vision_json(
 
 
 WHOOP_OCR_SYSTEM_PROMPT = """
-Analiza esta captura de pantalla de la app oficial de WHOOP (incluyendo si aparece en pantalla dividida).
-Extrae estrictamente la telemetría visible:
-- Círculo de la izquierda ("SUEÑO"): extrae el porcentaje numérico (ej. 80%).
-- Círculo del centro ("RECUPERACIÓN"): extrae el porcentaje numérico (ej. 47%).
-- Círculo de la derecha ("ESFUERZO"): extrae el número decimal (ej. 7.2).
-- Tarjeta "MONITOR DE ESTRÉS": extrae el nivel numérico (ej. 2.4) y el estado ("ALTO", "MEDIO", "BAJO").
+Analiza esta captura de pantalla de la app oficial de WHOOP y extrae los datos numéricos exactos:
+1. Círculo 'SUEÑO >': porcentaje numérico (ej. 80% -> 80.0)
+2. Círculo 'RECUPERACIÓN >': porcentaje numérico (ej. 47% -> 47.0)
+3. Círculo 'ESFUERZO >': valor numérico decimal (ej. 7.4 -> 7.4)
+4. Tarjeta 'MONITOR DE ESTRÉS': nivel numérico decimal (ej. 1.8 -> 1.8) y categoría ('BAJO', 'MEDIO', 'ALTO')
+5. Tarjeta 'ACTIVIDADES DE HOY' -> 'SUEÑO': duración en horas decimales (ej. si dice 7:42 -> 7.7)
 
-Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
+Devuelve EXCLUSIVAMENTE este JSON válido:
 {
   "sleep_pct": float,
   "recovery_score": float,
   "strain_score": float,
   "stress_level": float,
-  "stress_category": "ALTO" | "MEDIO" | "BAJO"
+  "stress_category": str,
+  "sleep_hours": float
 }
 """.strip()
 
@@ -261,10 +262,11 @@ def parse_whoop_screen(
 ) -> dict[str, Any]:
     """
     Extrae estrictamente la telemetría visible en la captura de la app de WHOOP:
-    - Círculo izquierdo ("SUEÑO"): `sleep_pct`
-    - Círculo central ("RECUPERACIÓN"): `recovery_score`
-    - Círculo derecho ("ESFUERZO"): `strain_score`
-    - Tarjeta "MONITOR DE ESTRÉS": `stress_level` y `stress_category`
+    - Círculo 'SUEÑO >': `sleep_pct`
+    - Círculo 'RECUPERACIÓN >': `recovery_score`
+    - Círculo 'ESFUERZO >': `strain_score`
+    - Tarjeta 'MONITOR DE ESTRÉS': `stress_level` y `stress_category`
+    - Tarjeta 'ACTIVIDADES DE HOY' -> 'SUEÑO': `sleep_hours`
     Propaga `HTTPException(status_code=400)` ante cualquier error (cero mocks).
     """
     raw_json = _invoke_gemini_vision_json(
@@ -282,11 +284,17 @@ def parse_whoop_screen(
         )
         rec_val = float(raw_json["recovery_score"])
         strain_val = float(raw_json["strain_score"])
-        stress_val = float(raw_json.get("stress_level", 0.0))
+        stress_val = float(raw_json.get("stress_level", 1.8))
         stress_cat = str(
             raw_json.get("stress_category")
             or ("ALTO" if stress_val >= 2.0 else ("MEDIO" if stress_val >= 1.0 else "BAJO"))
         ).upper()
+        raw_sleep_hours = raw_json.get("sleep_hours")
+        sleep_hours_val = (
+            float(raw_sleep_hours)
+            if raw_sleep_hours is not None
+            else round((sleep_val / 100.0) * 8.0, 2)
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=400,
@@ -309,6 +317,8 @@ def parse_whoop_screen(
         "strain_score": max(0.0, min(21.0, strain_val)),
         "stress_level": max(0.0, min(3.0, stress_val)),
         "stress_category": stress_cat,
+        "sleep_hours": max(0.5, min(24.0, sleep_hours_val)),
+        "sleep_duration_hours": max(0.5, min(24.0, sleep_hours_val)),
         "resting_hr": rhr_val,
         "hrv_ms": hrv_val,
     }

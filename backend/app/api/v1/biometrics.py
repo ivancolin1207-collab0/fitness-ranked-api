@@ -178,8 +178,8 @@ async def get_today_wearable_metrics(
         return None
     # Eliminar automáticamente cualquier fila residual generada por el antiguo fallback mock (62% rec, 90% sueño, 62 bpm)
     if (
-        round(float(record.recovery_score), 1) == 62.0
-        and round(float(record.sleep_efficiency_pct or 0.0), 1) == 90.0
+        round(float(record.recovery_score)) == 62
+        and round(float(record.sleep_efficiency_pct or 0.0)) == 90
         and int(record.resting_hr or 0) == 62
     ):
         await db.delete(record)
@@ -336,6 +336,11 @@ async def log_hydration_intake(
 
 
 @router.post(
+    "/wearables/scan-whoop",
+    response_model=WhoopScreenScanResponse,
+    status_code=status.HTTP_200_OK,
+)
+@router.post(
     "/wearables/scan-screen",
     response_model=WhoopScreenScanResponse,
     status_code=status.HTTP_200_OK,
@@ -349,8 +354,8 @@ async def scan_whoop_screen_metrics(
     x_gemini_api_key: Annotated[Optional[str], Header()] = None,
 ) -> WhoopScreenScanResponse:
     """
-    Procesa una captura de pantalla del wearable seleccionado (WHOOP, HUAWEI, SAMSUNG)
-    mediante Gemini Vision y actualiza atómicamente la telemetría diaria en PostgreSQL.
+    Procesa una captura de pantalla de WHOOP (`/api/v1/wearables/scan-whoop` y `/api/v1/wearables/scan-screen`)
+    mediante Gemini Vision y actualiza atómicamente `daily_readiness` y `wearable_metrics` en PostgreSQL.
     """
     raw_source = (
         source_device
@@ -384,7 +389,11 @@ async def scan_whoop_screen_metrics(
     sleep_hours_calc = (
         extracted.sleep_duration_hours
         if resolved_source == WearableSource.SAMSUNG_WATCH
-        else round((extracted.sleep_performance_pct / 100.0) * 8.0, 2)
+        else (
+            extracted.sleep_hours
+            if getattr(extracted, "sleep_hours", None)
+            else round((extracted.sleep_performance_pct / 100.0) * 8.0, 2)
+        )
     )
     avg_hr_calc = (
         extracted.avg_heart_rate

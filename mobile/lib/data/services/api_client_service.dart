@@ -521,6 +521,22 @@ class ApiClientService {
     throw HttpException(_extractErrorDetail(response));
   }
 
+  /// POST /api/v1/wearables/scan-whoop
+  Future<Map<String, dynamic>> scanWhoopScreenshotBytes({
+    required Uint8List bytes,
+    required String jwtToken,
+    String sourceDevice = 'WHOOP',
+  }) async {
+    const OcrService ocrService = OcrService();
+    return ocrService.scanWhoopScreenshotBytes(
+      jpegBytes: bytes,
+      baseUrl: _baseUrl,
+      accessToken: jwtToken,
+      httpClient: _httpClient,
+      sourceDevice: sourceDevice,
+    );
+  }
+
   /// POST /api/v1/wearables/scan-screen
   Future<WearableMetricRecord> scanWhoopScreenMetrics({
     required File imageFile,
@@ -529,35 +545,13 @@ class ApiClientService {
   }) async {
     final Uri uri = Uri.parse('$_baseUrl/api/v1/wearables/scan-screen');
     const OcrService ocrService = OcrService();
-    final WearableMetricRecord scanned = await ocrService.scanWhoopScreenReport(
+    return ocrService.scanWhoopScreenReport(
       imageFile: imageFile,
       endpointUri: uri,
       accessToken: jwtToken,
       httpClient: _httpClient,
       sourceDevice: sourceDevice,
     );
-    try {
-      final WearableMetricRecord persisted = await syncWearableMetrics(
-        record: scanned,
-        jwtToken: jwtToken,
-      );
-      return persisted.copyWith(
-        sourceDevice: sourceDevice,
-        sleepEfficiencyPct: scanned.sleepEfficiencyPct,
-        recoveryScore: scanned.recoveryScore,
-        strainScore: scanned.strainScore,
-        whoopStressLevel: scanned.whoopStressLevel,
-        whoopHealthMetricsInRange: scanned.whoopHealthMetricsInRange,
-        huaweiTruSleepScore: scanned.huaweiTruSleepScore,
-        huaweiStressScore: scanned.huaweiStressScore,
-        huaweiVo2Max: scanned.huaweiVo2Max,
-        samsungEnergyScore: scanned.samsungEnergyScore,
-        samsungBiaMusclePct: scanned.samsungBiaMusclePct,
-        samsungBiaFatPct: scanned.samsungBiaFatPct,
-      );
-    } catch (_) {
-      return scanned;
-    }
   }
 
   /// POST /api/v1/ai/chat (Centro Táctico • Director de Rendimiento)

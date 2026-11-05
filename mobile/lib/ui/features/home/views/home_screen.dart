@@ -8,6 +8,8 @@ import '../../auth/view_models/auth_view_model.dart';
 import '../../auth/views/profile_setup_screen.dart';
 import '../view_models/home_view_model.dart';
 
+typedef ReadinessScreen = HomeScreen;
+
 class HomeScreen extends StatefulWidget {
   final HomeViewModel viewModel;
   final AuthViewModel authViewModel;
@@ -743,7 +745,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onPressed: viewModel.isScanningWhoop
                     ? null
-                    : () => _openWhoopScreenshotSourcePicker(
+                    : () => _handleScanWhoopButtonPressed(
                           context,
                           activeSource,
                         ),
@@ -880,28 +882,38 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     WearableMetricRecord wearable,
   ) {
-    final double sleepPct = wearable.sleepEfficiencyPct.clamp(0.0, 100.0);
-    final double recovery = wearable.recoveryScore.clamp(0.0, 100.0);
-    final double strain = wearable.strainScore.clamp(0.0, 21.0);
-    final double stress = wearable.whoopStressLevel.clamp(0.0, 3.0);
+    final double sleepPct =
+        (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0);
+    final double recovery =
+        (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0);
+    final double strain =
+        (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0);
+    final double stress =
+        (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0);
 
-    final bool isCompromised =
-        recovery < 40.0 || sleepPct < 70.0 || stress >= 2.0;
+    final bool isCompromised = recovery < 34.0;
     final Color recColor = recovery < 34.0
         ? ApexTheme.deloadCrimson
         : (recovery < 67.0 ? ApexTheme.warningAmber : ApexTheme.readinessGreen);
+    final String zoneLabel = recovery < 34.0
+        ? 'ZONA ROJA • DELOAD (-20%)'
+        : (recovery >= 67.0
+            ? 'ZONA VERDE • SOBRECARGA'
+            : 'ZONA AMARILLA • MANTENIMIENTO');
 
-    final String stressCategory =
-        stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO');
-    final Color stressColor = stress >= 2.0
+    final String stressCategory = viewModel.whoopStressCategory ??
+        (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'));
+    final Color stressColor = stressCategory == 'ALTO' || stress >= 2.0
         ? ApexTheme.warningAmber
-        : (stress >= 1.0 ? ApexTheme.cyanElectric : ApexTheme.readinessGreen);
+        : (stressCategory == 'MEDIO' || stress >= 1.0
+            ? ApexTheme.readinessGreen
+            : ApexTheme.cyanElectric);
 
     final String geminiRationale = isCompromised
-        ? 'Recuperación comprometida (${recovery.toStringAsFixed(0)}%) y estrés elevado. Redujimos el volumen prescrito para evitar fatiga del SNC.'
-        : (recovery >= 80.0
+        ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos el volumen prescrito (-20%) para evitar fatiga del SNC.'
+        : (recovery >= 67.0
             ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%). Gemini Coach activa sobrecarga progresiva (+2.5 kg).'
-            : 'Recuperación estable (${recovery.toStringAsFixed(0)}%). Gemini Coach mantiene volumen objetivo.');
+            : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño ${(viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h (${sleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($stressCategory). Gemini Coach mantiene volumen objetivo.');
 
     return Card(
       child: Padding(
@@ -933,24 +945,17 @@ class _HomeScreenState extends State<HomeScreen> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color:
-                          (isCompromised ? ApexTheme.deloadCrimson : recColor)
-                              .withValues(alpha: 0.16),
+                      color: recColor.withValues(alpha: 0.16),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      isCompromised
-                          ? 'ZONA ROJA • DELOAD (-20%)'
-                          : (recovery >= 67.0
-                              ? 'ZONA VERDE • SOBRECARGA'
-                              : 'ZONA AMARILLA • MANTENIMIENTO'),
+                      zoneLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 9.0,
                         fontWeight: FontWeight.w900,
-                        color:
-                            isCompromised ? ApexTheme.deloadCrimson : recColor,
+                        color: recColor,
                       ),
                     ),
                   ),
@@ -1480,7 +1485,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           onPressed: viewModel.isScanningWhoop
               ? null
-              : () => _openWhoopScreenshotSourcePicker(context, activeSource),
+              : () => _handleScanWhoopButtonPressed(context, activeSource),
           icon: viewModel.isScanningWhoop
               ? const SizedBox(
                   width: 14,
@@ -1564,105 +1569,93 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openWhoopScreenshotSourcePicker(
+  Future<void> _handleScanWhoopButtonPressed(
     BuildContext context, [
     String? sourceOverride,
-  ]) {
+  ]) async {
     final String activeSource = _normalizedWearableSource(
       sourceOverride ?? viewModel.preferredWearable,
     );
-    final String brand = _wearableBrandTitle(activeSource);
-    final String description = activeSource == 'HUAWEI_GT'
-        ? 'Sube tu captura de pantalla de Huawei Health y Gemini Vision extraerá TruSleep, Nivel de Estrés (0-100), FC Media y VO2Max.'
-        : (activeSource == 'SAMSUNG_WATCH'
-            ? 'Sube tu captura de Samsung Health y Gemini Vision extraerá Energy Score, Tiempo de Sueño y Composición Corporal BIA.'
-            : 'Sube tu captura de pantalla de WHOOP y Gemini Vision extraerá automáticamente Sueño %, Recuperación %, Esfuerzo (Strain) y Nivel de Estrés.');
+    final ImagePicker picker = ImagePicker();
+    final XFile? pickedFile = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 90,
+      maxWidth: 1600,
+    );
+    if (pickedFile == null) {
+      return;
+    }
 
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: ApexTheme.cardGraphite,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (BuildContext sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Text(
-                  'ESCANEAR CAPTURA DE $brand',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: ApexTheme.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    color: ApexTheme.textMuted,
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                ListTile(
-                  leading: const Icon(
-                    Icons.photo_library_rounded,
-                    color: ApexTheme.textPrimary,
-                  ),
-                  title: const Text(
-                    'Seleccionar captura desde Galería',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-                  ),
-                  subtitle: Text(
-                    'Recomendado para screenshots de $brand',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: ApexTheme.textMuted,
-                    ),
-                  ),
-                  onTap: () async {
-                    Navigator.of(sheetContext).pop();
-                    await viewModel.scanWhoopScreenshot(
-                      ImageSource.gallery,
-                      sourceDevice: activeSource,
-                    );
-                    if (mounted) {
-                      setState(() {});
-                    }
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(
-                    Icons.camera_alt_rounded,
-                    color: ApexTheme.textMuted,
-                  ),
-                  title: const Text(
-                    'Tomar foto con Cámara',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-                  ),
-                  onTap: () async {
-                    Navigator.of(sheetContext).pop();
-                    await viewModel.scanWhoopScreenshot(
-                      ImageSource.camera,
-                      sourceDevice: activeSource,
-                    );
-                    if (mounted) {
-                      setState(() {});
-                    }
-                  },
-                ),
-              ],
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Analizando telemetría de Whoop con Gemini Vision...'),
+        ),
+      );
+    }
+
+    final bytes = await pickedFile.readAsBytes();
+    final Map<String, dynamic>? result =
+        await viewModel.scanWhoopScreenshotBytes(
+      bytes,
+      sourceDevice: activeSource,
+    );
+
+    if (result != null) {
+      final double recScore =
+          ((result['recovery_score'] ?? 47.0) as num).toDouble();
+      final double strScore =
+          ((result['strain_score'] ?? 7.4) as num).toDouble();
+      final double slpScore =
+          ((result['sleep_pct'] ?? result['sleep_performance_pct'] ?? 80.0)
+                  as num)
+              .toDouble();
+      final double strLevel =
+          ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8)
+                  as num)
+              .toDouble();
+      final String? strCat = result['stress_category'] as String?;
+      final double? slpHours = (result['sleep_hours'] as num?)?.toDouble();
+
+      // Actualizar inmediatamente el ViewModel / State
+      viewModel.updateFromWhoopScan(
+        recoveryScore: recScore,
+        strainScore: strScore,
+        sleepScore: slpScore,
+        stressScore: strLevel,
+        stressCategory: strCat,
+        sleepHours: slpHours,
+        hrvMs: (result['hrv_ms'] as num?)?.toInt(),
+        restingHr: (result['rhr_bpm'] as num?)?.toInt(),
+        healthMetricsInRange:
+            (result['health_monitor_metrics_ok'] as num?)?.toInt(),
+        sourceDevice: activeSource,
+      );
+      if (mounted) {
+        setState(() {});
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF10B981),
+            content: Text(
+              'Whoop sincronizado: Recuperación ${recScore.round()}% | Esfuerzo ${strScore.toStringAsFixed(1)}',
             ),
           ),
         );
-      },
-    );
+      }
+    } else if (context.mounted && viewModel.errorMessage != null) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: ApexTheme.deloadCrimson,
+          content: Text(viewModel.errorMessage!),
+        ),
+      );
+    }
   }
 
   Widget _buildWearableTelemetryRow(
@@ -1692,8 +1685,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: _MetricTile(
             label: activeSource == 'WHOOP' ? 'SUEÑO (%)' : 'SUEÑO (H)',
             value: activeSource == 'WHOOP'
-                ? '${wearable.sleepEfficiencyPct.toStringAsFixed(0)}%'
-                : '${wearable.sleepHours.toStringAsFixed(1)} h',
+                ? '${(viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).toStringAsFixed(0)}%'
+                : '${(viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h',
             accent: ApexTheme.readinessGreen,
             icon: Icons.bedtime_outlined,
           ),

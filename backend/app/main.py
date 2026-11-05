@@ -130,7 +130,7 @@ async def ensure_postgres_enums() -> None:
                 text(
                     """
                     DELETE FROM wearable_metrics
-                    WHERE recovery_score = 62 AND sleep_efficiency_pct = 90 AND resting_hr = 62
+                    WHERE ROUND(recovery_score) = 62 AND ROUND(sleep_efficiency_pct) = 90 AND resting_hr = 62
                     """
                 )
             )
