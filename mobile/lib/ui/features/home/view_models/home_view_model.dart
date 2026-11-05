@@ -42,6 +42,9 @@ class HomeViewModel extends ChangeNotifier {
   bool _isScanningOcr = false;
   bool get isScanningOcr => _isScanningOcr;
 
+  bool _isScanningWhoop = false;
+  bool get isScanningWhoop => _isScanningWhoop;
+
   bool _isSavingBiometrics = false;
   bool get isSavingBiometrics => _isSavingBiometrics;
 
@@ -166,6 +169,51 @@ class HomeViewModel extends ChangeNotifier {
       return double.parse((kgValue * 2.20462).toStringAsFixed(1));
     }
     return double.parse(kgValue.toStringAsFixed(1));
+  }
+
+  /// Escanea una captura de pantalla de WHOOP (`POST /api/v1/wearables/scan-screen`)
+  /// y actualiza los 3 anillos (Sueño %, Recuperación %, Strain) y el Monitor de Estrés
+  /// de forma reactiva e inmediata en la UI (`notifyListeners()`).
+  Future<WearableMetricRecord?> scanWhoopScreenshot(
+    ImageSource source,
+  ) async {
+    _errorMessage = null;
+    _statusBanner = null;
+
+    final XFile? picked = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 90,
+      maxWidth: 1600,
+    );
+    if (picked == null) {
+      return null;
+    }
+
+    _isScanningWhoop = true;
+    notifyListeners();
+
+    try {
+      final File imageFile = File(picked.path);
+      final WearableMetricRecord scanned =
+          await _repository.scanWhoopScreenImage(imageFile);
+      _preferredWearable = 'WHOOP';
+      await _repository.setPreferredWearable('WHOOP');
+      _wearable = scanned.copyWith(sourceDevice: 'WHOOP');
+      _hydration = await _repository.loadTodayHydration(
+        weightKg: _biometrics?.weightKg ?? 78.0,
+        strainScore: _wearable?.strainScore ?? 10.0,
+      );
+      _statusBanner =
+          'Captura WHOOP sincronizada: ${_wearable!.sleepEfficiencyPct.round()}% Sueño • ${_wearable!.recoveryScore.round()}% Recuperación • Strain ${_wearable!.strainScore.toStringAsFixed(1)} • Estrés ${_wearable!.whoopStressLevel.toStringAsFixed(1)}';
+      return _wearable;
+    } catch (e) {
+      _errorMessage =
+          'Error al escanear captura de WHOOP: ${e.toString().replaceFirst("HttpException: ", "")}';
+      return null;
+    } finally {
+      _isScanningWhoop = false;
+      notifyListeners();
+    }
   }
 
   /// Sube el screenshot de Fitdays y devuelve los campos extraídos por Gemini Vision

@@ -521,6 +521,154 @@ class ApiClientService {
     throw HttpException(_extractErrorDetail(response));
   }
 
+  /// POST /api/v1/wearables/scan-screen
+  Future<WearableMetricRecord> scanWhoopScreenMetrics({
+    required File imageFile,
+    required String jwtToken,
+  }) async {
+    final Uri uri = Uri.parse('$_baseUrl/api/v1/wearables/scan-screen');
+    const OcrService ocrService = OcrService();
+    final WearableMetricRecord scanned = await ocrService.scanWhoopScreenReport(
+      imageFile: imageFile,
+      endpointUri: uri,
+      accessToken: jwtToken,
+      httpClient: _httpClient,
+    );
+    try {
+      final WearableMetricRecord persisted = await syncWearableMetrics(
+        record: scanned,
+        jwtToken: jwtToken,
+      );
+      return persisted.copyWith(
+        whoopStressLevel: scanned.whoopStressLevel,
+        whoopHealthMetricsInRange: scanned.whoopHealthMetricsInRange,
+      );
+    } catch (_) {
+      return scanned;
+    }
+  }
+
+  /// POST /api/v1/ai/chat (Gemini Coach Personal Interactivo)
+  Future<AiCoachChatResponseModel> sendAiCoachChat({
+    required String message,
+    required List<AiCoachChatMessageModel> history,
+    required Map<String, dynamic> athleteContext,
+    required String jwtToken,
+  }) async {
+    try {
+      final http.Response response = await _sendWithFallback(
+        (String base) => _httpClient.post(
+          Uri.parse('$base/api/v1/ai/chat'),
+          headers: _buildHeaders(jwtToken),
+          body: jsonEncode(<String, dynamic>{
+            'message': message.trim(),
+            'history':
+                history.map((AiCoachChatMessageModel m) => m.toJson()).toList(),
+            ...athleteContext,
+          }),
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        return AiCoachChatResponseModel.fromJson(
+          jsonDecode(response.body) as Map<String, dynamic>,
+        );
+      }
+    } catch (_) {}
+
+    return _buildLocalCoachReply(
+      message: message,
+      context: athleteContext,
+    );
+  }
+
+  AiCoachChatResponseModel _buildLocalCoachReply({
+    required String message,
+    required Map<String, dynamic> context,
+  }) {
+    final String name =
+        (context['athlete_name'] as String?) ?? 'Atleta';
+    final double rec =
+        (context['recovery_score'] as num?)?.toDouble() ?? 62.0;
+    final double sleepPct =
+        (context['sleep_performance_pct'] as num?)?.toDouble() ?? 80.0;
+    final double strain =
+        (context['strain_score'] as num?)?.toDouble() ?? 7.1;
+    final double stress =
+        (context['stress_level'] as num?)?.toDouble() ?? 2.1;
+    final String stressCat = (context['stress_category'] as String?) ??
+        (stress >= 2.0 ? 'Alto' : (stress >= 1.0 ? 'Medio' : 'Bajo'));
+    final int hydConsumed =
+        (context['hydration_consumed_ml'] as num?)?.toInt() ?? 0;
+    final int hydGoal =
+        (context['hydration_goal_ml'] as num?)?.toInt() ?? 2800;
+    final String routine = (context['scheduled_routine_name'] as String?) ??
+        'Sesión de Fuerza Programada';
+
+    final String zone =
+        rec >= 67.0 ? 'VERDE' : (rec >= 34.0 ? 'AMARILLA' : 'ROJA');
+    final int hydMissing = (hydGoal - hydConsumed).clamp(0, 6000);
+    final String q = message.toLowerCase();
+
+    String reply;
+    if (q.contains('pesad') ||
+        q.contains('entren') ||
+        q.contains('carga') ||
+        q.contains('rpe') ||
+        q.contains('serie') ||
+        q.contains('rutina')) {
+      if (zone == 'VERDE') {
+        reply =
+            '$name, tu Recuperación está en ${rec.round()}% (Zona VERDE) con ${sleepPct.round()}% de Sueño y Strain previo de ${strain.toStringAsFixed(1)}. '
+            'Hoy tienes luz verde para sobrecarga progresiva en "$routine": sube +2.5 kg en el básico principal y trabaja en RPE 8.0–8.5.';
+      } else if (zone == 'AMARILLA') {
+        reply =
+            '$name, hoy registras ${rec.round()}% de Recuperación (Zona AMARILLA), Sueño de ${sleepPct.round()}%, Strain acumulado de ${strain.toStringAsFixed(1)} y Estrés en ${stress.toStringAsFixed(1)} ($stressCat). '
+            'Para "$routine", mantén las cargas base sin buscar 1RM hoy, controla el RPE entre 7.5 y 8.0 (RIR 2) y asegura 150s de descanso entre series.';
+      } else {
+        reply =
+            '$name, alerta de fatiga del SNC: tu Recuperación cayó a ${rec.round()}% (Zona ROJA) con Estrés en ${stress.toStringAsFixed(1)} ($stressCat). '
+            'En "$routine", aplica descarga reactiva hoy: recorta -10% el peso en barra, elimina 1 serie por ejercicio y no pases de RPE 7.0.';
+      }
+    } else if (q.contains('agua') ||
+        q.contains('hidrat') ||
+        q.contains('electrolit')) {
+      reply =
+          '$name, llevas $hydConsumed ml de tu meta dinámica de $hydGoal ml (te faltan $hydMissing ml hoy, calculados para tu Strain de ${strain.toStringAsFixed(1)}). '
+          'Bebe 500 ml con electrolitos 30 min antes de iniciar "$routine" y 250 ml cada 20 min durante la sesión.';
+    } else if (q.contains('estr') ||
+        q.contains('sueñ') ||
+        q.contains('recupera') ||
+        q.contains('hrv')) {
+      reply =
+          '$name, tu Monitor de Estrés WHOOP marca ${stress.toStringAsFixed(1)} ($stressCat) y tu Sueño fue de ${sleepPct.round()}%, dejando tu Recuperación en ${rec.round()}% (Zona $zone). '
+          'Realiza 3 minutos de respiración fisiológica (doble inhalación nasal + exhalación larga) antes de calentar para bajar el tono simpático.';
+    } else {
+      final String directive = zone == 'VERDE'
+          ? 'Hoy es día de sobrecarga progresiva (+2.5 kg en básicos, RPE 8.5).'
+          : (zone == 'AMARILLA'
+              ? 'Mantén el volumen objetivo hoy con RPE controlado (7.5–8.0) sin llegar al fallo.'
+              : 'Prioriza descarga técnica (-10% carga, RPE <= 7.0) para proteger tu SNC.');
+      reply =
+          '¡Listo, $name! Analicé tu telemetría en tiempo real:\n'
+          '• Recuperación: ${rec.round()}% (Zona $zone) | Sueño: ${sleepPct.round()}%\n'
+          '• Esfuerzo (Strain): ${strain.toStringAsFixed(1)} | Estrés: ${stress.toStringAsFixed(1)} ($stressCat)\n'
+          '• Hidratación: $hydConsumed / $hydGoal ml | Rutina: $routine\n\n'
+          'Directriz táctica: $directive';
+    }
+
+    return AiCoachChatResponseModel(
+      reply: reply,
+      readinessZone: zone,
+      suggestedPrompts: const <String>[
+        '¿Debo entrenar pesado hoy con mi recuperación actual?',
+        'Ajusta mis series y RPE para la rutina de hoy',
+        '¿Cuánta agua me falta antes de entrenar?',
+        '¿Cómo bajar mi estrés antes de iniciar?',
+      ],
+    );
+  }
+
   // =========================================================================
   // 3. RUTINAS SEMANALES, ROLLOVER Y ENTRENAMIENTO EN VIVO
   // =========================================================================

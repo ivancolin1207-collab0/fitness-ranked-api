@@ -103,3 +103,52 @@ class HydrationTodayResponse(BaseModel):
     target_ml: int
     progress_pct: float
     logs: list[HydrationLogEntrySchema] = Field(default_factory=list)
+
+
+class WhoopScreenExtractedMetrics(BaseModel):
+    sleep_performance_pct: float = Field(default=80.0, ge=0.0, le=100.0)
+    recovery_score: float = Field(default=47.0, ge=0.0, le=100.0)
+    strain_score: float = Field(default=7.1, ge=0.0, le=21.0)
+    stress_level: float = Field(default=2.1, ge=0.0, le=3.0)
+    stress_category: str = Field(default="Alto")
+    resting_hr: int = Field(default=58, ge=25, le=140)
+    hrv_ms: float = Field(default=64.0, ge=5.0, le=300.0)
+
+
+class WhoopScreenScanResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    date: date
+    sleep_performance_pct: float
+    recovery_score: float
+    strain_score: float
+    stress_level: float
+    stress_category: str
+    whoop_stress_level: float
+    whoop_health_metrics_in_range: int = 5
+    resting_hr: int
+    hrv_ms: float
+    avg_hr: int
+    max_hr: int
+    sleep_hours: float
+    sleep_efficiency_pct: float
+    source_device: WearableSource = WearableSource.WHOOP
+    synced_at: datetime
+
+
+class AiCoachChatMessageItem(BaseModel):
+    role: str = Field(default="user")
+    content: str
+
+
+class AiCoachChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    history: list[AiCoachChatMessageItem] = Field(default_factory=list)
+    athlete_context: Optional[dict] = None
+
+
+class AiCoachChatResponse(BaseModel):
+    reply: str
+    readiness_zone: str
+    suggested_prompts: list[str] = Field(default_factory=list)
+    generated_at: datetime

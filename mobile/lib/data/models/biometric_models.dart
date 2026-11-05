@@ -192,45 +192,68 @@ class WearableMetricRecord {
   });
 
   factory WearableMetricRecord.fromJson(Map<String, dynamic> json) {
-    final String rawDate = (json['date'] as String?) ?? '';
-    final double rec = (json['recovery_score'] as num?)?.toDouble() ?? 75.0;
+    final Map<String, dynamic> root =
+        json['saved_metric'] is Map<String, dynamic>
+            ? json['saved_metric'] as Map<String, dynamic>
+            : json;
+    final Map<String, dynamic>? extracted =
+        json['extracted'] is Map<String, dynamic>
+            ? json['extracted'] as Map<String, dynamic>
+            : null;
+
+    final String rawDate = (root['date'] as String?) ?? '';
+    final double rec = (root['recovery_score'] as num?)?.toDouble() ??
+        (extracted?['recovery_score'] as num?)?.toDouble() ??
+        75.0;
     final double sleepEff =
-        (json['sleep_efficiency_pct'] as num?)?.toDouble() ?? 85.0;
+        (root['sleep_efficiency_pct'] as num?)?.toDouble() ??
+            (root['sleep_performance_pct'] as num?)?.toDouble() ??
+            (extracted?['sleep_performance_pct'] as num?)?.toDouble() ??
+            85.0;
     final double inferredWhoopStress =
-        (json['whoop_stress_level'] as num?)?.toDouble() ??
+        (root['whoop_stress_level'] as num?)?.toDouble() ??
+            (root['stress_level'] as num?)?.toDouble() ??
+            (extracted?['stress_level'] as num?)?.toDouble() ??
             (rec < 40.0 ? 2.2 : (rec < 65.0 ? 1.5 : 0.9));
 
     return WearableMetricRecord(
       date: DateTime.tryParse(rawDate) ?? DateTime.now(),
-      strainScore: (json['strain_score'] as num?)?.toDouble() ?? 9.6,
+      strainScore: (root['strain_score'] as num?)?.toDouble() ??
+          (extracted?['strain_score'] as num?)?.toDouble() ??
+          9.6,
       recoveryScore: rec,
-      hrvMs: (json['hrv_ms'] as num?)?.toDouble() ?? 65.0,
-      restingHr: (json['resting_hr'] as num?)?.toInt() ?? 56,
-      avgHr: (json['avg_hr'] as num?)?.toInt() ?? 68,
-      maxHr: (json['max_hr'] as num?)?.toInt() ?? 165,
-      sleepHours: (json['sleep_hours'] as num?)?.toDouble() ?? 7.2,
+      hrvMs: (root['hrv_ms'] as num?)?.toDouble() ??
+          (extracted?['hrv_ms'] as num?)?.toDouble() ??
+          65.0,
+      restingHr: (root['resting_hr'] as num?)?.toInt() ??
+          (extracted?['resting_hr'] as num?)?.toInt() ??
+          56,
+      avgHr: (root['avg_hr'] as num?)?.toInt() ?? 68,
+      maxHr: (root['max_hr'] as num?)?.toInt() ?? 165,
+      sleepHours: (root['sleep_hours'] as num?)?.toDouble() ??
+          double.parse(((sleepEff / 100.0) * 8.0).toStringAsFixed(1)),
       sleepEfficiencyPct: sleepEff,
-      sourceDevice: (json['source_device'] as String?) ?? 'WHOOP',
+      sourceDevice: (root['source_device'] as String?) ?? 'WHOOP',
       whoopStressLevel: inferredWhoopStress,
       whoopHealthMetricsInRange:
-          (json['whoop_health_metrics_in_range'] as num?)?.toInt() ?? 5,
+          (root['whoop_health_metrics_in_range'] as num?)?.toInt() ?? 5,
       huaweiStressScore:
-          (json['huawei_stress_score'] as num?)?.toInt() ??
+          (root['huawei_stress_score'] as num?)?.toInt() ??
               (100 - rec.round()).clamp(15, 95),
       huaweiTruSleepScore:
-          (json['huawei_trusleep_score'] as num?)?.toInt() ??
+          (root['huawei_trusleep_score'] as num?)?.toInt() ??
               sleepEff.round().clamp(40, 100),
-      huaweiVo2Max: (json['huawei_vo2_max'] as num?)?.toDouble() ?? 52.0,
+      huaweiVo2Max: (root['huawei_vo2_max'] as num?)?.toDouble() ?? 52.0,
       samsungEnergyScore:
-          (json['samsung_energy_score'] as num?)?.toInt() ?? rec.round(),
+          (root['samsung_energy_score'] as num?)?.toInt() ?? rec.round(),
       samsungBiaMusclePct:
-          (json['samsung_bia_muscle_pct'] as num?)?.toDouble() ?? 43.8,
+          (root['samsung_bia_muscle_pct'] as num?)?.toDouble() ?? 43.8,
       samsungBiaFatPct:
-          (json['samsung_bia_fat_pct'] as num?)?.toDouble() ?? 13.8,
-      appleMoveKcal: (json['apple_move_kcal'] as num?)?.toInt() ?? 720,
+          (root['samsung_bia_fat_pct'] as num?)?.toDouble() ?? 13.8,
+      appleMoveKcal: (root['apple_move_kcal'] as num?)?.toInt() ?? 720,
       appleExerciseMinutes:
-          (json['apple_exercise_minutes'] as num?)?.toInt() ?? 52,
-      appleStandHours: (json['apple_stand_hours'] as num?)?.toInt() ?? 12,
+          (root['apple_exercise_minutes'] as num?)?.toInt() ?? 52,
+      appleStandHours: (root['apple_stand_hours'] as num?)?.toInt() ?? 12,
     );
   }
 
@@ -366,6 +389,57 @@ class HydrationStatusModel {
           .whereType<Map<String, dynamic>>()
           .map(HydrationLogEntryModel.fromJson)
           .toList(),
+    );
+  }
+}
+
+class AiCoachChatMessageModel {
+  final String role; // 'user' | 'assistant'
+  final String content;
+  final DateTime timestamp;
+
+  const AiCoachChatMessageModel({
+    required this.role,
+    required this.content,
+    required this.timestamp,
+  });
+
+  factory AiCoachChatMessageModel.fromJson(Map<String, dynamic> json) {
+    return AiCoachChatMessageModel(
+      role: (json['role'] as String?) ?? 'assistant',
+      content: (json['content'] as String?) ?? '',
+      timestamp: DateTime.tryParse((json['timestamp'] as String?) ?? '') ??
+          DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'role': role,
+      'content': content,
+      'timestamp': timestamp.toIso8601String(),
+    };
+  }
+}
+
+class AiCoachChatResponseModel {
+  final String reply;
+  final String readinessZone;
+  final List<String> suggestedPrompts;
+
+  const AiCoachChatResponseModel({
+    required this.reply,
+    required this.readinessZone,
+    required this.suggestedPrompts,
+  });
+
+  factory AiCoachChatResponseModel.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> rawPrompts =
+        (json['suggested_prompts'] as List<dynamic>?) ?? <dynamic>[];
+    return AiCoachChatResponseModel(
+      reply: (json['reply'] as String?) ?? '',
+      readinessZone: (json['readiness_zone'] as String?) ?? 'AMARILLA',
+      suggestedPrompts: rawPrompts.map((dynamic e) => e.toString()).toList(),
     );
   }
 }

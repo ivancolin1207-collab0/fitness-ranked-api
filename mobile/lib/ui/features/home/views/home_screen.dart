@@ -704,14 +704,51 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
+            if (activeSource == 'WHOOP') ...<Widget>[
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: ApexTheme.voltAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  onPressed: viewModel.isScanningWhoop
+                      ? null
+                      : () => _openWhoopScreenshotSourcePicker(context),
+                  icon: viewModel.isScanningWhoop
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.black,
+                          ),
+                        )
+                      : const Icon(Icons.document_scanner_rounded, size: 17),
+                  label: Text(
+                    viewModel.isScanningWhoop
+                        ? 'ANALIZANDO CAPTURA WHOOP...'
+                        : 'ESCANEAR CAPTURA DE WHOOP',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             Row(
               spacing: 8,
               children: <Widget>[
                 Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: ApexTheme.voltAccent,
-                      foregroundColor: Colors.black,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ApexTheme.voltAccent,
+                      side: const BorderSide(color: ApexTheme.voltAccent),
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
@@ -724,7 +761,7 @@ class HomeScreen extends StatelessWidget {
                             height: 14,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.black,
+                              color: ApexTheme.voltAccent,
                             ),
                           )
                         : const Icon(Icons.sync_rounded, size: 16),
@@ -825,39 +862,49 @@ class HomeScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            // Cabecera WHOOP + Badge de Zona
+            // Cabecera WHOOP + Badge de Zona (con protección contra desbordamiento)
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                const Text(
-                  'WHOOP 4.0 • TELEMETRÍA DIARIA',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.1,
-                    color: ApexTheme.textPrimary,
+                const Expanded(
+                  child: Text(
+                    'WHOOP 4.0 • TELEMETRÍA DIARIA',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.7,
+                      color: ApexTheme.textPrimary,
+                    ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: (isCompromised ? ApexTheme.deloadCrimson : recColor)
-                        .withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isCompromised
-                        ? 'ZONA ROJA • DELOAD (-20% CARGA)'
-                        : (recovery >= 67.0
-                            ? 'ZONA VERDE • SOBRECARGA'
-                            : 'ZONA AMARILLA • MANTENIMIENTO'),
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w900,
-                      color: isCompromised ? ApexTheme.deloadCrimson : recColor,
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          (isCompromised ? ApexTheme.deloadCrimson : recColor)
+                              .withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isCompromised
+                          ? 'ZONA ROJA • DELOAD (-20%)'
+                          : (recovery >= 67.0
+                              ? 'ZONA VERDE • SOBRECARGA'
+                              : 'ZONA AMARILLA • MANTENIMIENTO'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9.0,
+                        fontWeight: FontWeight.w900,
+                        color:
+                            isCompromised ? ApexTheme.deloadCrimson : recColor,
+                      ),
                     ),
                   ),
                 ),
@@ -1095,39 +1142,47 @@ class HomeScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                const Text(
-                  'HUAWEI HEALTH • GT TELEMETRY',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.9,
-                    color: ApexTheme.cyanElectric,
+                const Expanded(
+                  child: Text(
+                    'HUAWEI HEALTH • GT TELEMETRY',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.7,
+                      color: ApexTheme.cyanElectric,
+                    ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: (isHighStress
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (isHighStress
+                              ? ApexTheme.deloadCrimson
+                              : ApexTheme.readinessGreen)
+                          .withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isHighStress
+                          ? 'DESCARGA ACTIVA (-15% CARGA)'
+                          : 'ESTADO FISIOLÓGICO ÓPTIMO',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9.0,
+                        fontWeight: FontWeight.w900,
+                        color: isHighStress
                             ? ApexTheme.deloadCrimson
-                            : ApexTheme.readinessGreen)
-                        .withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isHighStress
-                        ? 'DESCARGA ACTIVA (-15% CARGA)'
-                        : 'ESTADO FISIOLÓGICO ÓPTIMO',
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w900,
-                      color: isHighStress
-                          ? ApexTheme.deloadCrimson
-                          : ApexTheme.readinessGreen,
+                            : ApexTheme.readinessGreen,
+                      ),
                     ),
                   ),
                 ),
@@ -1203,32 +1258,40 @@ class HomeScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                const Text(
-                  'SAMSUNG GALAXY WATCH • BIOACTIVE SENSOR',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.7,
-                    color: ApexTheme.cyanElectric,
+                const Expanded(
+                  child: Text(
+                    'SAMSUNG GALAXY WATCH • BIOACTIVE SENSOR',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.6,
+                      color: ApexTheme.cyanElectric,
+                    ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: scoreColor.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'ENERGY SCORE $energyScore',
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w900,
-                      color: scoreColor,
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scoreColor.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'ENERGY SCORE $energyScore',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9.0,
+                        fontWeight: FontWeight.w900,
+                        color: scoreColor,
+                      ),
                     ),
                   ),
                 ),
@@ -1353,46 +1416,161 @@ class HomeScreen extends StatelessWidget {
     String activeSource,
   ) {
     final String registerBtnText = _wearableRegisterButtonText(activeSource);
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            foregroundColor: ApexTheme.voltAccent,
-            side: const BorderSide(color: ApexTheme.voltAccent),
-          ),
-          onPressed:
-              viewModel.isSyncingWearable ? null : viewModel.forceSyncWearable,
-          icon: const Icon(Icons.sync_rounded, size: 14),
-          label: const Text(
-            'FORZAR SYNC',
-            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
-          ),
-        ),
-        FilledButton.tonalIcon(
-          style: FilledButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            backgroundColor: ApexTheme.cyanElectric.withValues(alpha: 0.16),
-            foregroundColor: ApexTheme.cyanElectric,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-          ),
-          onPressed: () =>
-              _openWearableManualSyncModal(context, activeSource),
-          icon: const Icon(Icons.tune_rounded, size: 14),
-          label: Text(
-            registerBtnText,
-            style: const TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w900,
+        if (activeSource == 'WHOOP') ...<Widget>[
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: ApexTheme.voltAccent,
+              foregroundColor: Colors.black,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            ),
+            onPressed: viewModel.isScanningWhoop
+                ? null
+                : () => _openWhoopScreenshotSourcePicker(context),
+            icon: viewModel.isScanningWhoop
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.black,
+                    ),
+                  )
+                : const Icon(Icons.document_scanner_rounded, size: 16),
+            label: Text(
+              viewModel.isScanningWhoop
+                  ? 'ANALIZANDO CAPTURA DE WHOOP...'
+                  : 'ESCANEAR CAPTURA DE WHOOP',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.3,
+              ),
             ),
           ),
+          const SizedBox(height: 6),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                foregroundColor: ApexTheme.voltAccent,
+                side: const BorderSide(color: ApexTheme.voltAccent),
+              ),
+              onPressed: viewModel.isSyncingWearable
+                  ? null
+                  : viewModel.forceSyncWearable,
+              icon: const Icon(Icons.sync_rounded, size: 14),
+              label: const Text(
+                'FORZAR SYNC',
+                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
+              ),
+            ),
+            FilledButton.tonalIcon(
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                backgroundColor: ApexTheme.cyanElectric.withValues(alpha: 0.16),
+                foregroundColor: ApexTheme.cyanElectric,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+              ),
+              onPressed: () =>
+                  _openWearableManualSyncModal(context, activeSource),
+              icon: const Icon(Icons.tune_rounded, size: 14),
+              label: Text(
+                registerBtnText,
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
+    );
+  }
+
+  void _openWhoopScreenshotSourcePicker(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: ApexTheme.cardGraphite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const Text(
+                  'ESCANEAR CAPTURA OFICIAL DE WHOOP',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: ApexTheme.voltAccent,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Sube tu captura de pantalla de WHOOP y Gemini Vision extraerá automáticamente Sueño %, Recuperación %, Esfuerzo (Strain) y Nivel de Estrés.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: ApexTheme.textMuted,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                ListTile(
+                  leading: const Icon(
+                    Icons.photo_library_rounded,
+                    color: ApexTheme.voltAccent,
+                  ),
+                  title: const Text(
+                    'Seleccionar captura desde Galería',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                  subtitle: const Text(
+                    'Recomendado para screenshots de la app de WHOOP',
+                    style: TextStyle(fontSize: 11, color: ApexTheme.textMuted),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await viewModel.scanWhoopScreenshot(ImageSource.gallery);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(
+                    Icons.camera_alt_rounded,
+                    color: ApexTheme.cyanElectric,
+                  ),
+                  title: const Text(
+                    'Tomar foto con Cámara',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await viewModel.scanWhoopScreenshot(ImageSource.camera);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

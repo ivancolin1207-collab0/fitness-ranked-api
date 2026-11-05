@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'core/services/auth_service.dart';
 import 'data/repositories/fitness_repository.dart';
 import 'data/services/api_client_service.dart';
 import 'data/services/health_connect_service.dart';
@@ -19,11 +20,13 @@ void main() {
   final ApiClientService apiClient = ApiClientService();
   final HealthConnectService healthService = HealthConnectService();
   const SecureStorageService storageService = SecureStorageService();
+  const AuthService authService = AuthService(storageService: storageService);
 
   final FitnessRepository repository = FitnessRepository(
     apiClient: apiClient,
     healthConnectService: healthService,
     storageService: storageService,
+    authService: authService,
   );
 
   runApp(ApexMetrixApp(repository: repository));

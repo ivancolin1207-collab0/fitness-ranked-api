@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../../core/services/auth_service.dart';
 import '../models/auth_models.dart';
 import '../models/biometric_models.dart';
 import '../models/leaderboard_models.dart';
@@ -11,14 +12,18 @@ class FitnessRepository {
   final ApiClientService _apiClient;
   final HealthConnectService _healthConnectService;
   final SecureStorageService _storageService;
+  final AuthService _authService;
 
   FitnessRepository({
     required ApiClientService apiClient,
     required HealthConnectService healthConnectService,
     required SecureStorageService storageService,
+    AuthService? authService,
   })  : _apiClient = apiClient,
         _healthConnectService = healthConnectService,
-        _storageService = storageService;
+        _storageService = storageService,
+        _authService =
+            authService ?? AuthService(storageService: storageService);
 
   String get currentApiBaseUrl => _apiClient.baseUrl;
 
@@ -63,11 +68,11 @@ class FitnessRepository {
   }
 
   Future<String?> getStoredJwtToken() {
-    return _storageService.readJwtToken();
+    return _authService.readActiveJwtToken();
   }
 
   Future<String> _requireToken() async {
-    final String? token = await _storageService.readJwtToken();
+    final String? token = await _authService.readActiveJwtToken();
     if (token == null || token.isEmpty) {
       throw const HttpException(
         'Sesión no autenticada. Inicia sesión para continuar.',
@@ -83,7 +88,7 @@ class FitnessRepository {
   /// Verifica si existe un token JWT válido en disco y restaura de inmediato
   /// el perfil persistido para saltar directo a la pantalla principal (Auto-login).
   Future<UserProfileModel?> restoreCachedSessionProfile() async {
-    final String? token = await _storageService.readJwtToken();
+    final String? token = await _authService.readActiveJwtToken();
     if (token == null || token.isEmpty) {
       return null;
     }
@@ -96,7 +101,7 @@ class FitnessRepository {
 
     final String savedUnit = await _storageService.readUnitSystem();
     final String savedWearable = await _storageService.readPreferredWearable();
-    final String? savedUserId = await _storageService.readUserId();
+    final String? savedUserId = await _authService.readActiveUserId();
 
     final UserProfileModel fallback = UserProfileModel(
       id: savedUserId ?? 'persisted-session',
@@ -113,7 +118,11 @@ class FitnessRepository {
       currentTier: 'Plata',
       createdAt: DateTime.now(),
     );
-    await _storageService.saveUserProfileCache(fallback);
+    await _authService.persistSession(
+      jwtToken: token,
+      userId: fallback.id,
+      profile: fallback,
+    );
     return fallback;
   }
 
@@ -125,13 +134,15 @@ class FitnessRepository {
       email: email,
       password: password,
     );
-    await _storageService.saveJwtToken(tokenRes.accessToken);
     final UserProfileModel profile = tokenRes.user ??
         await _apiClient.fetchMyProfile(
           jwtToken: tokenRes.accessToken,
         );
-    await _storageService.saveUserId(profile.id);
-    await _storageService.saveUserProfileCache(profile);
+    await _authService.persistSession(
+      jwtToken: tokenRes.accessToken,
+      userId: profile.id,
+      profile: profile,
+    );
     await _storageService.saveUnitSystem(profile.unitSystem);
     await _storageService.savePreferredWearable(profile.preferredWearable);
     return profile;
@@ -161,13 +172,15 @@ class FitnessRepository {
       preferredWearable: preferredWearable,
       unitSystem: unitSystem,
     );
-    await _storageService.saveJwtToken(tokenRes.accessToken);
     final UserProfileModel profile = tokenRes.user ??
         await _apiClient.fetchMyProfile(
           jwtToken: tokenRes.accessToken,
         );
-    await _storageService.saveUserId(profile.id);
-    await _storageService.saveUserProfileCache(profile);
+    await _authService.persistSession(
+      jwtToken: tokenRes.accessToken,
+      userId: profile.id,
+      profile: profile,
+    );
     await _storageService.saveUnitSystem(profile.unitSystem);
     await _storageService.savePreferredWearable(profile.preferredWearable);
     return profile;
@@ -182,20 +195,22 @@ class FitnessRepository {
       email: email,
       newPassword: newPassword,
     );
-    await _storageService.saveJwtToken(tokenRes.accessToken);
     final UserProfileModel profile = tokenRes.user ??
         await _apiClient.fetchMyProfile(
           jwtToken: tokenRes.accessToken,
         );
-    await _storageService.saveUserId(profile.id);
-    await _storageService.saveUserProfileCache(profile);
+    await _authService.persistSession(
+      jwtToken: tokenRes.accessToken,
+      userId: profile.id,
+      profile: profile,
+    );
     await _storageService.saveUnitSystem(profile.unitSystem);
     await _storageService.savePreferredWearable(profile.preferredWearable);
     return profile;
   }
 
   Future<UserProfileModel?> fetchCurrentSessionProfile() async {
-    final String? token = await _storageService.readJwtToken();
+    final String? token = await _authService.readActiveJwtToken();
     if (token == null || token.isEmpty) {
       return null;
     }
@@ -203,8 +218,11 @@ class FitnessRepository {
       final UserProfileModel profile = await _apiClient.fetchMyProfile(
         jwtToken: token,
       );
-      await _storageService.saveUserId(profile.id);
-      await _storageService.saveUserProfileCache(profile);
+      await _authService.persistSession(
+        jwtToken: token,
+        userId: profile.id,
+        profile: profile,
+      );
       await _storageService.saveUnitSystem(profile.unitSystem);
       await _storageService.savePreferredWearable(profile.preferredWearable);
       return profile;
@@ -221,15 +239,18 @@ class FitnessRepository {
       payload: payload,
       jwtToken: token,
     );
-    await _storageService.saveUserId(updated.id);
-    await _storageService.saveUserProfileCache(updated);
+    await _authService.persistSession(
+      jwtToken: token,
+      userId: updated.id,
+      profile: updated,
+    );
     await _storageService.saveUnitSystem(updated.unitSystem);
     await _storageService.savePreferredWearable(updated.preferredWearable);
     return updated;
   }
 
   Future<void> logout() async {
-    await _storageService.clearSession();
+    await _authService.logoutExplicitly();
   }
 
   // =========================================================================
@@ -310,6 +331,33 @@ class FitnessRepository {
     final String token = await _requireToken();
     return _apiClient.syncWearableMetrics(
       record: record,
+      jwtToken: token,
+    );
+  }
+
+  /// Escanea una captura de pantalla de WHOOP con Gemini Vision (`POST /api/v1/wearables/scan-screen`)
+  /// y sincroniza Sueño %, Recuperación %, Strain y Estrés en PostgreSQL.
+  Future<WearableMetricRecord> scanWhoopScreenImage(
+    File imageFile,
+  ) async {
+    final String token = await _requireToken();
+    return _apiClient.scanWhoopScreenMetrics(
+      imageFile: imageFile,
+      jwtToken: token,
+    );
+  }
+
+  /// Envía un mensaje al Gemini Coach Personal con el contexto biométrico en vivo.
+  Future<AiCoachChatResponseModel> sendAiCoachChat({
+    required String message,
+    required List<AiCoachChatMessageModel> history,
+    required Map<String, dynamic> athleteContext,
+  }) async {
+    final String token = await _requireToken();
+    return _apiClient.sendAiCoachChat(
+      message: message,
+      history: history,
+      athleteContext: athleteContext,
       jwtToken: token,
     );
   }
