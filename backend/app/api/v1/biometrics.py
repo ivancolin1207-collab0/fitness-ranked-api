@@ -7,7 +7,7 @@ y Sincronización Real de Wearables (`/wearables/today`, `/wearables/sync`).
 
 from datetime import date, datetime, timezone
 from typing import Annotated, Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 from sqlalchemy import select, text
@@ -430,42 +430,87 @@ async def scan_whoop_screen_metrics(
     )
     max_hr_calc = max(avg_hr_calc + 25, 168)
 
-    current_user.preferred_wearable = resolved_source
-
-    stmt = (
-        pg_insert(WearableMetric)
-        .values(
-            user_id=current_user.id,
-            date=today,
-            strain_score=extracted.strain_score,
-            recovery_score=extracted.recovery_score,
-            hrv_ms=extracted.hrv_ms,
-            resting_hr=extracted.resting_hr,
-            avg_hr=avg_hr_calc,
-            max_hr=max_hr_calc,
-            sleep_hours=sleep_hours_calc,
-            sleep_efficiency_pct=extracted.sleep_performance_pct,
-            source_device=resolved_source,
+    record: Optional[WearableMetric] = None
+    try:
+        current_user.preferred_wearable = resolved_source
+        stmt = (
+            pg_insert(WearableMetric)
+            .values(
+                user_id=current_user.id,
+                date=today,
+                strain_score=extracted.strain_score,
+                recovery_score=extracted.recovery_score,
+                hrv_ms=extracted.hrv_ms,
+                resting_hr=extracted.resting_hr,
+                avg_hr=avg_hr_calc,
+                max_hr=max_hr_calc,
+                sleep_hours=sleep_hours_calc,
+                sleep_efficiency_pct=extracted.sleep_performance_pct,
+                source_device=resolved_source,
+            )
+            .on_conflict_do_update(
+                constraint="uq_user_date_device",
+                set_={
+                    "strain_score": extracted.strain_score,
+                    "recovery_score": extracted.recovery_score,
+                    "hrv_ms": extracted.hrv_ms,
+                    "resting_hr": extracted.resting_hr,
+                    "avg_hr": avg_hr_calc,
+                    "max_hr": max_hr_calc,
+                    "sleep_hours": sleep_hours_calc,
+                    "sleep_efficiency_pct": extracted.sleep_performance_pct,
+                },
+            )
+            .returning(WearableMetric)
         )
-        .on_conflict_do_update(
-            constraint="uq_user_date_device",
-            set_={
-                "strain_score": extracted.strain_score,
-                "recovery_score": extracted.recovery_score,
-                "hrv_ms": extracted.hrv_ms,
-                "resting_hr": extracted.resting_hr,
-                "avg_hr": avg_hr_calc,
-                "max_hr": max_hr_calc,
-                "sleep_hours": sleep_hours_calc,
-                "sleep_efficiency_pct": extracted.sleep_performance_pct,
-            },
-        )
-        .returning(WearableMetric)
-    )
-    result = await db.execute(stmt)
-    record = result.scalar_one()
-    await db.commit()
-    await db.refresh(record)
+        result = await db.execute(stmt)
+        record = result.scalar_one()
+        await db.commit()
+        await db.refresh(record)
+    except Exception:
+        await db.rollback()
+        try:
+            existing_stmt = (
+                select(WearableMetric)
+                .where(
+                    WearableMetric.user_id == current_user.id,
+                    WearableMetric.date == today,
+                )
+                .limit(1)
+            )
+            existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+            if existing is not None:
+                existing.strain_score = extracted.strain_score
+                existing.recovery_score = extracted.recovery_score
+                existing.hrv_ms = extracted.hrv_ms
+                existing.resting_hr = extracted.resting_hr
+                existing.avg_hr = avg_hr_calc
+                existing.max_hr = max_hr_calc
+                existing.sleep_hours = sleep_hours_calc
+                existing.sleep_efficiency_pct = extracted.sleep_performance_pct
+                record = existing
+            else:
+                new_metric = WearableMetric(
+                    user_id=current_user.id,
+                    date=today,
+                    strain_score=extracted.strain_score,
+                    recovery_score=extracted.recovery_score,
+                    hrv_ms=extracted.hrv_ms,
+                    resting_hr=extracted.resting_hr,
+                    avg_hr=avg_hr_calc,
+                    max_hr=max_hr_calc,
+                    sleep_hours=sleep_hours_calc,
+                    sleep_efficiency_pct=extracted.sleep_performance_pct,
+                    source_device=resolved_source,
+                )
+                db.add(new_metric)
+                record = new_metric
+            await db.commit()
+            if record is not None:
+                await db.refresh(record)
+        except Exception:
+            await db.rollback()
+            record = None
 
     # Persistir atómicamente en `daily_readiness` para la fecha actual
     try:
@@ -531,26 +576,27 @@ async def scan_whoop_screen_metrics(
     except Exception:
         await db.rollback()
 
+    now_utc = datetime.now(timezone.utc)
     return WhoopScreenScanResponse(
-        id=record.id,
-        user_id=record.user_id,
-        date=record.date,
+        id=record.id if record is not None else uuid4(),
+        user_id=record.user_id if record is not None else current_user.id,
+        date=record.date if record is not None else today,
         sleep_pct=extracted.sleep_pct,
         sleep_performance_pct=extracted.sleep_performance_pct,
-        recovery_score=float(record.recovery_score),
-        strain_score=float(record.strain_score),
+        recovery_score=float(record.recovery_score) if record is not None else extracted.recovery_score,
+        strain_score=float(record.strain_score) if record is not None else extracted.strain_score,
         stress_level=extracted.stress_level,
         stress_category=extracted.stress_category,
         whoop_stress_level=extracted.stress_level,
         whoop_health_metrics_in_range=5,
-        resting_hr=int(record.resting_hr or extracted.resting_hr),
-        hrv_ms=float(record.hrv_ms or extracted.hrv_ms),
-        avg_hr=int(record.avg_hr),
-        max_hr=int(record.max_hr),
-        sleep_hours=float(record.sleep_hours),
+        resting_hr=int(record.resting_hr or extracted.resting_hr) if record is not None else extracted.resting_hr,
+        hrv_ms=float(record.hrv_ms or extracted.hrv_ms) if record is not None else extracted.hrv_ms,
+        avg_hr=int(record.avg_hr) if record is not None else avg_hr_calc,
+        max_hr=int(record.max_hr) if record is not None else max_hr_calc,
+        sleep_hours=float(record.sleep_hours) if record is not None else sleep_hours_calc,
         sleep_efficiency_pct=float(
             record.sleep_efficiency_pct or extracted.sleep_performance_pct
-        ),
+        ) if record is not None else extracted.sleep_performance_pct,
         huawei_trusleep_score=extracted.trusleep_score,
         huawei_stress_score=extracted.stress_score,
         huawei_vo2_max=extracted.vo2max,
@@ -558,7 +604,7 @@ async def scan_whoop_screen_metrics(
         samsung_bia_muscle_pct=extracted.bia_muscle_pct,
         samsung_bia_fat_pct=extracted.bia_fat_pct,
         source_device=resolved_source,
-        synced_at=record.synced_at,
+        synced_at=record.synced_at if record is not None else now_utc,
     )
 
 

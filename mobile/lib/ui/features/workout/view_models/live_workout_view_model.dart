@@ -58,6 +58,17 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   String _readinessZone = 'YELLOW_MAINTENANCE';
   String get readinessZone => _readinessZone;
 
+  double get recoveryScore {
+    final String z = _readinessZone.toUpperCase();
+    if (z.contains('RED') || z.contains('ROJA') || z.contains('DELOAD')) {
+      return 30.0;
+    }
+    if (z.contains('GREEN') || z.contains('VERDE') || z.contains('SOBRECARGA')) {
+      return 78.0;
+    }
+    return 56.0;
+  }
+
   String _geminiRationale =
       'Gemini Coach adaptará las cargas y repeticiones de tus series según tu RPE real y recuperación diaria.';
   String get geminiRationale => _geminiRationale;

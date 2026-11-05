@@ -1,6 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../../../core/services/wearable_service.dart';
 import '../../../../data/models/auth_models.dart';
 import '../../../../data/models/biometric_models.dart';
 import '../../../core/app_theme.dart';
@@ -27,6 +28,16 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   HomeViewModel get viewModel => widget.viewModel;
   AuthViewModel get authViewModel => widget.authViewModel;
+
+  final WearableService _wearableService = WearableService();
+
+  bool hasWhoopData = false;
+  double? recoveryScore;
+  double? strainScore;
+  double? sleepPct;
+  double? stressLevel;
+  String? stressCategory;
+  double? sleepHours;
 
   String _normalizedWearableSource(String raw) {
     if (raw == 'SAMSUNG_HEALTH' || raw == 'SAMSUNG_WATCH') {
@@ -90,21 +101,45 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (BuildContext context, _) {
         final UserProfileModel? user = authViewModel.currentUser;
         final WearableMetricRecord? wearable = viewModel.wearable;
-        final bool hasWhoopData = viewModel.hasWhoopData || wearable != null;
-        final WearableMetricRecord? effectiveWearable = wearable ??
-            (viewModel.hasWhoopData
+        final bool effectiveHasWhoopData =
+            hasWhoopData || viewModel.hasWhoopData || wearable != null;
+        final WearableMetricRecord? effectiveWearable = wearable != null
+            ? WearableMetricRecord(
+                date: wearable.date,
+                strainScore: strainScore ?? viewModel.whoopStrain ?? wearable.strainScore,
+                recoveryScore: recoveryScore ?? viewModel.whoopRecovery ?? wearable.recoveryScore,
+                hrvMs: wearable.hrvMs,
+                restingHr: wearable.restingHr,
+                avgHr: wearable.avgHr,
+                maxHr: wearable.maxHr,
+                sleepHours: sleepHours ?? viewModel.whoopSleepHours ?? wearable.sleepHours,
+                sleepEfficiencyPct: sleepPct ?? viewModel.whoopSleep ?? wearable.sleepEfficiencyPct,
+                sourceDevice: wearable.sourceDevice,
+                whoopStressLevel: stressLevel ?? viewModel.whoopStress ?? wearable.whoopStressLevel,
+                whoopHealthMetricsInRange: wearable.whoopHealthMetricsInRange,
+                huaweiStressScore: wearable.huaweiStressScore,
+                huaweiTruSleepScore: wearable.huaweiTruSleepScore,
+                huaweiVo2Max: wearable.huaweiVo2Max,
+                samsungEnergyScore: wearable.samsungEnergyScore,
+                samsungBiaFatPct: wearable.samsungBiaFatPct,
+                samsungBiaMusclePct: wearable.samsungBiaMusclePct,
+                appleMoveKcal: wearable.appleMoveKcal,
+                appleExerciseMinutes: wearable.appleExerciseMinutes,
+                appleStandHours: wearable.appleStandHours,
+              )
+            : (effectiveHasWhoopData
                 ? WearableMetricRecord(
                     date: DateTime.now(),
-                    strainScore: viewModel.strainScore,
-                    recoveryScore: viewModel.recoveryScore,
+                    strainScore: strainScore ?? viewModel.strainScore,
+                    recoveryScore: recoveryScore ?? viewModel.recoveryScore,
                     hrvMs: 56.0,
                     restingHr: 58,
                     avgHr: 68,
                     maxHr: 155,
-                    sleepHours: viewModel.sleepHours,
-                    sleepEfficiencyPct: viewModel.sleepPct,
+                    sleepHours: sleepHours ?? viewModel.sleepHours,
+                    sleepEfficiencyPct: sleepPct ?? viewModel.sleepPct,
                     sourceDevice: viewModel.preferredWearable,
-                    whoopStressLevel: viewModel.stressScore,
+                    whoopStressLevel: stressLevel ?? viewModel.stressScore,
                   )
                 : null);
         final BiometricRecord? bio = viewModel.biometrics;
@@ -260,7 +295,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             _buildWearableSourceBar(context, activeSource),
                             const SizedBox(height: 10),
-                            if (!hasWhoopData || effectiveWearable == null)
+                            if (!effectiveHasWhoopData || effectiveWearable == null)
                               _buildWaitingWearableSyncCard(
                                 context,
                                 activeSource,
@@ -290,7 +325,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _buildEmptyBiometricsCard(context),
                             const SizedBox(height: 10),
                             _buildLbmTrendChartCard(),
-                            const SizedBox(height: 110),
+                            const SizedBox(height: 130),
                           ],
                         ),
                       ),
@@ -905,21 +940,25 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     WearableMetricRecord wearable,
   ) {
-    final double sleepPct = (viewModel.hasWhoopData
-            ? viewModel.sleepPct
-            : (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct))
+    final double activeSleepPct = (sleepPct ??
+            (viewModel.hasWhoopData
+                ? viewModel.sleepPct
+                : (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct)))
         .clamp(0.0, 100.0);
-    final double recovery = (viewModel.hasWhoopData
-            ? viewModel.recoveryScore
-            : (viewModel.whoopRecovery ?? wearable.recoveryScore))
+    final double recovery = (recoveryScore ??
+            (viewModel.hasWhoopData
+                ? viewModel.recoveryScore
+                : (viewModel.whoopRecovery ?? wearable.recoveryScore)))
         .clamp(0.0, 100.0);
-    final double strain = (viewModel.hasWhoopData
-            ? viewModel.strainScore
-            : (viewModel.whoopStrain ?? wearable.strainScore))
+    final double strain = (strainScore ??
+            (viewModel.hasWhoopData
+                ? viewModel.strainScore
+                : (viewModel.whoopStrain ?? wearable.strainScore)))
         .clamp(0.0, 21.0);
-    final double stress = (viewModel.hasWhoopData
-            ? viewModel.stressScore
-            : (viewModel.whoopStress ?? wearable.whoopStressLevel))
+    final double stress = (stressLevel ??
+            (viewModel.hasWhoopData
+                ? viewModel.stressScore
+                : (viewModel.whoopStress ?? wearable.whoopStressLevel)))
         .clamp(0.0, 3.0);
 
     final bool isCompromised = recovery < 34.0;
@@ -932,13 +971,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'ZONA VERDE • SOBRECARGA'
             : 'ZONA AMARILLA • MANTENIMIENTO');
 
-    final String stressCategory = viewModel.hasWhoopData
-        ? viewModel.stressCategory
-        : (viewModel.whoopStressCategory ??
-            (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO')));
-    final Color stressColor = stressCategory == 'ALTO' || stress >= 2.0
+    final String activeStressCategory = stressCategory ??
+        (viewModel.hasWhoopData
+            ? viewModel.stressCategory
+            : (viewModel.whoopStressCategory ??
+                (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'))));
+    final Color stressColor = activeStressCategory == 'ALTO' || stress >= 2.0
         ? ApexTheme.warningAmber
-        : (stressCategory == 'MEDIO' || stress >= 1.0
+        : (activeStressCategory == 'MEDIO' || stress >= 1.0
             ? ApexTheme.readinessGreen
             : ApexTheme.cyanElectric);
 
@@ -946,7 +986,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos el volumen prescrito (-20%) para evitar fatiga del SNC.'
         : (recovery >= 67.0
             ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%). Gemini Coach activa sobrecarga progresiva (+2.5 kg).'
-            : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño ${(viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h (${sleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($stressCategory). Gemini Coach mantiene volumen objetivo.');
+            : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño ${(sleepHours ?? viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach mantiene volumen objetivo.');
 
     return Card(
       child: Padding(
@@ -1002,8 +1042,8 @@ class _HomeScreenState extends State<HomeScreen> {
               children: <Widget>[
                 _WhoopCircleGauge(
                   label: 'SUEÑO >',
-                  valueText: '${sleepPct.toStringAsFixed(0)}%',
-                  progress: (sleepPct / 100.0).clamp(0.0, 1.0),
+                  valueText: '${activeSleepPct.toStringAsFixed(0)}%',
+                  progress: (activeSleepPct / 100.0).clamp(0.0, 1.0),
                   color: const Color(0xFF75A8D3),
                 ),
                 _WhoopCircleGauge(
@@ -1139,7 +1179,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
                                   Text(
-                                    stressCategory,
+                                    activeStressCategory,
                                     style: TextStyle(
                                       fontSize: 10,
                                       fontWeight: FontWeight.w900,
@@ -1619,58 +1659,103 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Procesando telemetría de Whoop con Gemini Vision...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+    final bytes = await pickedFile.readAsBytes();
+    if (!context.mounted) {
+      return;
     }
 
-    final bytes = await pickedFile.readAsBytes();
-    final Map<String, dynamic>? result =
-        await viewModel.scanWhoopScreenshotBytes(
-      bytes,
-      sourceDevice: activeSource,
-    );
+    bool dialogOpen = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (BuildContext dialogContext) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: ApexTheme.cardGraphite,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: const BorderSide(color: ApexTheme.borderGraphite),
+            ),
+            content: const Row(
+              children: <Widget>[
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.8,
+                    color: ApexTheme.voltAccent,
+                  ),
+                ),
+                SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    'Gemini Vision analizando telemetría de Whoop...',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: ApexTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ).then((_) {
+      dialogOpen = false;
+    });
 
-    if (result != null) {
-      final double recScore =
-          ((result['recovery_score'] ?? 47.0) as num).toDouble();
-      final double strScore =
-          ((result['strain_score'] ?? 7.4) as num).toDouble();
-      final double slpScore =
-          ((result['sleep_pct'] ?? result['sleep_performance_pct'] ?? 80.0)
-                  as num)
-              .toDouble();
-      final double strLevel =
-          ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8)
-                  as num)
-              .toDouble();
-      final String strCat = (result['stress_category'] as String?) ?? 'MEDIO';
-      final double slpHours =
-          (result['sleep_hours'] as num?)?.toDouble() ?? 7.7;
+    try {
+      final Map<String, dynamic> response =
+          await _wearableService.scanWhoopScreenshot(
+        bytes,
+        baseUrl: authViewModel.apiBaseUrl,
+        sourceDevice: activeSource,
+      );
 
-      // 1. Asignar los datos parseados al ViewModel
+      if (dialogOpen && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        dialogOpen = false;
+      }
+
+      hasWhoopData = true;
+      recoveryScore =
+          ((response['recovery_score'] ?? 47.0) as num).toDouble();
+      strainScore =
+          ((response['strain_score'] ?? 7.4) as num).toDouble();
+      sleepPct = ((response['sleep_pct'] ??
+                  response['sleep_performance_pct'] ??
+                  80.0) as num)
+              .toDouble();
+      stressLevel = ((response['stress_level'] ??
+                  response['whoop_stress_level'] ??
+                  1.8) as num)
+              .toDouble();
+      stressCategory = (response['stress_category'] as String?) ?? 'MEDIO';
+      sleepHours = (response['sleep_hours'] as num?)?.toDouble() ?? 7.7;
+
+      // 1. Asignar directamente al ViewModel y notificar
       viewModel.setWhoopData(
         hasData: true,
-        recovery: recScore,
-        strain: strScore,
-        sleep: slpScore,
-        stressLevel: strLevel,
-        stressCategory: strCat,
-        sleepHours: slpHours,
-        hrvMs: (result['hrv_ms'] as num?)?.toInt(),
-        restingHr: ((result['rhr_bpm'] ?? result['resting_hr']) as num?)?.toInt(),
-        healthMetricsInRange: ((result['health_monitor_metrics_ok'] ??
-                result['whoop_health_metrics_in_range']) as num?)
+        recovery: recoveryScore!,
+        strain: strainScore!,
+        sleep: sleepPct!,
+        stressLevel: stressLevel!,
+        stressCategory: stressCategory!,
+        sleepHours: sleepHours!,
+        hrvMs: (response['hrv_ms'] as num?)?.toInt(),
+        restingHr:
+            ((response['rhr_bpm'] ?? response['resting_hr']) as num?)?.toInt(),
+        healthMetricsInRange: ((response['health_monitor_metrics_ok'] ??
+                response['whoop_health_metrics_in_range']) as num?)
             ?.toInt(),
         sourceDevice: activeSource,
       );
 
-      // 2. Forzar reconstrucción del árbol de widgets
+      // 2. Forzar reconstrucción inmediata del estado local
       if (mounted) {
         setState(() {});
       }
@@ -1681,22 +1766,43 @@ class _HomeScreenState extends State<HomeScreen> {
           SnackBar(
             backgroundColor: const Color(0xFF10B981),
             content: Text(
-              'Telemetría actualizada: Recuperación ${recScore.round()}% | Strain ${strScore.toStringAsFixed(1)}',
+              'Telemetría Whoop sincronizada: Recuperación ${recoveryScore!.round()}% | Strain ${strainScore!.toStringAsFixed(1)} | Sueño ${sleepPct!.round()}%',
             ),
           ),
         );
       }
-    } else if (context.mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFFEF4444),
-          content: Text(
-            viewModel.errorMessage ??
-                'Error al procesar la captura. Inténtalo nuevamente.',
+    } on WearableScanException catch (err) {
+      if (dialogOpen && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        dialogOpen = false;
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFEF4444),
+            duration: const Duration(seconds: 5),
+            content: Text(
+              'Error HTTP ${err.statusCode}: ${err.message}',
+            ),
           ),
-        ),
-      );
+        );
+      }
+    } catch (err) {
+      if (dialogOpen && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        dialogOpen = false;
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFEF4444),
+            duration: const Duration(seconds: 5),
+            content: Text('Error de escaneo Whoop: $err'),
+          ),
+        );
+      }
     }
   }
 

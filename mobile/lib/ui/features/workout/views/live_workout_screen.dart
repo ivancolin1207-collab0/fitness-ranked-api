@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/services/ble_heart_rate_service.dart';
+import '../../../../core/services/exercise_media_service.dart';
 import '../../../../data/models/workout_models.dart';
 import '../../../core/app_theme.dart';
 import '../view_models/live_workout_view_model.dart';
@@ -135,6 +136,7 @@ class LiveWorkoutScreen extends StatelessWidget {
                               const SizedBox(height: 10),
                               _buildSetProgressionList(),
                             ],
+                            const SizedBox(height: 130),
                           ],
                         ),
                       ),
@@ -369,6 +371,19 @@ class LiveWorkoutScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
+            BiomechanicalExerciseAvatarModule(
+              exerciseName: routine.exercises.isNotEmpty
+                  ? routine.exercises.first.exerciseName
+                  : routine.focusGroup,
+              recoveryScore: viewModel.recoveryScore,
+              targetReps: routine.exercises.isNotEmpty
+                  ? routine.exercises.first.targetReps
+                  : 10,
+              prescribedRpe: routine.exercises.isNotEmpty
+                  ? routine.exercises.first.targetRpe
+                  : 8.0,
+            ),
+            const SizedBox(height: 12),
             if (routine.exercises.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
@@ -663,6 +678,13 @@ class LiveWorkoutScreen extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            BiomechanicalExerciseAvatarModule(
+              exerciseName: activeSet.exerciseName,
+              recoveryScore: viewModel.recoveryScore,
+              targetReps: activeSet.prescribedReps,
+              prescribedRpe: activeSet.prescribedRpe,
             ),
             const SizedBox(height: 14),
             Row(
