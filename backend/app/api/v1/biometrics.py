@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from typing import Annotated, Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Header, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,8 +32,8 @@ from app.schemas.biometrics import (
 )
 from app.services.gemini_service import (
     extract_fitdays_biometrics_from_image,
-    extract_whoop_screen_metrics,
     generate_coach_chat_reply,
+    scan_wearable_screen,
 )
 
 router = APIRouter(tags=["Biometrics & Wearables"])
@@ -326,28 +326,54 @@ async def log_hydration_intake(
     status_code=status.HTTP_200_OK,
 )
 async def scan_whoop_screen_metrics(
-    file: Annotated[UploadFile, File(description="Captura de pantalla de la app WHOOP")],
+    file: Annotated[UploadFile, File(description="Captura de pantalla del wearable (WHOOP, HUAWEI, SAMSUNG)")],
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    source_device: Annotated[Optional[str], Form()] = None,
+    source_wearable: Annotated[Optional[str], Form()] = None,
     x_gemini_api_key: Annotated[Optional[str], Header()] = None,
 ) -> WhoopScreenScanResponse:
     """
-    Procesa una captura de pantalla de la app oficial de WHOOP mediante Gemini Vision
-    (o análisis CV de anillos) y actualiza atómicamente la telemetría diaria del atleta.
+    Procesa una captura de pantalla del wearable seleccionado (WHOOP, HUAWEI, SAMSUNG)
+    mediante Gemini Vision y actualiza atómicamente la telemetría diaria en PostgreSQL.
     """
+    raw_source = (
+        source_device
+        or source_wearable
+        or (current_user.preferred_wearable.value if current_user.preferred_wearable else "WHOOP")
+    ).upper().strip()
+
+    if "HUAWEI" in raw_source:
+        resolved_source = WearableSource.HUAWEI_GT
+    elif "SAMSUNG" in raw_source:
+        resolved_source = WearableSource.SAMSUNG_WATCH
+    elif "APPLE" in raw_source:
+        resolved_source = WearableSource.APPLE_WATCH
+    else:
+        resolved_source = WearableSource.WHOOP
+
     clean_bytes, clean_mime = await validate_uploaded_image(file)
-    extracted = await extract_whoop_screen_metrics(
+    extracted = await scan_wearable_screen(
         image_bytes=clean_bytes,
+        source_wearable=resolved_source.value,
         mime_type=clean_mime,
         fallback_api_key=x_gemini_api_key,
     )
 
     today = date.today()
-    sleep_hours_calc = round((extracted.sleep_performance_pct / 100.0) * 8.0, 2)
-    avg_hr_calc = max(52, min(140, extracted.resting_hr + 12))
+    sleep_hours_calc = (
+        extracted.sleep_duration_hours
+        if resolved_source == WearableSource.SAMSUNG_WATCH
+        else round((extracted.sleep_performance_pct / 100.0) * 8.0, 2)
+    )
+    avg_hr_calc = (
+        extracted.avg_heart_rate
+        if resolved_source == WearableSource.HUAWEI_GT
+        else max(52, min(140, extracted.resting_hr + 12))
+    )
     max_hr_calc = max(avg_hr_calc + 25, 168)
 
-    current_user.preferred_wearable = WearableSource.WHOOP
+    current_user.preferred_wearable = resolved_source
 
     stmt = (
         pg_insert(WearableMetric)
@@ -362,7 +388,7 @@ async def scan_whoop_screen_metrics(
             max_hr=max_hr_calc,
             sleep_hours=sleep_hours_calc,
             sleep_efficiency_pct=extracted.sleep_performance_pct,
-            source_device=WearableSource.WHOOP,
+            source_device=resolved_source,
         )
         .on_conflict_do_update(
             constraint="uq_user_date_device",
@@ -387,6 +413,7 @@ async def scan_whoop_screen_metrics(
         id=record.id,
         user_id=record.user_id,
         date=record.date,
+        sleep_pct=extracted.sleep_pct,
         sleep_performance_pct=extracted.sleep_performance_pct,
         recovery_score=float(record.recovery_score),
         strain_score=float(record.strain_score),
@@ -402,7 +429,13 @@ async def scan_whoop_screen_metrics(
         sleep_efficiency_pct=float(
             record.sleep_efficiency_pct or extracted.sleep_performance_pct
         ),
-        source_device=WearableSource.WHOOP,
+        huawei_trusleep_score=extracted.trusleep_score,
+        huawei_stress_score=extracted.stress_score,
+        huawei_vo2_max=extracted.vo2max,
+        samsung_energy_score=extracted.energy_score,
+        samsung_bia_muscle_pct=extracted.bia_muscle_pct,
+        samsung_bia_fat_pct=extracted.bia_fat_pct,
+        source_device=resolved_source,
         synced_at=record.synced_at,
     )
 
@@ -419,7 +452,7 @@ async def chat_with_gemini_coach(
     x_gemini_api_key: Annotated[Optional[str], Header()] = None,
 ) -> AiCoachChatResponse:
     """
-    Endpoint interactivo para el panel flotante GEMINI COACH PERSONAL (`POST /api/v1/ai/chat`).
+    Endpoint interactivo para el Centro Táctico / Director de Rendimiento (`POST /api/v1/ai/chat`).
     Recibe el mensaje, historial y contexto biométrico en tiempo real del atleta.
     """
     today_wearable = (
@@ -455,13 +488,18 @@ async def chat_with_gemini_coach(
     hyd_ml = get_user_today_hydration_ml(current_user.id)
     hyd_goal = await _compute_hydration_target_ml(db, current_user.id)
 
-    client_ctx = payload.athlete_context or {}
+    client_ctx = dict(payload.athlete_context or {})
+    if payload.model_extra:
+        client_ctx.update(payload.model_extra)
+
     rec_val = float(
-        client_ctx.get("recovery_score")
+        payload.recovery_score
+        or client_ctx.get("recovery_score")
         or (today_wearable.recovery_score if today_wearable else 47.0)
     )
     sleep_pct_val = float(
-        client_ctx.get("sleep_performance_pct")
+        payload.sleep_performance_pct
+        or client_ctx.get("sleep_performance_pct")
         or (
             today_wearable.sleep_efficiency_pct
             if (today_wearable and today_wearable.sleep_efficiency_pct is not None)
@@ -469,20 +507,28 @@ async def chat_with_gemini_coach(
         )
     )
     strain_val = float(
-        client_ctx.get("strain_score")
-        or (today_wearable.strain_score if today_wearable else 7.1)
+        payload.strain_score
+        or client_ctx.get("strain_score")
+        or (today_wearable.strain_score if today_wearable else 7.2)
     )
     stress_lvl_val = float(
-        client_ctx.get("stress_level")
-        or (2.1 if rec_val < 50.0 else (1.5 if rec_val < 75.0 else 0.9))
+        payload.stress_level
+        or client_ctx.get("stress_level")
+        or (2.4 if rec_val < 50.0 else (1.5 if rec_val < 75.0 else 0.9))
     )
     stress_cat_val = str(
-        client_ctx.get("stress_category")
-        or ("Alto" if stress_lvl_val >= 2.0 else ("Medio" if stress_lvl_val >= 1.2 else "Bajo"))
+        payload.stress_category
+        or client_ctx.get("stress_category")
+        or ("ALTO" if stress_lvl_val >= 2.0 else ("MEDIO" if stress_lvl_val >= 1.2 else "BAJO"))
     )
 
     merged_context: dict[str, Any] = {
-        "athlete_name": current_user.full_name or current_user.username,
+        "athlete_name": (
+            payload.athlete_name
+            or client_ctx.get("athlete_name")
+            or current_user.full_name
+            or current_user.username
+        ),
         "username": current_user.username,
         "training_goal": current_user.training_goal.value,
         "wearable_source": str(
@@ -494,12 +540,23 @@ async def chat_with_gemini_coach(
         "strain_score": strain_val,
         "stress_level": stress_lvl_val,
         "stress_category": stress_cat_val,
-        "hydration_ml": int(client_ctx.get("hydration_ml") or hyd_ml),
-        "hydration_goal_ml": int(client_ctx.get("hydration_goal_ml") or hyd_goal),
+        "hydration_ml": int(
+            payload.hydration_consumed_ml
+            if payload.hydration_consumed_ml is not None
+            else (client_ctx.get("hydration_consumed_ml") or client_ctx.get("hydration_ml") or hyd_ml)
+        ),
+        "hydration_goal_ml": int(
+            payload.hydration_goal_ml
+            or client_ctx.get("hydration_goal_ml")
+            or hyd_goal
+        ),
         "weight_kg": float(latest_bio.weight_kg) if latest_bio else 78.0,
         "lean_body_mass_kg": float(latest_bio.lean_body_mass_kg) if latest_bio else 65.0,
+        "fat_percentage": float(latest_bio.fat_percentage) if latest_bio else 14.8,
         "routine_name": str(
-            client_ctx.get("routine_name")
+            payload.scheduled_routine_name
+            or client_ctx.get("scheduled_routine_name")
+            or client_ctx.get("routine_name")
             or (today_routine.name if today_routine else "Rutina de Fuerza e Hipertrofia")
         ),
     }

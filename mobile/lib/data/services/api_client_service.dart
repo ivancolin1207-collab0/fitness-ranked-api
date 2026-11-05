@@ -525,6 +525,7 @@ class ApiClientService {
   Future<WearableMetricRecord> scanWhoopScreenMetrics({
     required File imageFile,
     required String jwtToken,
+    String sourceDevice = 'WHOOP',
   }) async {
     final Uri uri = Uri.parse('$_baseUrl/api/v1/wearables/scan-screen');
     const OcrService ocrService = OcrService();
@@ -533,6 +534,7 @@ class ApiClientService {
       endpointUri: uri,
       accessToken: jwtToken,
       httpClient: _httpClient,
+      sourceDevice: sourceDevice,
     );
     try {
       final WearableMetricRecord persisted = await syncWearableMetrics(
@@ -540,15 +542,25 @@ class ApiClientService {
         jwtToken: jwtToken,
       );
       return persisted.copyWith(
+        sourceDevice: sourceDevice,
+        sleepEfficiencyPct: scanned.sleepEfficiencyPct,
+        recoveryScore: scanned.recoveryScore,
+        strainScore: scanned.strainScore,
         whoopStressLevel: scanned.whoopStressLevel,
         whoopHealthMetricsInRange: scanned.whoopHealthMetricsInRange,
+        huaweiTruSleepScore: scanned.huaweiTruSleepScore,
+        huaweiStressScore: scanned.huaweiStressScore,
+        huaweiVo2Max: scanned.huaweiVo2Max,
+        samsungEnergyScore: scanned.samsungEnergyScore,
+        samsungBiaMusclePct: scanned.samsungBiaMusclePct,
+        samsungBiaFatPct: scanned.samsungBiaFatPct,
       );
     } catch (_) {
       return scanned;
     }
   }
 
-  /// POST /api/v1/ai/chat (Gemini Coach Personal Interactivo)
+  /// POST /api/v1/ai/chat (Centro Táctico • Director de Rendimiento)
   Future<AiCoachChatResponseModel> sendAiCoachChat({
     required String message,
     required List<AiCoachChatMessageModel> history,
@@ -564,15 +576,23 @@ class ApiClientService {
             'message': message.trim(),
             'history':
                 history.map((AiCoachChatMessageModel m) => m.toJson()).toList(),
+            'athlete_context': athleteContext,
             ...athleteContext,
           }),
         ),
       );
 
       if (response.statusCode == 200) {
-        return AiCoachChatResponseModel.fromJson(
+        final AiCoachChatResponseModel parsed =
+            AiCoachChatResponseModel.fromJson(
           jsonDecode(response.body) as Map<String, dynamic>,
         );
+        final String cleanReply = parsed.reply.trim();
+        if (cleanReply.length >= 45 &&
+            !cleanReply.endsWith('LBM') &&
+            !cleanReply.endsWith('kg')) {
+          return parsed;
+        }
       }
     } catch (_) {}
 
@@ -588,16 +608,20 @@ class ApiClientService {
   }) {
     final String name =
         (context['athlete_name'] as String?) ?? 'Atleta';
+    final double weightKg =
+        (context['weight_kg'] as num?)?.toDouble() ?? 78.0;
+    final double lbmKg =
+        (context['lean_body_mass_kg'] as num?)?.toDouble() ?? 65.0;
     final double rec =
-        (context['recovery_score'] as num?)?.toDouble() ?? 62.0;
+        (context['recovery_score'] as num?)?.toDouble() ?? 47.0;
     final double sleepPct =
         (context['sleep_performance_pct'] as num?)?.toDouble() ?? 80.0;
     final double strain =
-        (context['strain_score'] as num?)?.toDouble() ?? 7.1;
+        (context['strain_score'] as num?)?.toDouble() ?? 7.2;
     final double stress =
-        (context['stress_level'] as num?)?.toDouble() ?? 2.1;
+        (context['stress_level'] as num?)?.toDouble() ?? 2.4;
     final String stressCat = (context['stress_category'] as String?) ??
-        (stress >= 2.0 ? 'Alto' : (stress >= 1.0 ? 'Medio' : 'Bajo'));
+        (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'));
     final int hydConsumed =
         (context['hydration_consumed_ml'] as num?)?.toInt() ?? 0;
     final int hydGoal =
@@ -610,8 +634,44 @@ class ApiClientService {
     final int hydMissing = (hydGoal - hydConsumed).clamp(0, 6000);
     final String q = message.toLowerCase();
 
+    final int tdeeKcal =
+        ((lbmKg * 21.6 + 370) * (1.55 + (strain / 45.0))).round();
+    final int surplusKcal = tdeeKcal + 350;
+    final int proteinG = (weightKg * 2.2).round();
+    final int fatsG = (weightKg * 1.0).round();
+    final int carbsG =
+        ((surplusKcal - (proteinG * 4 + fatsG * 9)) / 4).round();
+
     String reply;
-    if (q.contains('pesad') ||
+    if (q.contains('subir de peso') ||
+        q.contains('volumen') ||
+        q.contains('masa') ||
+        q.contains('hipertrofia') ||
+        q.contains('calor') ||
+        q.contains('macro') ||
+        q.contains('ganar')) {
+      reply =
+          'Protocolo de hipertrofia y superávit para $name (${weightKg.toStringAsFixed(1)} kg | ${lbmKg.toStringAsFixed(1)} kg LBM, Strain ${strain.toStringAsFixed(1)}):\n'
+          '1. Superávit Calórico: Consume $surplusKcal kcal/día (+350 kcal sobre tu mantenimiento de $tdeeKcal kcal).\n'
+          '2. Macros Exactos: Proteína $proteinG g (2.2 g/kg), Carbohidratos $carbsG g (prioriza 90 g peri-entreno en "$routine") y Grasas $fatsG g.\n'
+          '3. Suplementación: Creatina monohidratada 5 g/día + batido hipercalórico líquido si presentas saciedad alta.';
+    } else if (q.contains('cena') ||
+        q.contains('comer') ||
+        q.contains('estr') ||
+        q.contains('sueñ') ||
+        q.contains('dormir')) {
+      reply =
+          'Con Estrés en ${stress.toStringAsFixed(1)} ($stressCat), Sueño en ${sleepPct.round()}% y Recuperación en ${rec.round()}%, prioriza descarga parasimpática nocturna:\n'
+          '1. Cena recomendada: 45 g de proteína magra (salmón o pechuga) + 75 g de carbohidratos complejos (arroz jazmín o papa al horno) para optimizar serotonina y reducir cortisol.\n'
+          '2. Protocolo de descanso: 400 mg de bisglicinato de magnesio 60 min antes de dormir + 3 min de respiración fisiológica.';
+    } else if (q.contains('agua') ||
+        q.contains('hidrat') ||
+        q.contains('electrolit')) {
+      reply =
+          'Estado hídrico hoy: $hydConsumed / $hydGoal ml (déficit de $hydMissing ml para tu Strain de ${strain.toStringAsFixed(1)}).\n'
+          '• Pre-entreno: Ingiere 500 ml con 500 mg de sodio 30 min antes de "$routine".\n'
+          '• Intra-entreno: 250 ml cada 20 min para sostener la potencia contráctil.';
+    } else if (q.contains('pesad') ||
         q.contains('entren') ||
         q.contains('carga') ||
         q.contains('rpe') ||
@@ -619,52 +679,41 @@ class ApiClientService {
         q.contains('rutina')) {
       if (zone == 'VERDE') {
         reply =
-            '$name, tu Recuperación está en ${rec.round()}% (Zona VERDE) con ${sleepPct.round()}% de Sueño y Strain previo de ${strain.toStringAsFixed(1)}. '
-            'Hoy tienes luz verde para sobrecarga progresiva en "$routine": sube +2.5 kg en el básico principal y trabaja en RPE 8.0–8.5.';
+            'Con ${rec.round()}% de Recuperación (Zona VERDE) y ${sleepPct.round()}% de Sueño:\n'
+            '• En "$routine", aplica sobrecarga progresiva (+2.5 kg en el básico principal) trabajando en RPE 8.0–8.5.\n'
+            '• Descanso: 150 s entre series efectivas.';
       } else if (zone == 'AMARILLA') {
         reply =
-            '$name, hoy registras ${rec.round()}% de Recuperación (Zona AMARILLA), Sueño de ${sleepPct.round()}%, Strain acumulado de ${strain.toStringAsFixed(1)} y Estrés en ${stress.toStringAsFixed(1)} ($stressCat). '
-            'Para "$routine", mantén las cargas base sin buscar 1RM hoy, controla el RPE entre 7.5 y 8.0 (RIR 2) y asegura 150s de descanso entre series.';
+            'Con ${rec.round()}% de Recuperación (Zona AMARILLA), Sueño ${sleepPct.round()}%, Strain ${strain.toStringAsFixed(1)} y Estrés ${stress.toStringAsFixed(1)} ($stressCat):\n'
+            '• En "$routine", mantén las cargas base sin buscar 1RM hoy; fija el esfuerzo en RPE 7.5–8.0 (RIR 2).\n'
+            '• Descansa 150–180 s entre series compuestas.';
       } else {
         reply =
-            '$name, alerta de fatiga del SNC: tu Recuperación cayó a ${rec.round()}% (Zona ROJA) con Estrés en ${stress.toStringAsFixed(1)} ($stressCat). '
-            'En "$routine", aplica descarga reactiva hoy: recorta -10% el peso en barra, elimina 1 serie por ejercicio y no pases de RPE 7.0.';
+            'Alerta de fatiga del SNC (Recuperación ${rec.round()}% Zona ROJA, Estrés ${stress.toStringAsFixed(1)} $stressCat):\n'
+            '• En "$routine", aplica descarga reactiva: reduce -10% la carga en barra, recorta 1 serie por ejercicio y limita el RPE a 7.0.';
       }
-    } else if (q.contains('agua') ||
-        q.contains('hidrat') ||
-        q.contains('electrolit')) {
-      reply =
-          '$name, llevas $hydConsumed ml de tu meta dinámica de $hydGoal ml (te faltan $hydMissing ml hoy, calculados para tu Strain de ${strain.toStringAsFixed(1)}). '
-          'Bebe 500 ml con electrolitos 30 min antes de iniciar "$routine" y 250 ml cada 20 min durante la sesión.';
-    } else if (q.contains('estr') ||
-        q.contains('sueñ') ||
-        q.contains('recupera') ||
-        q.contains('hrv')) {
-      reply =
-          '$name, tu Monitor de Estrés WHOOP marca ${stress.toStringAsFixed(1)} ($stressCat) y tu Sueño fue de ${sleepPct.round()}%, dejando tu Recuperación en ${rec.round()}% (Zona $zone). '
-          'Realiza 3 minutos de respiración fisiológica (doble inhalación nasal + exhalación larga) antes de calentar para bajar el tono simpático.';
     } else {
       final String directive = zone == 'VERDE'
-          ? 'Hoy es día de sobrecarga progresiva (+2.5 kg en básicos, RPE 8.5).'
+          ? 'Sobrecarga progresiva habilitada (+2.5 kg en básicos, RPE 8.5).'
           : (zone == 'AMARILLA'
-              ? 'Mantén el volumen objetivo hoy con RPE controlado (7.5–8.0) sin llegar al fallo.'
-              : 'Prioriza descarga técnica (-10% carga, RPE <= 7.0) para proteger tu SNC.');
+              ? 'Mantén volumen objetivo con RPE controlado (7.5–8.0, RIR 2).'
+              : 'Descarga técnica activa (-10% carga, RPE <= 7.0) para proteger el SNC.');
       reply =
-          '¡Listo, $name! Analicé tu telemetría en tiempo real:\n'
+          'Análisis táctico en tiempo real para $name:\n'
           '• Recuperación: ${rec.round()}% (Zona $zone) | Sueño: ${sleepPct.round()}%\n'
           '• Esfuerzo (Strain): ${strain.toStringAsFixed(1)} | Estrés: ${stress.toStringAsFixed(1)} ($stressCat)\n'
           '• Hidratación: $hydConsumed / $hydGoal ml | Rutina: $routine\n\n'
-          'Directriz táctica: $directive';
+          'Directriz: $directive';
     }
 
     return AiCoachChatResponseModel(
       reply: reply,
       readinessZone: zone,
       suggestedPrompts: const <String>[
-        '¿Debo entrenar pesado hoy con mi recuperación actual?',
+        '¿Qué puedo hacer para subir de peso limpio?',
         'Ajusta mis series y RPE para la rutina de hoy',
+        '¿Qué me recomiendas cenar para bajar mi estrés?',
         '¿Cuánta agua me falta antes de entrenar?',
-        '¿Cómo bajar mi estrés antes de iniciar?',
       ],
     );
   }

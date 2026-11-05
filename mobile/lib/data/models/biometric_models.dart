@@ -206,8 +206,10 @@ class WearableMetricRecord {
         (extracted?['recovery_score'] as num?)?.toDouble() ??
         75.0;
     final double sleepEff =
-        (root['sleep_efficiency_pct'] as num?)?.toDouble() ??
+        (root['sleep_pct'] as num?)?.toDouble() ??
+            (root['sleep_efficiency_pct'] as num?)?.toDouble() ??
             (root['sleep_performance_pct'] as num?)?.toDouble() ??
+            (extracted?['sleep_pct'] as num?)?.toDouble() ??
             (extracted?['sleep_performance_pct'] as num?)?.toDouble() ??
             85.0;
     final double inferredWhoopStress =

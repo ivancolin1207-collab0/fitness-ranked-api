@@ -171,14 +171,21 @@ class HomeViewModel extends ChangeNotifier {
     return double.parse(kgValue.toStringAsFixed(1));
   }
 
-  /// Escanea una captura de pantalla de WHOOP (`POST /api/v1/wearables/scan-screen`)
-  /// y actualiza los 3 anillos (Sueño %, Recuperación %, Strain) y el Monitor de Estrés
-  /// de forma reactiva e inmediata en la UI (`notifyListeners()`).
+  /// Actualiza de forma reactiva las métricas del wearable activo y notifica a la UI.
+  void setMetrics(WearableMetricRecord updated) {
+    _wearable = updated;
+    notifyListeners();
+  }
+
+  /// Escanea una captura de pantalla del wearable activo (`POST /api/v1/wearables/scan-screen`)
+  /// y actualiza los diales en pantalla de forma reactiva e inmediata (`setMetrics` + `notifyListeners()`).
   Future<WearableMetricRecord?> scanWhoopScreenshot(
-    ImageSource source,
-  ) async {
+    ImageSource source, {
+    String? sourceDevice,
+  }) async {
     _errorMessage = null;
     _statusBanner = null;
+    final String targetSource = sourceDevice ?? _preferredWearable;
 
     final XFile? picked = await _imagePicker.pickImage(
       source: source,
@@ -195,20 +202,34 @@ class HomeViewModel extends ChangeNotifier {
     try {
       final File imageFile = File(picked.path);
       final WearableMetricRecord scanned =
-          await _repository.scanWhoopScreenImage(imageFile);
-      _preferredWearable = 'WHOOP';
-      await _repository.setPreferredWearable('WHOOP');
-      _wearable = scanned.copyWith(sourceDevice: 'WHOOP');
+          await _repository.scanWhoopScreenImage(
+        imageFile,
+        sourceDevice: targetSource,
+      );
+      _preferredWearable = targetSource;
+      await _repository.setPreferredWearable(targetSource);
+      setMetrics(scanned.copyWith(sourceDevice: targetSource));
       _hydration = await _repository.loadTodayHydration(
         weightKg: _biometrics?.weightKg ?? 78.0,
         strainScore: _wearable?.strainScore ?? 10.0,
       );
-      _statusBanner =
-          'Captura WHOOP sincronizada: ${_wearable!.sleepEfficiencyPct.round()}% Sueño • ${_wearable!.recoveryScore.round()}% Recuperación • Strain ${_wearable!.strainScore.toStringAsFixed(1)} • Estrés ${_wearable!.whoopStressLevel.toStringAsFixed(1)}';
+      if (targetSource == 'WHOOP') {
+        _statusBanner =
+            'Captura WHOOP sincronizada: ${_wearable!.sleepEfficiencyPct.round()}% Sueño • ${_wearable!.recoveryScore.round()}% Recuperación • Strain ${_wearable!.strainScore.toStringAsFixed(1)} • Estrés ${_wearable!.whoopStressLevel.toStringAsFixed(1)}';
+      } else if (targetSource == 'HUAWEI_GT') {
+        _statusBanner =
+            'Captura Huawei sincronizada: TruSleep ${_wearable!.huaweiTruSleepScore} pts • Estrés ${_wearable!.huaweiStressScore}/100 • VO2Max ${_wearable!.huaweiVo2Max.toStringAsFixed(1)}';
+      } else if (targetSource == 'SAMSUNG_WATCH') {
+        _statusBanner =
+            'Captura Samsung sincronizada: Energy Score ${_wearable!.samsungEnergyScore} • Sueño ${_wearable!.sleepHours.toStringAsFixed(1)} h';
+      } else {
+        _statusBanner =
+            'Captura $targetSource sincronizada (Recuperación: ${_wearable!.recoveryScore.round()}%)';
+      }
       return _wearable;
     } catch (e) {
       _errorMessage =
-          'Error al escanear captura de WHOOP: ${e.toString().replaceFirst("HttpException: ", "")}';
+          'Error al escanear captura de $targetSource: ${e.toString().replaceFirst("HttpException: ", "")}';
       return null;
     } finally {
       _isScanningWhoop = false;

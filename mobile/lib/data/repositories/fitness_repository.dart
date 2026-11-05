@@ -269,6 +269,17 @@ class FitnessRepository {
     final String preferred =
         sourceDevice ?? await _storageService.readPreferredWearable();
 
+    // Priorizar el registro ya persistido hoy en PostgreSQL (ej. por escaneo de captura o sync previo)
+    if (!forceSensorPoll) {
+      try {
+        final WearableMetricRecord? existingCloud =
+            await _apiClient.fetchTodayWearable(jwtToken: token);
+        if (existingCloud != null) {
+          return existingCloud;
+        }
+      } catch (_) {}
+    }
+
     final WearableMetricRecord? sensorMetrics =
         await _healthConnectService.fetchTodayWearableMetrics(
       preferredSource: preferred,
@@ -278,10 +289,6 @@ class FitnessRepository {
         record: sensorMetrics,
         jwtToken: token,
       );
-    }
-
-    if (forceSensorPoll) {
-      return _apiClient.fetchTodayWearable(jwtToken: token);
     }
 
     return _apiClient.fetchTodayWearable(jwtToken: token);
@@ -335,15 +342,17 @@ class FitnessRepository {
     );
   }
 
-  /// Escanea una captura de pantalla de WHOOP con Gemini Vision (`POST /api/v1/wearables/scan-screen`)
-  /// y sincroniza Sueño %, Recuperación %, Strain y Estrés en PostgreSQL.
+  /// Escanea una captura de pantalla del wearable seleccionado con Gemini Vision (`POST /api/v1/wearables/scan-screen`)
+  /// y sincroniza las métricas extraídas en PostgreSQL.
   Future<WearableMetricRecord> scanWhoopScreenImage(
-    File imageFile,
-  ) async {
+    File imageFile, {
+    String sourceDevice = 'WHOOP',
+  }) async {
     final String token = await _requireToken();
     return _apiClient.scanWhoopScreenMetrics(
       imageFile: imageFile,
       jwtToken: token,
+      sourceDevice: sourceDevice,
     );
   }
 

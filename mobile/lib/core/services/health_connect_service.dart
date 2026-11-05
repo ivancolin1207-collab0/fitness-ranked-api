@@ -174,13 +174,11 @@ class HealthConnectService {
         : sleepSessionMinutes;
     final int resolvedSteps = math.max(totalSteps, stepPoints);
 
+    // Exigir al menos una métrica fisiológica real del wearable (HRV, FC en reposo o Sueño)
+    // para no fabricar lecturas falsas (90% sueño / 62% recovery) a partir del podómetro del teléfono.
     if (latestHrv == null &&
         restingHr == null &&
-        hrSamples.isEmpty &&
-        resolvedSleepMinutes <= 0 &&
-        activeKcal <= 0 &&
-        totalKcal <= 0 &&
-        resolvedSteps <= 0) {
+        resolvedSleepMinutes <= 0) {
       return null;
     }
 

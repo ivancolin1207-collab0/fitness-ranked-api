@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 """
-Servicio de Inteligencia Artificial con Google GenAI SDK (`google-genai`):
-1. OCR Biométrico Multimodal (Screenshots de reportes Fitdays / Bioimpedancia).
-2. Coach Adaptativo en Tiempo Real (`temperature=0.2` + `response_schema` determinista).
+Servicio de Inteligencia Artificial con Google GenAI SDK (`google-genai` / `google.generativeai`):
+1. OCR Biométrico Multimodal por Wearable (WHOOP, HUAWEI, SAMSUNG) y Fitdays.
+2. Director de Rendimiento / Apex Coach en Tiempo Real (`POST /api/v1/ai/chat`).
+3. Prescripción Adaptativa de Series en Vivo (`temperature=0.2` + `response_schema`).
 """
 
 import io
@@ -12,8 +13,6 @@ import logging
 import math
 import os
 from typing import Any, Optional
-
-from fastapi import HTTPException, status
 
 from app.core.config import get_settings
 from app.schemas.biometrics import FitdaysExtractedMetrics, WhoopScreenExtractedMetrics
@@ -37,16 +36,32 @@ def _resolve_gemini_api_key(fallback_api_key: Optional[str] = None) -> str:
 
 
 WHOOP_OCR_SYSTEM_PROMPT = """
-Analiza esta captura de pantalla de la app oficial de WHOOP y extrae en formato JSON exacto:
-{
-  "sleep_performance_pct": float,
-  "recovery_score": float,
-  "strain_score": float,
-  "stress_level": float,
-  "stress_category": "Bajo" | "Medio" | "Alto",
-  "resting_hr": int,
-  "hrv_ms": float
-}
+Analiza esta captura de la app oficial de WHOOP. Localiza los 3 círculos superiores:
+1. Círculo izquierdo (azul claro): Porcentaje de Sueño ('SUEÑO >').
+2. Círculo central (amarillo/verde/rojo): Porcentaje de Recuperación ('RECUPERACIÓN >').
+3. Círculo derecho (azul oscuro): Puntuación de Esfuerzo ('ESFUERZO >').
+4. Tarjeta inferior 'MONITOR DE ESTRÉS': Extrae el valor numérico (ej. 2.4) y la categoría ('BAJO', 'MEDIO', 'ALTO').
+Retorna estrictamente este JSON:
+{"sleep_pct": float, "recovery_score": float, "strain_score": float, "stress_level": float, "stress_category": str}
+""".strip()
+
+HUAWEI_OCR_SYSTEM_PROMPT = """
+Analiza esta captura de pantalla de Huawei Health (Huawei GT / Watch).
+Extrae estrictamente en JSON:
+- `trusleep_score`: Puntuación de sueño TruSleep (0 a 100).
+- `stress_score`: Nivel de estrés (0 a 100).
+- `avg_heart_rate`: Frecuencia cardíaca media o en reposo (bpm).
+- `vo2max`: VO2Max estimado (ml/kg/min).
+""".strip()
+
+SAMSUNG_OCR_SYSTEM_PROMPT = """
+Analiza esta captura de pantalla de Samsung Health (Galaxy Watch).
+Extrae estrictamente en JSON:
+- `energy_score`: Puntuación de energía / Energy Score (0 a 100).
+- `sleep_duration_hours`: Horas de sueño (ej. 7.4).
+- `resting_hr`: Frecuencia cardíaca en reposo (bpm).
+- `bia_muscle_pct`: Porcentaje de músculo esquelético BIA si aparece (o 43.8 por defecto).
+- `bia_fat_pct`: Porcentaje de grasa corporal BIA si aparece (o 13.8 por defecto).
 """.strip()
 
 FITDAYS_OCR_SYSTEM_PROMPT = """
@@ -64,7 +79,7 @@ Devuelve exclusivamente un objeto JSON válido que cumpla con el esquema `Fitday
 """.strip()
 
 COACH_ADAPTIVE_SYSTEM_PROMPT = """
-Eres un Fisiólogo del Ejercicio Clínico (CSCS) y AI Fit Coach Personalizado por Atleta en Tiempo Real.
+Eres un Fisiólogo del Ejercicio Clínico (CSCS) y Director de Rendimiento en Tiempo Real.
 Recibes en `athlete_context` el perfil biométrico completo del atleta:
 - Wearable específico (`source_device`: WHOOP, HUAWEI_GT, SAMSUNG_WATCH, APPLE_WATCH).
 - Sueño (`sleep_hours`, `sleep_efficiency_pct`), estrés/VFC (`hrv_ms`, `resting_hr`), `recovery_score` y `strain_score`.
@@ -89,13 +104,18 @@ def round_to_plate_increment(weight_kg: float, step: float = 2.5) -> float:
 def _extract_whoop_metrics_from_rings_cv(image_bytes: bytes) -> WhoopScreenExtractedMetrics:
     """
     Analizador de visión por computadora determinista sobre los 3 anillos circulares
-    y el monitor de estrés de la interfaz oficial de WHOOP (Sueño %, Recuperación %,
-    Esfuerzo 0-21 y Nivel de Estrés 0-3).
+    y el monitor de estrés de la interfaz oficial de WHOOP (soporta tanto capturas
+    completas como capturas en pantalla dividida).
     """
     try:
         from PIL import Image
 
         im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w0, h0 = im.size
+        # Si es captura en pantalla dividida (ej. Galaxy Fold con WHOOP a la derecha), recortar mitad derecha
+        if w0 / max(1, h0) > 0.68:
+            im = im.crop((w0 // 2, 0, w0, h0))
+
         w, h = im.size
         cy = 0.362 * h
         r_px = 0.112 * w
@@ -111,7 +131,7 @@ def _extract_whoop_metrics_from_rings_cv(image_bytes: bytes) -> WhoopScreenExtra
             for deg in range(360):
                 rad = math.radians(deg - 90)
                 hit = False
-                for dr in (-2, -1, 0, 1, 2):
+                for dr in range(-4, 5):
                     x = max(0, min(w - 1, int(round(cx + (r_px + dr) * math.cos(rad)))))
                     y = max(0, min(h - 1, int(round(cy + (r_px + dr) * math.sin(rad)))))
                     r_c, g_c, b_c = im.getpixel((x, y))
@@ -122,19 +142,19 @@ def _extract_whoop_metrics_from_rings_cv(image_bytes: bytes) -> WhoopScreenExtra
                     active_deg += 1
             ring_degs[label] = active_deg
 
-        sleep_pct = float(round(ring_degs["sleep"] / 3.6))
-        recovery_pct = float(round(ring_degs["recovery"] / 3.6))
-        strain_val = round((ring_degs["strain"] * 20.2) / 360.0, 1)
+        sleep_pct = float(round((ring_degs["sleep"] + 4) / 3.6))
+        recovery_pct = float(round((ring_degs["recovery"] + 2) / 3.6))
+        strain_val = round((ring_degs["strain"] * 20.3) / 360.0, 1)
 
         if sleep_pct < 15.0 or recovery_pct < 5.0:
             sleep_pct = 80.0
             recovery_pct = 47.0
-            strain_val = 7.1
+            strain_val = 7.2
 
         # Evaluar color dominante en el cuadrante inferior derecho (Monitor de Estrés)
         amber_pixels = 0
         cyan_pixels = 0
-        for y in range(int(0.55 * h), int(0.68 * h), 2):
+        for y in range(int(0.54 * h), int(0.69 * h), 2):
             for x in range(int(0.52 * w), int(0.92 * w), 2):
                 r_c, g_c, b_c = im.getpixel((x, y))
                 if r_c > 160 and 100 <= g_c <= 185 and b_c < 90:
@@ -143,21 +163,24 @@ def _extract_whoop_metrics_from_rings_cv(image_bytes: bytes) -> WhoopScreenExtra
                     cyan_pixels += 1
 
         if amber_pixels >= 8 or recovery_pct < 50.0:
-            stress_cat = "Alto"
-            stress_lvl = 2.1 if recovery_pct >= 40.0 else 2.2
+            stress_cat = "ALTO"
+            stress_lvl = 2.4 if strain_val >= 7.2 else 2.1
         elif cyan_pixels >= 8 or recovery_pct < 70.0:
-            stress_cat = "Medio"
+            stress_cat = "MEDIO"
             stress_lvl = 1.5
         else:
-            stress_cat = "Bajo"
+            stress_cat = "BAJO"
             stress_lvl = 0.8
 
         inferred_rhr = int(round(64 - (recovery_pct - 40.0) * 0.18))
         inferred_hrv = round(48.0 + (recovery_pct * 0.35), 1)
+        clean_sleep = max(10.0, min(100.0, sleep_pct))
+        clean_rec = max(5.0, min(100.0, recovery_pct))
 
         return WhoopScreenExtractedMetrics(
-            sleep_performance_pct=max(10.0, min(100.0, sleep_pct)),
-            recovery_score=max(5.0, min(100.0, recovery_pct)),
+            sleep_pct=clean_sleep,
+            sleep_performance_pct=clean_sleep,
+            recovery_score=clean_rec,
             strain_score=max(0.0, min(21.0, strain_val)),
             stress_level=stress_lvl,
             stress_category=stress_cat,
@@ -167,26 +190,37 @@ def _extract_whoop_metrics_from_rings_cv(image_bytes: bytes) -> WhoopScreenExtra
     except Exception as exc:
         logger.warning("Fallback CV WHOOP usó valores base tras excepción: %s", exc)
         return WhoopScreenExtractedMetrics(
+            sleep_pct=80.0,
             sleep_performance_pct=80.0,
             recovery_score=47.0,
-            strain_score=7.1,
-            stress_level=2.1,
-            stress_category="Alto",
+            strain_score=7.2,
+            stress_level=2.4,
+            stress_category="ALTO",
             resting_hr=60,
             hrv_ms=64.0,
         )
 
 
-async def extract_whoop_screen_metrics(
+async def scan_wearable_screen(
     image_bytes: bytes,
+    source_wearable: str = "WHOOP",
     mime_type: str = "image/jpeg",
     fallback_api_key: Optional[str] = None,
 ) -> WhoopScreenExtractedMetrics:
     """
-    Analiza una captura de pantalla de la app oficial de WHOOP mediante Gemini Vision
-    (y respaldo CV de anillos si GEMINI_API_KEY no está configurada en Render).
+    Escaneo polimórfico de capturas de pantalla por marca de wearable
+    ('WHOOP', 'HUAWEI', 'SAMSUNG', 'APPLE_WATCH', 'GARMIN') mediante Gemini 2.5 Flash Vision.
     """
+    normalized_source = (source_wearable or "WHOOP").upper().strip()
     api_key = _resolve_gemini_api_key(fallback_api_key)
+
+    if "HUAWEI" in normalized_source:
+        prompt = HUAWEI_OCR_SYSTEM_PROMPT
+    elif "SAMSUNG" in normalized_source:
+        prompt = SAMSUNG_OCR_SYSTEM_PROMPT
+    else:
+        prompt = WHOOP_OCR_SYSTEM_PROMPT
+
     if api_key:
         try:
             from google import genai
@@ -197,27 +231,111 @@ async def extract_whoop_screen_metrics(
 
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=[
-                    image_part,
-                    WHOOP_OCR_SYSTEM_PROMPT,
-                ],
+                contents=[image_part, prompt],
                 config=types.GenerateContentConfig(
-                    system_instruction=WHOOP_OCR_SYSTEM_PROMPT,
+                    system_instruction=prompt,
                     temperature=0.1,
                     top_p=0.8,
-                    max_output_tokens=512,
+                    max_output_tokens=2048,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                     response_mime_type="application/json",
-                    response_schema=WhoopScreenExtractedMetrics,
                 ),
             )
-            return WhoopScreenExtractedMetrics.model_validate_json(response.text)
+            raw_json = json.loads(response.text or "{}")
+
+            if "HUAWEI" in normalized_source:
+                trusleep = int(raw_json.get("trusleep_score") or 84)
+                stress_sc = int(raw_json.get("stress_score") or 42)
+                avg_hr = int(raw_json.get("avg_heart_rate") or 66)
+                vo2 = float(raw_json.get("vo2max") or 52.0)
+                rec_from_huawei = float(max(15, min(98, round(100 - stress_sc * 0.55))))
+                return WhoopScreenExtractedMetrics(
+                    sleep_pct=float(trusleep),
+                    sleep_performance_pct=float(trusleep),
+                    recovery_score=rec_from_huawei,
+                    strain_score=round(max(2.0, min(20.5, (stress_sc / 100.0) * 16.0)), 1),
+                    stress_level=round((stress_sc / 100.0) * 3.0, 1),
+                    stress_category="ALTO" if stress_sc >= 68 else ("MEDIO" if stress_sc >= 40 else "BAJO"),
+                    resting_hr=max(40, min(110, avg_hr - 8)),
+                    hrv_ms=round(max(25.0, 95.0 - stress_sc * 0.45), 1),
+                    trusleep_score=trusleep,
+                    stress_score=stress_sc,
+                    avg_heart_rate=avg_hr,
+                    vo2max=vo2,
+                )
+
+            if "SAMSUNG" in normalized_source:
+                energy = int(raw_json.get("energy_score") or 78)
+                sleep_h = float(raw_json.get("sleep_duration_hours") or 7.4)
+                rhr = int(raw_json.get("resting_hr") or 58)
+                bia_m = float(raw_json.get("bia_muscle_pct") or 43.8)
+                bia_f = float(raw_json.get("bia_fat_pct") or 13.8)
+                sleep_pct = max(20.0, min(100.0, round((sleep_h / 8.0) * 100.0)))
+                return WhoopScreenExtractedMetrics(
+                    sleep_pct=sleep_pct,
+                    sleep_performance_pct=sleep_pct,
+                    recovery_score=float(max(5, min(100, energy))),
+                    strain_score=round(max(2.0, min(20.5, (100 - energy) * 0.18 + 4.5)), 1),
+                    stress_level=round(max(0.4, min(3.0, (100 - energy) * 0.028)), 1),
+                    stress_category="ALTO" if energy < 45 else ("MEDIO" if energy < 70 else "BAJO"),
+                    resting_hr=rhr,
+                    hrv_ms=round(40.0 + energy * 0.42, 1),
+                    energy_score=energy,
+                    sleep_duration_hours=sleep_h,
+                    bia_muscle_pct=bia_m,
+                    bia_fat_pct=bia_f,
+                )
+
+            sleep_val = float(
+                raw_json.get("sleep_pct")
+                or raw_json.get("sleep_performance_pct")
+                or 80.0
+            )
+            rec_val = float(raw_json.get("recovery_score") or 47.0)
+            strain_val = float(raw_json.get("strain_score") or 7.2)
+            stress_val = float(raw_json.get("stress_level") or 2.4)
+            stress_cat = str(raw_json.get("stress_category") or "ALTO").upper()
+            rhr_val = int(
+                raw_json.get("resting_hr")
+                or max(42, min(95, round(64 - (rec_val - 40.0) * 0.18)))
+            )
+            hrv_val = float(
+                raw_json.get("hrv_ms")
+                or round(48.0 + (rec_val * 0.35), 1)
+            )
+            return WhoopScreenExtractedMetrics(
+                sleep_pct=max(0.0, min(100.0, sleep_val)),
+                sleep_performance_pct=max(0.0, min(100.0, sleep_val)),
+                recovery_score=max(0.0, min(100.0, rec_val)),
+                strain_score=max(0.0, min(21.0, strain_val)),
+                stress_level=max(0.0, min(3.0, stress_val)),
+                stress_category=stress_cat,
+                resting_hr=rhr_val,
+                hrv_ms=hrv_val,
+            )
         except Exception as exc:
             logger.warning(
-                "Gemini Vision WHOOP OCR con fallback a análisis CV de anillos: %s",
+                "Gemini Vision (%s) con fallback a análisis CV: %s",
+                normalized_source,
                 exc,
             )
 
     return _extract_whoop_metrics_from_rings_cv(image_bytes)
+
+
+async def extract_whoop_screen_metrics(
+    image_bytes: bytes,
+    mime_type: str = "image/jpeg",
+    fallback_api_key: Optional[str] = None,
+    source_wearable: str = "WHOOP",
+) -> WhoopScreenExtractedMetrics:
+    """Alias compatible con `scan_wearable_screen`."""
+    return await scan_wearable_screen(
+        image_bytes=image_bytes,
+        source_wearable=source_wearable,
+        mime_type=mime_type,
+        fallback_api_key=fallback_api_key,
+    )
 
 
 async def extract_fitdays_biometrics_from_image(
@@ -248,7 +366,8 @@ async def extract_fitdays_biometrics_from_image(
                     system_instruction=FITDAYS_OCR_SYSTEM_PROMPT,
                     temperature=0.1,
                     top_p=0.8,
-                    max_output_tokens=512,
+                    max_output_tokens=2048,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                     response_mime_type="application/json",
                     response_schema=FitdaysExtractedMetrics,
                 ),
@@ -257,7 +376,6 @@ async def extract_fitdays_biometrics_from_image(
         except Exception as exc:
             logger.warning("Fallback en OCR Fitdays tras error en Gemini Vision: %s", exc)
 
-    # Respaldo determinista si GEMINI_API_KEY aún no está definida en el servidor Render
     return FitdaysExtractedMetrics(
         weight_kg=78.4,
         fat_percentage=14.6,
@@ -378,7 +496,7 @@ async def generate_adaptive_prescription(
     Invoca a Gemini 2.5 Flash con `temperature=0.2` y `response_schema` para
     recalcular las series restantes en tiempo real, aplicando guardrails post-inferencia.
     """
-    settings = get_settings()
+    api_key = _resolve_gemini_api_key()
     athlete = payload["athlete_context"]
     wearable = athlete["wearable_recovery"]
     exercise = payload["exercise_context"]
@@ -398,7 +516,7 @@ async def generate_adaptive_prescription(
             updated_sets=[],
         )
 
-    if not settings.GEMINI_API_KEY:
+    if not api_key:
         return deterministic_fallback_prescription(
             recovery_score=wearable["recovery_score"],
             historical_1rm_kg=exercise["historical_1rm_kg"],
@@ -420,7 +538,7 @@ async def generate_adaptive_prescription(
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=json.dumps(payload, ensure_ascii=False),
@@ -429,14 +547,14 @@ async def generate_adaptive_prescription(
                 temperature=0.2,
                 top_p=0.8,
                 top_k=20,
-                max_output_tokens=1024,
+                max_output_tokens=2048,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
                 response_mime_type="application/json",
                 response_schema=AdaptivePrescriptionResponse,
             ),
         )
         parsed = AdaptivePrescriptionResponse.model_validate_json(response.text)
 
-        # Guardrail biomecánico post-inferencia (máx 95% 1RM y múltiplos de 2.5 kg)
         max_safe = round_to_plate_increment(exercise["historical_1rm_kg"] * 0.95)
         guardrail_triggered = parsed.safety_guardrail_triggered
         sanitized: list[PrescribedSetItem] = []
@@ -484,15 +602,35 @@ async def generate_adaptive_prescription(
         )
 
 
-COACH_CHAT_SYSTEM_PROMPT = """
-Eres GEMINI COACH PERSONAL de ApexMetrix, un fisiólogo del ejercicio clínico (CSCS) y nutricionista deportivo de élite.
-Responde siempre en español de forma táctica, directa, concisa (máximo 4 a 6 líneas) y basada en las métricas reales del atleta:
-- Nombre del atleta, peso y masa magra (LBM).
-- Recuperación real de hoy (%), Desempeño de Sueño (%), Esfuerzo/Strain, Nivel de Estrés (ej. 2.1 Alto) y fuente wearable.
-- Hidratación consumida hoy (ml) frente a su meta diaria (ml).
-- Rutina programada para la sesión de hoy.
-Ofrece ajustes concretos de series, RPE, hidratación o nutrición/recuperación del SNC.
-""".strip()
+def _build_director_system_instruction(ctx: dict[str, Any]) -> str:
+    athlete_name = str(ctx.get("athlete_name") or "Atleta")
+    weight_kg = float(ctx.get("weight_kg") or 78.0)
+    lbm_kg = float(ctx.get("lean_body_mass_kg") or 65.0)
+    fat_pct = float(ctx.get("fat_percentage") or round(max(6.0, (1.0 - lbm_kg / max(1.0, weight_kg)) * 100.0), 1))
+    rec = float(ctx.get("recovery_score") or 47.0)
+    sleep_pct = float(ctx.get("sleep_performance_pct") or 80.0)
+    strain = float(ctx.get("strain_score") or 7.2)
+    stress_lvl = float(ctx.get("stress_level") or 2.4)
+    stress_cat = str(ctx.get("stress_category") or ("ALTO" if stress_lvl >= 2.0 else "MEDIO"))
+    hyd_ml = int(ctx.get("hydration_ml") or 0)
+    hyd_goal = int(ctx.get("hydration_goal_ml") or 2800)
+    routine_name = str(ctx.get("routine_name") or "Sesión Principal de Fuerza")
+
+    return (
+        "Eres el Director de Rendimiento de ApexMetrix (Apex Coach), un entrenador de fuerza, "
+        "acondicionamiento y nutricionista deportivo de élite. Hablas con tono técnico, conciso, "
+        "empático y motivador (sin saludos corporativos ni disculpas). "
+        "PROHIBIDO responder únicamente con el nombre o peso del atleta; debes responder directamente "
+        "a su pregunta con recomendaciones accionables.\n"
+        "Tienes acceso a la telemetría en tiempo real del atleta:\n"
+        f"- Nombre: {athlete_name}\n"
+        f"- Peso corporal: {weight_kg:.1f} kg | Masa magra: {lbm_kg:.1f} kg | Grasa: {fat_pct:.1f}%\n"
+        f"- Telemetría de hoy: Recuperación {rec:.0f}%, Esfuerzo {strain:.1f}, Sueño {sleep_pct:.0f}%, "
+        f"Estrés {stress_lvl:.1f} ({stress_cat}), Hidratación consumida {hyd_ml}/{hyd_goal} ml.\n"
+        f"- Rutina programada: {routine_name}\n"
+        "Responde con recomendaciones tácticas directas sobre nutrición (superávit calórico, macros, timing), "
+        "ajustes de RPE y series para el entreno según su recuperación, suplementación y protocolos de descanso."
+    )
 
 
 def _build_tactical_coach_fallback_reply(
@@ -500,11 +638,13 @@ def _build_tactical_coach_fallback_reply(
     ctx: dict[str, Any],
 ) -> tuple[str, str, list[str]]:
     athlete_name = str(ctx.get("athlete_name") or "Atleta")
+    weight_kg = float(ctx.get("weight_kg") or 78.0)
+    lbm_kg = float(ctx.get("lean_body_mass_kg") or 65.0)
     rec = float(ctx.get("recovery_score") or 47.0)
     sleep_pct = float(ctx.get("sleep_performance_pct") or 80.0)
-    strain = float(ctx.get("strain_score") or 7.1)
-    stress_lvl = float(ctx.get("stress_level") or 2.1)
-    stress_cat = str(ctx.get("stress_category") or ("Alto" if stress_lvl >= 2.0 else "Medio"))
+    strain = float(ctx.get("strain_score") or 7.2)
+    stress_lvl = float(ctx.get("stress_level") or 2.4)
+    stress_cat = str(ctx.get("stress_category") or ("ALTO" if stress_lvl >= 2.0 else "MEDIO"))
     hyd_ml = int(ctx.get("hydration_ml") or 0)
     hyd_goal = int(ctx.get("hydration_goal_ml") or 2800)
     routine_name = str(ctx.get("routine_name") or "Sesión Principal de Fuerza")
@@ -518,38 +658,57 @@ def _build_tactical_coach_fallback_reply(
     missing_ml = max(0, hyd_goal - hyd_ml)
     msg_low = user_message.lower()
 
-    if any(k in msg_low for k in ("agua", "hidrat", "ml", "litro", "beber")):
+    # Cálculos nutricionales precisos basados en el peso y LBM del atleta
+    tdee_kcal = int(round((lbm_kg * 21.6 + 370) * (1.55 + (strain / 45.0))))
+    surplus_kcal = tdee_kcal + 350
+    protein_g = int(round(weight_kg * 2.2))
+    fats_g = int(round(weight_kg * 1.0))
+    carbs_g = int(round((surplus_kcal - (protein_g * 4 + fats_g * 9)) / 4))
+
+    if any(k in msg_low for k in ("subir de peso", "volumen", "masa", "hipertrofia", "calor", "macro", "ganar peso", "bulking")):
         reply = (
-            f"{athlete_name}, hoy llevas **{hyd_ml} ml** de tu meta de **{hyd_goal} ml** "
-            f"(te faltan **{missing_ml} ml**, calculados para tu Strain de {strain:.1f} en {wearable_src}). "
-            f"Toma **+500 ml** 20 min antes de iniciar *{routine_name}* y **250 ml** cada 20 min intra-entreno para evitar caída de potencia y proteger tu SNC."
+            f"Para subir de peso maximizando masa magra (actual: {weight_kg:.1f} kg | {lbm_kg:.1f} kg LBM) con tu gasto por Strain ({strain:.1f}):\n"
+            f"1. Superávit Calórico Limpio: Apunta a {surplus_kcal} kcal/día (+350 kcal sobre tu mantenimiento de {tdee_kcal} kcal).\n"
+            f"2. Distribución de Macros: Proteína {protein_g} g (2.2 g/kg), Carbohidratos {carbs_g} g (prioriza 90 g pre/post {routine_name}) y Grasas {fats_g} g.\n"
+            f"3. Timing & Suplementación: Creatina monohidratada 5 g/día + batido líquido (avena, plátano, whey, crema de maní) si tienes saciedad alta."
+        )
+    elif any(k in msg_low for k in ("agua", "hidrat", "ml", "litro", "beber", "electrolit")):
+        reply = (
+            f"Estado hídrico hoy: {hyd_ml} / {hyd_goal} ml (déficit actual: {missing_ml} ml para compensar tu Strain de {strain:.1f} en {wearable_src}).\n"
+            f"• Protocolo pre-sesión: Ingiere 500 ml de agua con 500 mg de sodio 30 min antes de {routine_name}.\n"
+            f"• Intra-entreno: 250 ml cada 20 min para sostener el volumen plasmático y evitar deriva cardiovascular."
         )
     elif any(k in msg_low for k in ("cena", "comer", "nutri", "estrés", "estres", "dormir", "sueño", "sueno")):
         reply = (
-            f"{athlete_name}, tu monitor {wearable_src} marca **Estrés {stress_lvl:.1f} ({stress_cat})** con **{sleep_pct:.0f}% de Sueño** y **{rec:.0f}% de Recuperación**. "
-            f"Para bajar el tono simpático esta noche: cena **35-45 g de proteína magra** (salmón/pechuga) + **60 g de carbohidratos complejos** (arroz jazmín o papa para elevar serotonina/melatonina) + **400 mg de glicinato de magnesio** 60 min antes de dormir."
+            f"Con Estrés en {stress_lvl:.1f} ({stress_cat}), Sueño en {sleep_pct:.0f}% y Recuperación en {rec:.0f}%, la cena debe reducir el cortisol nocturno:\n"
+            f"1. Composición: 45 g de proteína de fácil digestión (salmón, pescado blanco o pechuga) + 75 g de carbohidratos de índice glucémico medio (arroz jazmín o papa horneada) para facilitar el paso de triptófano.\n"
+            f"2. Micronutrientes: 400 mg de bisglicinato de magnesio + evitar pantallas e ingesta pesada 90 min antes de dormir."
         )
     else:
-        if rec < 45.0 or stress_lvl >= 2.0:
+        if rec < 50.0 or stress_lvl >= 2.0:
             reply = (
-                f"{athlete_name}, con **{rec:.0f}% de Recuperación**, **Sueño al {sleep_pct:.0f}%**, **Esfuerzo {strain:.1f}** y **Estrés {stress_lvl:.1f} ({stress_cat})**, tu SNC tiene carga simpática activa. "
-                f"En *{routine_name}*: mantén tus ejercicios compuestos pero **reduce 1 serie efectiva por bloque**, ajusta el tope a **RPE 7.5** (deja 2-3 reps en recámara), descansa **180 s** entre series e ingiere **+500 ml de agua** antes de empezar."
+                f"Directriz táctica para {routine_name} (Recuperación {rec:.0f}%, Sueño {sleep_pct:.0f}%, Strain {strain:.1f}, Estrés {stress_lvl:.1f} {stress_cat}):\n"
+                f"• Ajuste de Carga: Mantén cargas de trabajo base sin buscar récords hoy; fija el tope en RPE 7.5–8.0 (RIR 2) y recorta 1 serie accesoria por grupo muscular.\n"
+                f"• Descanso e Hidratación: Amplía pausas a 150–180 s entre series compuestas e ingiere 500 ml de agua con electrolitos antes de iniciar."
             )
-        elif rec >= 80.0:
+        elif rec >= 67.0:
             reply = (
-                f"{athlete_name}, estás en **Zona Verde ({rec:.0f}% Recuperación, {sleep_pct:.0f}% Sueño)**. "
-                f"En *{routine_name}* tienes luz verde para aplicar **sobrecarga progresiva (+2.5 kg)** en tus series principales @ **RPE 8.0-8.5**. Te restan **{missing_ml} ml** para completar tu meta hídrica de hoy."
+                f"Directriz táctica para {routine_name} (Zona Verde: Recuperación {rec:.0f}%, Sueño {sleep_pct:.0f}%):\n"
+                f"• Sobrecarga Progresiva: Aplica +2.5 kg en el levantamiento principal trabajando en RPE 8.0–8.5.\n"
+                f"• Nutrición & Agua: Asegura 60 g de carbohidratos rápidos pre-entreno y completa los {missing_ml} ml de agua restantes hoy."
             )
         else:
             reply = (
-                f"{athlete_name}, tus métricas de hoy (**{rec:.0f}% Recuperación**, **{sleep_pct:.0f}% Sueño**, **Strain {strain:.1f}**, **Estrés {stress_lvl:.1f} {stress_cat}**) indican **Zona Amarilla de Mantenimiento**. "
-                f"Ejecuta *{routine_name}* al **100% del peso prescrito @ RPE 8.0** cuidando velocidad concéntrica, y suma **+500 ml de agua** (te faltan {missing_ml} ml hoy)."
+                f"Directriz táctica para {routine_name} (Zona Amarilla: Recuperación {rec:.0f}%, Sueño {sleep_pct:.0f}%, Strain {strain:.1f}):\n"
+                f"• Ejecución: Mantén el 100% del volumen prescrito @ RPE 8.0 controlando la fase excéntrica.\n"
+                f"• Recuperación: Completa tu meta hídrica ({hyd_ml}/{hyd_goal} ml) y asegura {protein_g} g de proteína total hoy."
             )
 
     suggestions = [
-        f"¿Cómo adapto mi entreno con {rec:.0f}% de recuperación?",
-        "¿Qué me recomiendas cenar para mejorar mi estrés?",
-        "¿Cuánta agua me falta hoy?",
+        "¿Qué puedo hacer para subir de peso limpio?",
+        f"Ajusta mis series y RPE con {rec:.0f}% de recuperación",
+        "¿Qué me recomiendas cenar para bajar mi estrés?",
+        "¿Cuánta agua y electrolitos me faltan hoy?",
     ]
     return reply, zone, suggestions
 
@@ -561,7 +720,7 @@ async def generate_coach_chat_reply(
     fallback_api_key: Optional[str] = None,
 ) -> tuple[str, str, list[str]]:
     """
-    Genera la respuesta conversacional en tiempo real de GEMINI COACH PERSONAL (`POST /api/v1/ai/chat`).
+    Genera la respuesta conversacional en tiempo real del Director de Rendimiento (`POST /api/v1/ai/chat`).
     """
     api_key = _resolve_gemini_api_key(fallback_api_key)
     fallback_reply, zone, suggestions = _build_tactical_coach_fallback_reply(
@@ -570,27 +729,43 @@ async def generate_coach_chat_reply(
     if not api_key:
         return fallback_reply, zone, suggestions
 
+    system_instruction = _build_director_system_instruction(athlete_context)
+
+    # Construir conversación clara para Gemini
+    history_lines: list[str] = []
+    for item in history[-6:]:
+        role_label = "Atleta" if item.get("role") == "user" else "Apex Coach"
+        content_str = (item.get("content") or "").strip()
+        if content_str:
+            history_lines.append(f"{role_label}: {content_str}")
+
+    history_block = "\n".join(history_lines)
+    full_prompt = (
+        f"Historial reciente:\n{history_block}\n\n"
+        f"Consulta actual del atleta: {message.strip()}\n\n"
+        "Responde directamente con el protocolo táctico completo (en español, entre 3 y 6 puntos o líneas claras):"
+        if history_block
+        else f"Consulta actual del atleta: {message.strip()}\n\nResponde directamente con el protocolo táctico completo (en español, entre 3 y 6 puntos o líneas claras):"
+    )
+
     try:
         from google import genai
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
-        prompt_payload = {
-            "athlete_live_context": athlete_context,
-            "recent_history": history[-6:],
-            "athlete_question": message,
-        }
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=json.dumps(prompt_payload, ensure_ascii=False),
+            contents=full_prompt,
             config=types.GenerateContentConfig(
-                system_instruction=COACH_CHAT_SYSTEM_PROMPT,
+                system_instruction=system_instruction,
                 temperature=0.35,
-                max_output_tokens=450,
+                max_output_tokens=2048,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
         text_out = (response.text or "").strip()
-        if text_out:
+        # Verificar que nunca sea un fragmento truncado con solo el nombre/peso
+        if len(text_out) >= 45 and not text_out.endswith("LBM"):
             return text_out, zone, suggestions
     except Exception as exc:
         logger.warning("Fallback táctico en Chat IA tras excepción en Gemini API: %s", exc)

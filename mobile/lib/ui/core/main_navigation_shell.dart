@@ -33,10 +33,10 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   int _selectedIndex = 0;
   final List<AiCoachChatMessageModel> _chatHistory = <AiCoachChatMessageModel>[];
   List<String> _suggestedPrompts = const <String>[
-    '¿Debo entrenar pesado hoy con mi recuperación actual?',
+    '¿Qué puedo hacer para subir de peso limpio?',
     'Ajusta mis series y RPE para la rutina de hoy',
+    '¿Qué me recomiendas cenar para bajar mi estrés?',
     '¿Cuánta agua me falta antes de entrenar?',
-    '¿Cómo bajar mi estrés antes de iniciar?',
   ];
 
   @override
@@ -50,21 +50,26 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   Map<String, dynamic> _buildLiveAthleteContext() {
     final user = widget.authViewModel.currentUser;
     final wearable = widget.homeViewModel.wearable;
+    final biometrics = widget.homeViewModel.biometrics;
     final hydration = widget.homeViewModel.hydration;
     final routine = widget.workoutViewModel.selectedRoutine;
 
-    final double recovery = wearable?.recoveryScore ?? 62.0;
+    final double recovery = wearable?.recoveryScore ?? 47.0;
     final double sleepPct = wearable?.sleepEfficiencyPct ?? 80.0;
-    final double strain = wearable?.strainScore ?? 7.1;
-    final double stress = wearable?.whoopStressLevel ?? 2.1;
+    final double strain = wearable?.strainScore ?? 7.2;
+    final double stress = wearable?.whoopStressLevel ?? 2.4;
     final String stressCat =
-        stress >= 2.0 ? 'Alto' : (stress >= 1.0 ? 'Medio' : 'Bajo');
+        stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO');
 
     final String rawFullName = user?.fullName?.trim() ?? '';
     return <String, dynamic>{
       'athlete_name': rawFullName.isNotEmpty
           ? rawFullName
           : (user?.username ?? 'Atleta'),
+      'weight_kg': biometrics?.weightKg ?? 78.0,
+      'lean_body_mass_kg': biometrics?.leanBodyMassKg ?? 65.0,
+      'fat_percentage': biometrics?.fatPercentage ?? 14.8,
+      'wearable_source': widget.homeViewModel.preferredWearable,
       'recovery_score': recovery,
       'sleep_performance_pct': sleepPct,
       'strain_score': strain,
@@ -74,12 +79,13 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       'resting_hr': wearable?.restingHr ?? 62,
       'hydration_consumed_ml': hydration?.totalMl ?? 0,
       'hydration_goal_ml': hydration?.recommendedGoalMl ?? 2800,
-      'scheduled_routine_name':
-          routine != null ? '${routine.name} (${routine.focusGroup})' : 'Sesión de Fuerza Programada',
+      'scheduled_routine_name': routine != null
+          ? '${routine.name} (${routine.focusGroup})'
+          : 'Sesión de Fuerza Programada',
     };
   }
 
-  void _openGeminiCoachModal(BuildContext context) {
+  void _openTacticalCenterModal(BuildContext context) {
     final FitnessRepository repository = context.read<FitnessRepository>();
     final Map<String, dynamic> initialContext = _buildLiveAthleteContext();
 
@@ -100,11 +106,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         AiCoachChatMessageModel(
           role: 'assistant',
           content:
-              'Hola $name. Tengo sincronizada tu telemetría en vivo:\n'
+              'Atleta: $name • Telemetría activa:\n'
               '• Recuperación: ${rec.round()}% | Sueño: ${sleep.round()}%\n'
               '• Esfuerzo (Strain): ${strain.toStringAsFixed(1)} | Estrés: ${stress.toStringAsFixed(1)} ($stressCat)\n'
               '• Hidratación: $hyd / $hydGoal ml | Rutina: $routineName\n\n'
-              '¿Qué ajuste táctico de cargas, RPE, series o recuperación necesitas ahora?',
+              'Solicita ajustes de RPE, cargas, superávit nutricional o protocolo de descanso.',
           timestamp: DateTime.now(),
         ),
       );
@@ -115,7 +121,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext sheetContext) {
-        return _GeminiCoachBottomSheet(
+        return _TacticalCenterBottomSheet(
           repository: repository,
           chatHistory: _chatHistory,
           initialSuggestedPrompts: _suggestedPrompts,
@@ -149,95 +155,93 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'gemini_coach_personal_fab',
-        backgroundColor: ApexTheme.cardGraphite,
-        foregroundColor: ApexTheme.voltAccent,
-        elevation: 8,
+        heroTag: 'tactical_center_fab',
+        backgroundColor: ApexTheme.secondarySurface,
+        foregroundColor: ApexTheme.textPrimary,
+        elevation: 0,
+        highlightElevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
-          side: const BorderSide(color: ApexTheme.voltAccent, width: 1.5),
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: ApexTheme.secondaryBorder, width: 1.0),
         ),
-        onPressed: () => _openGeminiCoachModal(context),
-        icon: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            const Icon(
-              Icons.auto_awesome_rounded,
-              color: ApexTheme.voltAccent,
-              size: 20,
-            ),
-            Positioned(
-              right: -2,
-              top: -2,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: ApexTheme.cyanElectric,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-          ],
+        onPressed: () => _openTacticalCenterModal(context),
+        icon: const Icon(
+          Icons.tune_rounded,
+          color: ApexTheme.textPrimary,
+          size: 18,
         ),
         label: const Text(
-          'GEMINI COACH',
+          'CENTRO TÁCTICO',
           style: TextStyle(
             fontSize: 11,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.5,
-            color: ApexTheme.voltAccent,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
+            color: ApexTheme.textPrimary,
           ),
         ),
       ),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: ApexTheme.cardGraphite,
-        indicatorColor: ApexTheme.voltAccent.withValues(alpha: 0.22),
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (int idx) {
-          setState(() {
-            _selectedIndex = idx;
-          });
-        },
-        destinations: const <NavigationDestination>[
-          NavigationDestination(
-            icon: Icon(Icons.insights_outlined),
-            selectedIcon: Icon(
-              Icons.insights_rounded,
-              color: ApexTheme.voltAccent,
-            ),
-            label: 'Readiness',
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          border: Border(
+            top: BorderSide(color: ApexTheme.cardBorder, width: 1.0),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.fitness_center_outlined),
-            selectedIcon: Icon(
-              Icons.fitness_center_rounded,
-              color: ApexTheme.voltAccent,
+        ),
+        child: NavigationBar(
+          backgroundColor: ApexTheme.cardGraphite,
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: ApexTheme.secondarySurface,
+          selectedIndex: _selectedIndex,
+          onDestinationSelected: (int idx) {
+            setState(() {
+              _selectedIndex = idx;
+            });
+          },
+          destinations: const <NavigationDestination>[
+            NavigationDestination(
+              icon: Icon(Icons.insights_outlined, color: ApexTheme.textMuted),
+              selectedIcon: Icon(
+                Icons.insights_rounded,
+                color: ApexTheme.textPrimary,
+              ),
+              label: 'Readiness',
             ),
-            label: 'Entreno Vivo',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.emoji_events_outlined),
-            selectedIcon: Icon(
-              Icons.emoji_events_rounded,
-              color: ApexTheme.voltAccent,
+            NavigationDestination(
+              icon: Icon(
+                Icons.fitness_center_outlined,
+                color: ApexTheme.textMuted,
+              ),
+              selectedIcon: Icon(
+                Icons.fitness_center_rounded,
+                color: ApexTheme.textPrimary,
+              ),
+              label: 'Entreno Vivo',
             ),
-            label: 'Arena ELO',
-          ),
-        ],
+            NavigationDestination(
+              icon: Icon(
+                Icons.emoji_events_outlined,
+                color: ApexTheme.textMuted,
+              ),
+              selectedIcon: Icon(
+                Icons.emoji_events_rounded,
+                color: ApexTheme.textPrimary,
+              ),
+              label: 'Arena ELO',
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _GeminiCoachBottomSheet extends StatefulWidget {
+class _TacticalCenterBottomSheet extends StatefulWidget {
   final FitnessRepository repository;
   final List<AiCoachChatMessageModel> chatHistory;
   final List<String> initialSuggestedPrompts;
   final Map<String, dynamic> Function() contextBuilder;
   final ValueChanged<List<String>> onPromptsUpdated;
 
-  const _GeminiCoachBottomSheet({
+  const _TacticalCenterBottomSheet({
     required this.repository,
     required this.chatHistory,
     required this.initialSuggestedPrompts,
@@ -246,11 +250,12 @@ class _GeminiCoachBottomSheet extends StatefulWidget {
   });
 
   @override
-  State<_GeminiCoachBottomSheet> createState() =>
-      _GeminiCoachBottomSheetState();
+  State<_TacticalCenterBottomSheet> createState() =>
+      _TacticalCenterBottomSheetState();
 }
 
-class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
+class _TacticalCenterBottomSheetState
+    extends State<_TacticalCenterBottomSheet> {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isSending = false;
@@ -274,7 +279,7 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
     if (!_scrollController.hasClients) return;
     _scrollController.animateTo(
       _scrollController.position.maxScrollExtent + 120,
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
     );
   }
@@ -321,14 +326,14 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
         _isSending = false;
       });
       _scrollToBottom();
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         widget.chatHistory.add(
           AiCoachChatMessageModel(
             role: 'assistant',
             content:
-                'Tuve un inconveniente de red al consultar el servidor, pero según tu telemetría actual mantén el RPE en 8.0 y prioriza hidratación con electrolitos.',
+                'Mantén las cargas prescritas en RPE 8.0, asegura superávit proteico (2.2 g/kg) y completa tu meta de hidratación.',
             timestamp: DateTime.now(),
           ),
         );
@@ -347,9 +352,7 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
     final double stress = (ctx['stress_level'] as num).toDouble();
     final int hyd = (ctx['hydration_consumed_ml'] as num).toInt();
     final int hydGoal = (ctx['hydration_goal_ml'] as num).toInt();
-    final Color recColor = rec >= 67.0
-        ? ApexTheme.readinessGreen
-        : (rec >= 34.0 ? ApexTheme.warningAmber : ApexTheme.deloadCrimson);
+    final Color recColor = ApexTheme.readinessColor(rec);
 
     final double bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
@@ -365,49 +368,54 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
             decoration: BoxDecoration(
               color: ApexTheme.obsidianBg,
               borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(24),
+                top: Radius.circular(14),
               ),
               border: Border.all(
-                color: ApexTheme.voltAccent.withValues(alpha: 0.55),
-                width: 1.3,
+                color: ApexTheme.cardBorder,
+                width: 1.0,
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                // Barra superior y título GEMINI COACH PERSONAL
+                // Cabecera Técnica Pitwall
                 Container(
                   padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
                   decoration: const BoxDecoration(
                     color: ApexTheme.cardGraphite,
                     borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(23),
+                      top: Radius.circular(13),
+                    ),
+                    border: Border(
+                      bottom: BorderSide(color: ApexTheme.cardBorder, width: 1),
                     ),
                   ),
                   child: Column(
                     children: <Widget>[
                       Container(
-                        width: 42,
-                        height: 4,
+                        width: 38,
+                        height: 3,
                         decoration: BoxDecoration(
-                          color: ApexTheme.textMuted.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(999),
+                          color: ApexTheme.secondaryBorder,
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
                       const SizedBox(height: 10),
                       Row(
                         children: <Widget>[
                           Container(
-                            padding: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.all(7),
                             decoration: BoxDecoration(
-                              color: ApexTheme.voltAccent.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: ApexTheme.voltAccent),
+                              color: ApexTheme.secondarySurface,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: ApexTheme.secondaryBorder,
+                              ),
                             ),
                             child: const Icon(
-                              Icons.auto_awesome_rounded,
-                              color: ApexTheme.voltAccent,
-                              size: 18,
+                              Icons.tune_rounded,
+                              color: ApexTheme.textPrimary,
+                              size: 17,
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -416,18 +424,18 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: <Widget>[
                                 Text(
-                                  'GEMINI COACH PERSONAL',
+                                  'CENTRO TÁCTICO • DIRECTOR DE RENDIMIENTO',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    fontSize: 13.5,
-                                    fontWeight: FontWeight.w900,
-                                    color: ApexTheme.voltAccent,
-                                    letterSpacing: 0.6,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: ApexTheme.textPrimary,
+                                    letterSpacing: 0.5,
                                   ),
                                 ),
                                 Text(
-                                  'IA Táctica conectada a tu WHOOP, Hidratación y Rutina en vivo',
+                                  'Telemetría fisiológica, prescripción de cargas y nutrición deportiva',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -443,38 +451,38 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                             icon: const Icon(
                               Icons.close_rounded,
                               color: ApexTheme.textMuted,
+                              size: 20,
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 8),
-                      // Cinta de contexto biométrico en vivo
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
                           spacing: 6,
                           children: <Widget>[
-                            _ContextBadge(
-                              label: 'Rec ${rec.round()}%',
+                            _PitwallBadge(
+                              label: 'REC ${rec.round()}%',
                               color: recColor,
                             ),
-                            _ContextBadge(
-                              label: 'Sueño ${sleep.round()}%',
-                              color: const Color(0xFF75A8D3),
+                            _PitwallBadge(
+                              label: 'SUEÑO ${sleep.round()}%',
+                              color: ApexTheme.textPrimary,
                             ),
-                            _ContextBadge(
-                              label: 'Strain ${strain.toStringAsFixed(1)}',
-                              color: ApexTheme.cyanElectric,
+                            _PitwallBadge(
+                              label: 'STRAIN ${strain.toStringAsFixed(1)}',
+                              color: ApexTheme.warningAmber,
                             ),
-                            _ContextBadge(
-                              label: 'Estrés ${stress.toStringAsFixed(1)}',
+                            _PitwallBadge(
+                              label: 'ESTRÉS ${stress.toStringAsFixed(1)}',
                               color: stress >= 2.0
-                                  ? ApexTheme.warningAmber
+                                  ? ApexTheme.deloadCrimson
                                   : ApexTheme.readinessGreen,
                             ),
-                            _ContextBadge(
-                              label: 'Agua $hyd/$hydGoal ml',
-                              color: ApexTheme.cyanElectric,
+                            _PitwallBadge(
+                              label: 'AGUA $hyd/$hydGoal ML',
+                              color: ApexTheme.textMuted,
                             ),
                           ],
                         ),
@@ -483,7 +491,7 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                   ),
                 ),
 
-                // Lista de mensajes del chat
+                // Hilo de conversación técnica
                 Expanded(
                   child: ListView.builder(
                     controller: _scrollController,
@@ -499,20 +507,19 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                           child: Row(
                             children: <Widget>[
                               SizedBox(
-                                width: 16,
-                                height: 16,
+                                width: 14,
+                                height: 14,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: ApexTheme.voltAccent,
+                                  color: ApexTheme.textPrimary,
                                 ),
                               ),
                               SizedBox(width: 10),
                               Text(
-                                'Gemini Coach analizando biometría en tiempo real...',
+                                'Procesando telemetría y cálculo fisiológico...',
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   color: ApexTheme.textMuted,
-                                  fontStyle: FontStyle.italic,
                                 ),
                               ),
                             ],
@@ -531,7 +538,7 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                         child: Container(
                           margin: const EdgeInsets.only(bottom: 10),
                           constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.82,
+                            maxWidth: MediaQuery.of(context).size.width * 0.84,
                           ),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 13,
@@ -539,25 +546,21 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                           ),
                           decoration: BoxDecoration(
                             color: isUser
-                                ? ApexTheme.voltAccent.withValues(alpha: 0.18)
+                                ? ApexTheme.secondarySurface
                                 : ApexTheme.cardGraphite,
-                            borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(14),
-                              topRight: const Radius.circular(14),
-                              bottomLeft: Radius.circular(isUser ? 14 : 4),
-                              bottomRight: Radius.circular(isUser ? 4 : 14),
-                            ),
+                            borderRadius: BorderRadius.circular(8),
                             border: Border.all(
                               color: isUser
-                                  ? ApexTheme.voltAccent.withValues(alpha: 0.7)
-                                  : ApexTheme.cyanElectric.withValues(alpha: 0.35),
+                                  ? ApexTheme.secondaryBorder
+                                  : ApexTheme.cardBorder,
+                              width: 1.0,
                             ),
                           ),
                           child: Text(
                             msg.content,
                             style: const TextStyle(
                               fontSize: 12.5,
-                              height: 1.38,
+                              height: 1.4,
                               color: ApexTheme.textPrimary,
                             ),
                           ),
@@ -567,9 +570,9 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                   ),
                 ),
 
-                // Chips de preguntas rápidas
+                // Consultas tácticas rápidas
                 Container(
-                  height: 36,
+                  height: 34,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
@@ -578,16 +581,19 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                     itemBuilder: (BuildContext context, int i) {
                       final String prompt = _prompts[i];
                       return ActionChip(
-                        backgroundColor: ApexTheme.cardGraphite,
-                        side: BorderSide(
-                          color: ApexTheme.cyanElectric.withValues(alpha: 0.45),
+                        backgroundColor: ApexTheme.secondarySurface,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          side: const BorderSide(
+                            color: ApexTheme.secondaryBorder,
+                          ),
                         ),
                         label: Text(
                           prompt,
                           style: const TextStyle(
                             fontSize: 10.5,
-                            fontWeight: FontWeight.w700,
-                            color: ApexTheme.cyanElectric,
+                            fontWeight: FontWeight.w600,
+                            color: ApexTheme.textPrimary,
                           ),
                         ),
                         onPressed:
@@ -598,13 +604,16 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                 ),
                 const SizedBox(height: 8),
 
-                // Caja de texto e envío
-                 SafeArea(
+                // Input de comando
+                SafeArea(
                   top: false,
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
                     decoration: const BoxDecoration(
                       color: ApexTheme.cardGraphite,
+                      border: Border(
+                        top: BorderSide(color: ApexTheme.cardBorder, width: 1),
+                      ),
                     ),
                     child: Row(
                       children: <Widget>[
@@ -616,35 +625,54 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
                             style: const TextStyle(fontSize: 13),
                             decoration: InputDecoration(
                               hintText:
-                                  'Pregúntale a Gemini Coach sobre tu rutina o recuperación...',
+                                  'Consulta ajustes de RPE, macros o recuperación...',
                               hintStyle: const TextStyle(
                                 fontSize: 11.5,
                                 color: ApexTheme.textMuted,
                               ),
                               isDense: true,
                               contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 11,
+                                horizontal: 12,
+                                vertical: 10,
                               ),
                               filled: true,
                               fillColor: ApexTheme.obsidianBg,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(999),
-                                borderSide: BorderSide.none,
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: ApexTheme.cardBorder,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: ApexTheme.voltAccent,
+                                ),
                               ),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        IconButton.filled(
-                          style: IconButton.styleFrom(
-                            backgroundColor: ApexTheme.voltAccent,
-                            foregroundColor: Colors.black,
+                        SizedBox(
+                          height: 38,
+                          width: 42,
+                          child: FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: ApexTheme.voltAccent,
+                              foregroundColor: ApexTheme.obsidianBg,
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: _isSending
+                                ? null
+                                : () => _sendMessage(_inputController.text),
+                            child: const Icon(
+                              Icons.arrow_upward_rounded,
+                              size: 18,
+                            ),
                           ),
-                          onPressed: _isSending
-                              ? null
-                              : () => _sendMessage(_inputController.text),
-                          icon: const Icon(Icons.send_rounded, size: 18),
                         ),
                       ],
                     ),
@@ -659,11 +687,11 @@ class _GeminiCoachBottomSheetState extends State<_GeminiCoachBottomSheet> {
   }
 }
 
-class _ContextBadge extends StatelessWidget {
+class _PitwallBadge extends StatelessWidget {
   final String label;
   final Color color;
 
-  const _ContextBadge({
+  const _PitwallBadge({
     required this.label,
     required this.color,
   });
@@ -673,16 +701,17 @@ class _ContextBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.65)),
+        color: ApexTheme.obsidianBg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: ApexTheme.secondaryBorder),
       ),
       child: Text(
         label,
         style: TextStyle(
           fontSize: 10,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
           color: color,
+          letterSpacing: 0.3,
         ),
       ),
     );

@@ -106,19 +106,29 @@ class HydrationTodayResponse(BaseModel):
 
 
 class WhoopScreenExtractedMetrics(BaseModel):
+    sleep_pct: float = Field(default=80.0, ge=0.0, le=100.0)
     sleep_performance_pct: float = Field(default=80.0, ge=0.0, le=100.0)
     recovery_score: float = Field(default=47.0, ge=0.0, le=100.0)
-    strain_score: float = Field(default=7.1, ge=0.0, le=21.0)
-    stress_level: float = Field(default=2.1, ge=0.0, le=3.0)
-    stress_category: str = Field(default="Alto")
+    strain_score: float = Field(default=7.2, ge=0.0, le=21.0)
+    stress_level: float = Field(default=2.4, ge=0.0, le=3.0)
+    stress_category: str = Field(default="ALTO")
     resting_hr: int = Field(default=58, ge=25, le=140)
     hrv_ms: float = Field(default=64.0, ge=5.0, le=300.0)
+    trusleep_score: int = Field(default=84, ge=0, le=100)
+    stress_score: int = Field(default=42, ge=0, le=100)
+    avg_heart_rate: int = Field(default=68, ge=30, le=220)
+    vo2max: float = Field(default=52.0, ge=15.0, le=95.0)
+    energy_score: int = Field(default=78, ge=0, le=100)
+    sleep_duration_hours: float = Field(default=7.2, ge=0.0, le=24.0)
+    bia_muscle_pct: float = Field(default=43.8, ge=10.0, le=75.0)
+    bia_fat_pct: float = Field(default=13.8, ge=2.0, le=70.0)
 
 
 class WhoopScreenScanResponse(BaseModel):
     id: UUID
     user_id: UUID
     date: date
+    sleep_pct: float
     sleep_performance_pct: float
     recovery_score: float
     strain_score: float
@@ -132,6 +142,12 @@ class WhoopScreenScanResponse(BaseModel):
     max_hr: int
     sleep_hours: float
     sleep_efficiency_pct: float
+    huawei_trusleep_score: int = 84
+    huawei_stress_score: int = 42
+    huawei_vo2_max: float = 52.0
+    samsung_energy_score: int = 78
+    samsung_bia_muscle_pct: float = 43.8
+    samsung_bia_fat_pct: float = 13.8
     source_device: WearableSource = WearableSource.WHOOP
     synced_at: datetime
 
@@ -142,9 +158,20 @@ class AiCoachChatMessageItem(BaseModel):
 
 
 class AiCoachChatRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     message: str = Field(..., min_length=1, max_length=2000)
     history: list[AiCoachChatMessageItem] = Field(default_factory=list)
     athlete_context: Optional[dict] = None
+    athlete_name: Optional[str] = None
+    recovery_score: Optional[float] = None
+    sleep_performance_pct: Optional[float] = None
+    strain_score: Optional[float] = None
+    stress_level: Optional[float] = None
+    stress_category: Optional[str] = None
+    hydration_consumed_ml: Optional[int] = None
+    hydration_goal_ml: Optional[int] = None
+    scheduled_routine_name: Optional[str] = None
 
 
 class AiCoachChatResponse(BaseModel):

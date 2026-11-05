@@ -8,7 +8,7 @@ import '../../auth/view_models/auth_view_model.dart';
 import '../../auth/views/profile_setup_screen.dart';
 import '../view_models/home_view_model.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final HomeViewModel viewModel;
   final AuthViewModel authViewModel;
 
@@ -18,6 +18,14 @@ class HomeScreen extends StatelessWidget {
     required this.authViewModel,
   });
 
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  HomeViewModel get viewModel => widget.viewModel;
+  AuthViewModel get authViewModel => widget.authViewModel;
+
   String _normalizedWearableSource(String raw) {
     if (raw == 'SAMSUNG_HEALTH' || raw == 'SAMSUNG_WATCH') {
       return 'SAMSUNG_WATCH';
@@ -25,7 +33,7 @@ class HomeScreen extends StatelessWidget {
     if (raw == 'APPLE_WATCH') {
       return 'APPLE_WATCH';
     }
-    if (raw == 'HUAWEI_GT') {
+    if (raw == 'HUAWEI_GT' || raw == 'HUAWEI') {
       return 'HUAWEI_GT';
     }
     return 'WHOOP';
@@ -42,6 +50,20 @@ class HomeScreen extends StatelessWidget {
       case 'WHOOP':
       default:
         return 'REGISTRAR MÉTRICAS WHOOP';
+    }
+  }
+
+  String _wearableScanButtonText(String source) {
+    switch (_normalizedWearableSource(source)) {
+      case 'HUAWEI_GT':
+        return 'ESCANEAR CAPTURA HUAWEI';
+      case 'SAMSUNG_WATCH':
+        return 'ESCANEAR CAPTURA SAMSUNG';
+      case 'APPLE_WATCH':
+        return 'ESCANEAR CAPTURA APPLE WATCH';
+      case 'WHOOP':
+      default:
+        return 'ESCANEAR CAPTURA DE WHOOP';
     }
   }
 
@@ -553,28 +575,28 @@ class HomeScreen extends StatelessWidget {
         (w.recoveryScore < 40.0 || w.sleepEfficiencyPct < 70.0);
     final Color accent = isRed
         ? ApexTheme.deloadCrimson
-        : (w != null && w.recoveryScore >= 80.0
+        : (w != null && w.recoveryScore >= 67.0
             ? ApexTheme.readinessGreen
-            : ApexTheme.voltAccent);
+            : ApexTheme.warningAmber);
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent.withValues(alpha: 0.7)),
+        color: ApexTheme.cardGraphite,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: ApexTheme.borderGraphite),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Icon(Icons.auto_awesome_rounded, color: accent, size: 19),
+          Icon(Icons.tune_rounded, color: accent, size: 19),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  'GEMINI AI FIT COACH • PERFIL BIOMÉTRICO INTEGRAL',
+                  'DIRECTOR DE RENDIMIENTO • TELEMETRÍA INTEGRAL',
                   style: TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w900,
@@ -649,9 +671,12 @@ class HomeScreen extends StatelessWidget {
                     child: Text('APPLE WATCH'),
                   ),
                 ],
-                onChanged: (String? val) {
+                onChanged: (String? val) async {
                   if (val != null) {
-                    viewModel.setPreferredWearableSource(val);
+                    await viewModel.setPreferredWearableSource(val);
+                    if (mounted) {
+                      setState(() {});
+                    }
                   }
                 },
               ),
@@ -668,11 +693,12 @@ class HomeScreen extends StatelessWidget {
   ) {
     final String brand = _wearableBrandTitle(activeSource);
     final String registerBtnText = _wearableRegisterButtonText(activeSource);
+    final String scanBtnText = _wearableScanButtonText(activeSource);
 
     return Card(
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: ApexTheme.cyanElectric, width: 1.2),
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: ApexTheme.borderGraphite, width: 1.0),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -680,8 +706,8 @@ class HomeScreen extends StatelessWidget {
           children: <Widget>[
             const Icon(
               Icons.sync_problem_rounded,
-              color: ApexTheme.cyanElectric,
-              size: 32,
+              color: ApexTheme.textMuted,
+              size: 30,
             ),
             const SizedBox(height: 6),
             Text(
@@ -695,7 +721,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Sincroniza Health Connect o usa "$registerBtnText" para activar la prescripción adaptativa de Gemini Coach.',
+              'Sincroniza Health Connect o usa "$scanBtnText" para activar la prescripción adaptativa del Director de Rendimiento.',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 11.5,
@@ -704,64 +730,79 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            if (activeSource == 'WHOOP') ...<Widget>[
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: ApexTheme.voltAccent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 11),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: ApexTheme.voltAccent,
+                  foregroundColor: ApexTheme.obsidianBg,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  onPressed: viewModel.isScanningWhoop
-                      ? null
-                      : () => _openWhoopScreenshotSourcePicker(context),
-                  icon: viewModel.isScanningWhoop
-                      ? const SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.black,
-                          ),
-                        )
-                      : const Icon(Icons.document_scanner_rounded, size: 17),
-                  label: Text(
-                    viewModel.isScanningWhoop
-                        ? 'ANALIZANDO CAPTURA WHOOP...'
-                        : 'ESCANEAR CAPTURA DE WHOOP',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 11.5,
-                    ),
+                ),
+                onPressed: viewModel.isScanningWhoop
+                    ? null
+                    : () => _openWhoopScreenshotSourcePicker(
+                          context,
+                          activeSource,
+                        ),
+                icon: viewModel.isScanningWhoop
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.black,
+                        ),
+                      )
+                    : const Icon(Icons.document_scanner_rounded, size: 17),
+                label: Text(
+                  viewModel.isScanningWhoop
+                      ? 'ANALIZANDO CAPTURA $brand...'
+                      : scanBtnText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11.5,
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-            ],
+            ),
+            const SizedBox(height: 8),
             Row(
               spacing: 8,
               children: <Widget>[
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: ApexTheme.voltAccent,
-                      side: const BorderSide(color: ApexTheme.voltAccent),
+                      backgroundColor: ApexTheme.buttonSecondaryBg,
+                      foregroundColor: ApexTheme.textPrimary,
+                      side: const BorderSide(
+                        color: ApexTheme.buttonSecondaryBorder,
+                      ),
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                     onPressed: viewModel.isSyncingWearable
                         ? null
-                        : viewModel.forceSyncWearable,
+                        : () async {
+                            await viewModel.forceSyncWearable();
+                            if (mounted) {
+                              setState(() {});
+                            }
+                          },
                     icon: viewModel.isSyncingWearable
                         ? const SizedBox(
                             width: 14,
                             height: 14,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: ApexTheme.voltAccent,
+                              color: ApexTheme.textPrimary,
                             ),
                           )
                         : const Icon(Icons.sync_rounded, size: 16),
@@ -770,7 +811,7 @@ class HomeScreen extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                         fontSize: 11,
                       ),
                     ),
@@ -779,20 +820,26 @@ class HomeScreen extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: ApexTheme.cyanElectric,
-                      side: const BorderSide(color: ApexTheme.cyanElectric),
+                      backgroundColor: ApexTheme.buttonSecondaryBg,
+                      foregroundColor: ApexTheme.textPrimary,
+                      side: const BorderSide(
+                        color: ApexTheme.buttonSecondaryBorder,
+                      ),
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                     onPressed: () =>
                         _openWearableManualSyncModal(context, activeSource),
-                    icon: const Icon(Icons.bolt_rounded, size: 15),
+                    icon: const Icon(Icons.tune_rounded, size: 15),
                     label: Text(
                       registerBtnText,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                         fontSize: 10.5,
                       ),
                     ),
@@ -1080,26 +1127,26 @@ class HomeScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            // Racional Cognitivo de Gemini Coach
+            // Racional Cognitivo del Director de Rendimiento
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 color: ApexTheme.obsidianBg,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: isCompromised
                       ? ApexTheme.deloadCrimson.withValues(alpha: 0.6)
-                      : ApexTheme.cyanElectric.withValues(alpha: 0.4),
+                      : ApexTheme.borderGraphite,
                 ),
               ),
               child: Row(
                 children: <Widget>[
                   Icon(
-                    Icons.auto_awesome_rounded,
+                    Icons.tune_rounded,
                     size: 16,
                     color: isCompromised
                         ? ApexTheme.deloadCrimson
-                        : ApexTheme.cyanElectric,
+                        : ApexTheme.textPrimary,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -1416,45 +1463,48 @@ class HomeScreen extends StatelessWidget {
     String activeSource,
   ) {
     final String registerBtnText = _wearableRegisterButtonText(activeSource);
+    final String scanBtnText = _wearableScanButtonText(activeSource);
+    final String brand = _wearableBrandTitle(activeSource);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        if (activeSource == 'WHOOP') ...<Widget>[
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: ApexTheme.voltAccent,
-              foregroundColor: Colors.black,
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-            ),
-            onPressed: viewModel.isScanningWhoop
-                ? null
-                : () => _openWhoopScreenshotSourcePicker(context),
-            icon: viewModel.isScanningWhoop
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.black,
-                    ),
-                  )
-                : const Icon(Icons.document_scanner_rounded, size: 16),
-            label: Text(
-              viewModel.isScanningWhoop
-                  ? 'ANALIZANDO CAPTURA DE WHOOP...'
-                  : 'ESCANEAR CAPTURA DE WHOOP',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.3,
-              ),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: ApexTheme.voltAccent,
+            foregroundColor: ApexTheme.obsidianBg,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
             ),
           ),
-          const SizedBox(height: 6),
-        ],
+          onPressed: viewModel.isScanningWhoop
+              ? null
+              : () => _openWhoopScreenshotSourcePicker(context, activeSource),
+          icon: viewModel.isScanningWhoop
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.black,
+                  ),
+                )
+              : const Icon(Icons.document_scanner_rounded, size: 16),
+          label: Text(
+            viewModel.isScanningWhoop
+                ? 'ANALIZANDO CAPTURA $brand...'
+                : scanBtnText,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
         Wrap(
           spacing: 8,
           runSpacing: 6,
@@ -1465,24 +1515,37 @@ class HomeScreen extends StatelessWidget {
               style: OutlinedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
-                foregroundColor: ApexTheme.voltAccent,
-                side: const BorderSide(color: ApexTheme.voltAccent),
+                backgroundColor: ApexTheme.buttonSecondaryBg,
+                foregroundColor: ApexTheme.textPrimary,
+                side: const BorderSide(color: ApexTheme.buttonSecondaryBorder),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               onPressed: viewModel.isSyncingWearable
                   ? null
-                  : viewModel.forceSyncWearable,
+                  : () async {
+                      await viewModel.forceSyncWearable();
+                      if (mounted) {
+                        setState(() {});
+                      }
+                    },
               icon: const Icon(Icons.sync_rounded, size: 14),
               label: const Text(
                 'FORZAR SYNC',
-                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
+                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700),
               ),
             ),
-            FilledButton.tonalIcon(
-              style: FilledButton.styleFrom(
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                backgroundColor: ApexTheme.cyanElectric.withValues(alpha: 0.16),
-                foregroundColor: ApexTheme.cyanElectric,
+                backgroundColor: ApexTheme.buttonSecondaryBg,
+                foregroundColor: ApexTheme.textPrimary,
+                side: const BorderSide(color: ApexTheme.buttonSecondaryBorder),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               onPressed: () =>
                   _openWearableManualSyncModal(context, activeSource),
@@ -1491,7 +1554,7 @@ class HomeScreen extends StatelessWidget {
                 registerBtnText,
                 style: const TextStyle(
                   fontSize: 10.5,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -1501,12 +1564,25 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  void _openWhoopScreenshotSourcePicker(BuildContext context) {
+  void _openWhoopScreenshotSourcePicker(
+    BuildContext context, [
+    String? sourceOverride,
+  ]) {
+    final String activeSource = _normalizedWearableSource(
+      sourceOverride ?? viewModel.preferredWearable,
+    );
+    final String brand = _wearableBrandTitle(activeSource);
+    final String description = activeSource == 'HUAWEI_GT'
+        ? 'Sube tu captura de pantalla de Huawei Health y Gemini Vision extraerá TruSleep, Nivel de Estrés (0-100), FC Media y VO2Max.'
+        : (activeSource == 'SAMSUNG_WATCH'
+            ? 'Sube tu captura de Samsung Health y Gemini Vision extraerá Energy Score, Tiempo de Sueño y Composición Corporal BIA.'
+            : 'Sube tu captura de pantalla de WHOOP y Gemini Vision extraerá automáticamente Sueño %, Recuperación %, Esfuerzo (Strain) y Nivel de Estrés.');
+
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: ApexTheme.cardGraphite,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (BuildContext sheetContext) {
         return SafeArea(
@@ -1516,18 +1592,18 @@ class HomeScreen extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Text(
-                  'ESCANEAR CAPTURA OFICIAL DE WHOOP',
-                  style: TextStyle(
+                Text(
+                  'ESCANEAR CAPTURA DE $brand',
+                  style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w900,
-                    color: ApexTheme.voltAccent,
+                    color: ApexTheme.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Sube tu captura de pantalla de WHOOP y Gemini Vision extraerá automáticamente Sueño %, Recuperación %, Esfuerzo (Strain) y Nivel de Estrés.',
-                  style: TextStyle(
+                Text(
+                  description,
+                  style: const TextStyle(
                     fontSize: 11.5,
                     color: ApexTheme.textMuted,
                     height: 1.3,
@@ -1537,25 +1613,34 @@ class HomeScreen extends StatelessWidget {
                 ListTile(
                   leading: const Icon(
                     Icons.photo_library_rounded,
-                    color: ApexTheme.voltAccent,
+                    color: ApexTheme.textPrimary,
                   ),
                   title: const Text(
                     'Seleccionar captura desde Galería',
                     style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
                   ),
-                  subtitle: const Text(
-                    'Recomendado para screenshots de la app de WHOOP',
-                    style: TextStyle(fontSize: 11, color: ApexTheme.textMuted),
+                  subtitle: Text(
+                    'Recomendado para screenshots de $brand',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: ApexTheme.textMuted,
+                    ),
                   ),
                   onTap: () async {
                     Navigator.of(sheetContext).pop();
-                    await viewModel.scanWhoopScreenshot(ImageSource.gallery);
+                    await viewModel.scanWhoopScreenshot(
+                      ImageSource.gallery,
+                      sourceDevice: activeSource,
+                    );
+                    if (mounted) {
+                      setState(() {});
+                    }
                   },
                 ),
                 ListTile(
                   leading: const Icon(
                     Icons.camera_alt_rounded,
-                    color: ApexTheme.cyanElectric,
+                    color: ApexTheme.textMuted,
                   ),
                   title: const Text(
                     'Tomar foto con Cámara',
@@ -1563,7 +1648,13 @@ class HomeScreen extends StatelessWidget {
                   ),
                   onTap: () async {
                     Navigator.of(sheetContext).pop();
-                    await viewModel.scanWhoopScreenshot(ImageSource.camera);
+                    await viewModel.scanWhoopScreenshot(
+                      ImageSource.camera,
+                      sourceDevice: activeSource,
+                    );
+                    if (mounted) {
+                      setState(() {});
+                    }
                   },
                 ),
               ],
@@ -1950,7 +2041,11 @@ class HomeScreen extends StatelessWidget {
           latestRecord: viewModel.biometrics,
         );
       },
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   void _openWearableManualSyncModal(BuildContext context, String activeSource) {
@@ -1967,7 +2062,11 @@ class HomeScreen extends StatelessWidget {
           activeSource: activeSource,
         );
       },
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 }
 

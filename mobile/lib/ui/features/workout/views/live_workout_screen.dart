@@ -569,18 +569,18 @@ class LiveWorkoutScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: ApexTheme.cyanElectric.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(12),
+        color: ApexTheme.cardGraphite,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: ApexTheme.cyanElectric.withValues(alpha: 0.5),
+          color: ApexTheme.borderGraphite,
         ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           const Icon(
-            Icons.auto_awesome_rounded,
-            color: ApexTheme.cyanElectric,
+            Icons.tune_rounded,
+            color: ApexTheme.textPrimary,
             size: 18,
           ),
           const SizedBox(width: 8),
@@ -589,11 +589,11 @@ class LiveWorkoutScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  'GEMINI COACH • ${viewModel.readinessZone}',
+                  'DIRECTOR DE RENDIMIENTO • ${viewModel.readinessZone}',
                   style: const TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w900,
-                    color: ApexTheme.cyanElectric,
+                    color: ApexTheme.textPrimary,
                     letterSpacing: 0.5,
                   ),
                 ),
@@ -602,7 +602,7 @@ class LiveWorkoutScreen extends StatelessWidget {
                   viewModel.geminiRationale,
                   style: const TextStyle(
                     fontSize: 12,
-                    color: ApexTheme.textPrimary,
+                    color: ApexTheme.textMuted,
                     height: 1.3,
                   ),
                 ),
