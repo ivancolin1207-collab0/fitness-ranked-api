@@ -341,19 +341,22 @@ class AiGeneratedRoutinePlanModel {
   });
 
   factory AiGeneratedRoutinePlanModel.fromJson(Map<String, dynamic> json) {
+    final Map<String, dynamic> root = json['routine'] is Map<String, dynamic>
+        ? json['routine'] as Map<String, dynamic>
+        : json;
     final List<dynamic> rawDays =
-        (json['days'] as List<dynamic>?) ?? <dynamic>[];
+        (root['days'] as List<dynamic>?) ?? <dynamic>[];
     final List<RoutineTemplateModel> parsedDays = rawDays
         .whereType<Map<String, dynamic>>()
         .map(RoutineTemplateModel.fromJson)
         .toList();
     final bool hasRoutineFlag =
-        (json['has_routine'] as bool?) ?? parsedDays.isNotEmpty;
+        (root['has_routine'] as bool?) ?? parsedDays.isNotEmpty;
     return AiGeneratedRoutinePlanModel(
       hasRoutine: hasRoutineFlag && parsedDays.isNotEmpty,
-      routineName: (json['routine_name'] as String?) ??
+      routineName: (root['routine_name'] as String?) ??
           'Hipertrofia Adaptativa Personalizada (Gemini IA)',
-      weeklyFocus: (json['weekly_focus'] as String?) ??
+      weeklyFocus: (root['weekly_focus'] as String?) ??
           'Enfoque biomecánico adaptado a LBM',
       days: parsedDays,
     );

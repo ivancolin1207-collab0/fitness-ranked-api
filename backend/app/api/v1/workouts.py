@@ -39,7 +39,10 @@ from app.models.entities import (
     WorkoutSet,
 )
 from app.models.routine import UserRoutine, WorkoutDay, WorkoutExercise
-from app.services.ai_routine_service import ensure_ai_routine_tables
+from app.services.ai_routine_service import (
+    ensure_ai_routine_tables,
+    generate_and_persist_ai_routine,
+)
 from app.schemas.workouts import (
     ExerciseCreateRequest,
     RoutineExerciseItemResponse,
@@ -176,23 +179,24 @@ async def _build_routine_response(
     # Mapear metadatos biomecánicos (exercise_key, tempo, coaching_cue, rest_seconds, reps) desde WorkoutExercise si existen
     ai_meta_by_order: dict[int, WorkoutExercise] = {}
     try:
-        await ensure_ai_routine_tables(db)
-        w_day = (
-            await db.execute(
-                select(WorkoutDay)
-                .join(UserRoutine, UserRoutine.id == WorkoutDay.routine_id)
-                .options(selectinload(WorkoutDay.exercises))
-                .where(
-                    UserRoutine.user_id == user_id,
-                    UserRoutine.status == "active",
-                    WorkoutDay.day_number == int(routine.day_of_week),
+        async with db.begin_nested():
+            await ensure_ai_routine_tables(db)
+            w_day = (
+                await db.execute(
+                    select(WorkoutDay)
+                    .join(UserRoutine, UserRoutine.id == WorkoutDay.routine_id)
+                    .options(selectinload(WorkoutDay.exercises))
+                    .where(
+                        UserRoutine.user_id == user_id,
+                        UserRoutine.status == "active",
+                        WorkoutDay.day_number == int(routine.day_of_week),
+                    )
+                    .order_by(UserRoutine.generated_at.desc())
+                    .limit(1)
                 )
-                .order_by(UserRoutine.generated_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if w_day is not None and w_day.exercises:
-            ai_meta_by_order = {int(ex.order): ex for ex in w_day.exercises}
+            ).scalar_one_or_none()
+            if w_day is not None and w_day.exercises:
+                ai_meta_by_order = {int(ex.order): ex for ex in w_day.exercises}
     except Exception:
         ai_meta_by_order = {}
 
@@ -368,6 +372,13 @@ async def list_user_routines(
         .order_by(RoutineTemplate.day_of_week.asc())
     )
     routines = (await db.execute(stmt)).scalars().all()
+    if len(routines) < 5:
+        try:
+            await generate_and_persist_ai_routine(db, current_user)
+            routines = (await db.execute(stmt)).scalars().all()
+        except Exception:
+            await db.rollback()
+            routines = (await db.execute(stmt)).scalars().all()
     out: list[RoutineTemplateResponse] = []
     for r in routines:
         out.append(await _build_routine_response(db, r, current_user.id))

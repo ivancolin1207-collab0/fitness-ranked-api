@@ -687,7 +687,7 @@ async def generate_and_persist_ai_routine(
     """
     await ensure_ai_routine_tables(db)
 
-    # 1. Obtener última composición corporal real (Fitdays / Manual)
+    # 1. Extraer biometría con valores seguros por defecto para evitar NoneType / AttributeError
     bio_stmt = (
         select(Biometric)
         .where(Biometric.user_id == user.id)
@@ -696,15 +696,30 @@ async def generate_and_persist_ai_routine(
     )
     latest_bio = (await db.execute(bio_stmt)).scalar_one_or_none()
 
-    weight_kg = float(latest_bio.weight_kg) if latest_bio is not None else 92.4
-    body_fat_pct = float(latest_bio.body_fat_pct) if latest_bio is not None else 32.1
+    raw_weight = (
+        getattr(latest_bio, "weight_kg", None)
+        or getattr(user, "weight", None)
+        or 92.4
+    )
+    raw_fat = (
+        getattr(latest_bio, "fat_percentage", None)
+        or getattr(latest_bio, "body_fat_pct", None)
+        or getattr(user, "body_fat", None)
+        or 32.1
+    )
+    weight_kg = float(raw_weight)
+    body_fat_pct = float(raw_fat)
+
+    raw_lbm = getattr(latest_bio, "lean_body_mass_kg", None) or getattr(
+        user, "lbm", None
+    )
     lbm_kg = (
-        float(latest_bio.lean_body_mass_kg)
-        if (latest_bio is not None and latest_bio.lean_body_mass_kg is not None)
+        float(raw_lbm)
+        if raw_lbm is not None
         else round(weight_kg * (1.0 - body_fat_pct / 100.0), 2)
     )
 
-    # 2. Obtener telemetría reciente del wearable (Whoop / Health Connect / daily_readiness)
+    # 2. Obtener última readiness / telemetría wearable con savepoint seguro
     wearable_stmt = (
         select(WearableMetric)
         .where(WearableMetric.user_id == user.id)
@@ -713,29 +728,41 @@ async def generate_and_persist_ai_routine(
     )
     latest_wearable = (await db.execute(wearable_stmt)).scalar_one_or_none()
 
-    recovery_pct = float(latest_wearable.recovery_score) if latest_wearable is not None else 47.0
-    sleep_pct = float(latest_wearable.sleep_efficiency_pct) if latest_wearable is not None else 80.0
+    recovery_pct = (
+        float(latest_wearable.recovery_score)
+        if (latest_wearable is not None and latest_wearable.recovery_score is not None)
+        else 47.0
+    )
+    sleep_pct = (
+        float(latest_wearable.sleep_efficiency_pct)
+        if (latest_wearable is not None and latest_wearable.sleep_efficiency_pct is not None)
+        else 80.0
+    )
     stress_score = 1.8
 
     try:
-        dr_row = (
-            await db.execute(
-                text(
-                    """
-                    SELECT recovery_score, sleep_pct, stress_level
-                    FROM daily_readiness
-                    WHERE user_id = :uid
-                    ORDER BY date DESC, synced_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {"uid": user.id},
-            )
-        ).first()
-        if dr_row is not None:
-            recovery_pct = float(dr_row[0])
-            sleep_pct = float(dr_row[1])
-            stress_score = float(dr_row[2])
+        async with db.begin_nested():
+            dr_row = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT recovery_score, sleep_pct, stress_level
+                        FROM daily_readiness
+                        WHERE user_id = :uid
+                        ORDER BY date DESC, synced_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"uid": user.id},
+                )
+            ).first()
+            if dr_row is not None:
+                if dr_row[0] is not None:
+                    recovery_pct = float(dr_row[0])
+                if dr_row[1] is not None:
+                    sleep_pct = float(dr_row[1])
+                if dr_row[2] is not None:
+                    stress_score = float(dr_row[2])
     except Exception:
         pass
 
@@ -752,41 +779,32 @@ async def generate_and_persist_ai_routine(
     )
 
     prompt = f"""
-Eres el Jefe de Rendimiento Físico y Biomecánica de ApexMetrix.
-Diseña una periodización semanal de 5 DÍAS TOTALMENTE PERSONALIZADA para el siguiente atleta:
-- Nombre: {full_name}
-- Peso: {weight_kg:.1f} kg | Masa Magra (LBM): {lbm_kg:.2f} kg | Grasa: {body_fat_pct:.1f}%
-- Telemetría reciente: Recuperación {recovery_pct:.0f}%, Sueño {sleep_pct:.0f}%, Estrés {stress_score:.1f}.
-
-REGLAS ESTRICTAS DE PRESCRIPCIÓN:
-1. Estructura exacta de 5 días de entrenamiento (Día 1 a Día 5).
-2. Cada día DEBE CONTENER EXACTAMENTE 6 EJERCICIOS (3 para el grupo muscular principal y 3 para el grupo muscular secundario/sinergista).
-3. CÁLCULO DE CARGAS REALES: NO uses porcentajes genéricos vacíos. Para cada ejercicio, calcula y asigna el PESO DE TRABAJO INICIAL EN KG (`prescribed_weight_kg`) específico para este atleta, derivado matemáticamente de su masa magra ({lbm_kg:.2f} kg LBM), nivel de recuperación ({recovery_pct:.0f}%) y el patrón de movimiento.
-4. Define series (3-4), repeticiones (ej. 8-10), RPE objetivo (ej. 7.5 - 8.5) y tempo excéntrico/concéntrico (ej. "3-0-1-0").
-5. Asigna a cada ejercicio un identificador biomecánico estándar (`exercise_key`) compatible con el visor de avatares (ej. `bench_press_barbell`, `incline_dumbbell_press`, `squat_barbell`, `deadlift_barbell`, `overhead_press`, `lat_pulldown`, `barbell_row`, `bicep_curl_barbell`, `lateral_raise`, `tricep_rope_pushdown`, `leg_press`, `hip_thrust`).
-
-Devuelve EXCLUSIVAMENTE este esquema JSON sin bloques de texto adicionales:
+Genera una rutina de hipertrofia y fuerza de 5 DÍAS para {full_name}:
+Peso: {weight_kg:.1f}kg, LBM: {lbm_kg:.2f}kg, Grasa: {body_fat_pct:.1f}%, Recuperación: {recovery_pct:.0f}%, Sueño: {sleep_pct:.0f}%, Estrés: {stress_score:.1f}.
+Cada día DEBE tener EXACTAMENTE 6 ejercicios (3 principales + 3 secundarios/sinergistas).
+Calcula el peso en kg específico (`prescribed_weight_kg`) para cada ejercicio según {lbm_kg:.2f}kg LBM y {recovery_pct:.0f}% recuperación.
+Responde ÚNICAMENTE un JSON válido con este formato exacto:
 {{
-  "routine_name": "Hipertrofia Adaptativa Personalizada - {full_name}",
+  "routine_name": "Hipertrofia 5 Días - {lbm_kg:.2f}kg LBM",
   "weekly_focus": "Enfoque biomecánico adaptado a {lbm_kg:.2f}kg LBM",
   "days": [
     {{
       "day_number": 1,
-      "day_name": "Día 1: Empuje (Pecho & Tríceps)",
-      "target_muscles": ["Pectoral", "Tríceps"],
+      "day_name": "Día 1: Pecho & Tríceps",
+      "target_muscles": ["Pecho", "Tríceps"],
       "exercises": [
         {{
           "order": 1,
           "exercise_key": "bench_press_barbell",
-          "name": "Press de Banca Plano con Barra",
-          "muscle_group": "Pectoral",
+          "name": "Press de Banca Plano",
+          "muscle_group": "Pecho",
           "target_sets": 4,
           "target_reps": "6-8",
           "prescribed_weight_kg": 65.0,
           "rpe_target": 8.0,
           "rest_seconds": 90,
           "tempo": "3-0-1-0",
-          "coaching_cue": "Retracción escapular activa y pausa controlada a 2cm del esternón"
+          "coaching_cue": "Retracción escapular activa"
         }}
       ]
     }}
@@ -802,15 +820,12 @@ Devuelve EXCLUSIVAMENTE este esquema JSON sin bloques de texto adicionales:
             for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
                 try:
                     model = genai.GenerativeModel(model_name)
-                    response = model.generate_content(
-                        prompt,
-                        generation_config={"response_mime_type": "application/json"},
-                    )
+                    response = model.generate_content(prompt)
                     raw_text = (getattr(response, "text", None) or "").strip()
-                    if raw_text.startswith("```"):
-                        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                        raw_text = re.sub(r"\s*```$", "", raw_text)
-                    parsed_json = json.loads(raw_text)
+                    json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+                    if not json_match:
+                        raise ValueError("Gemini no retornó un objeto JSON válido")
+                    parsed_json = json.loads(json_match.group(0))
                     if isinstance(parsed_json, dict):
                         final_plan = _normalize_and_validate_ai_plan(
                             raw_plan=parsed_json,
@@ -924,7 +939,12 @@ Devuelve EXCLUSIVAMENTE este esquema JSON sin bloques de texto adicionales:
             )
 
     await db.commit()
-    return await fetch_current_ai_routine_dict(db, user)
+    persisted = await fetch_current_ai_routine_dict(db, user)
+    return {
+        "status": "success",
+        "routine": persisted,
+        **persisted,
+    }
 
 
 async def fetch_current_ai_routine_dict(

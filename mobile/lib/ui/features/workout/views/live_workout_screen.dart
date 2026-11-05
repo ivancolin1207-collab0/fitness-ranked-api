@@ -8,10 +8,12 @@ import 'set_binary_feedback_sheet.dart';
 
 class LiveWorkoutScreen extends StatefulWidget {
   final LiveWorkoutViewModel viewModel;
+  final VoidCallback? onOpenTacticalCenter;
 
   const LiveWorkoutScreen({
     super.key,
     required this.viewModel,
+    this.onOpenTacticalCenter,
   });
 
   @override
@@ -159,6 +161,31 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                       ),
                       onPressed: viewModel.toggleUnitSystem,
                     ),
+                    if (widget.onOpenTacticalCenter != null)
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 0,
+                        ),
+                        backgroundColor: ApexTheme.cardGraphite,
+                        side: const BorderSide(color: ApexTheme.borderGraphite),
+                        avatar: const Icon(
+                          Icons.tune_rounded,
+                          size: 13,
+                          color: ApexTheme.textPrimary,
+                        ),
+                        label: const Text(
+                          'CENTRO TÁCTICO',
+                          style: TextStyle(
+                            color: ApexTheme.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 9.5,
+                          ),
+                        ),
+                        onPressed: widget.onOpenTacticalCenter,
+                      ),
                   ],
                 ),
               ),
@@ -196,7 +223,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                     physics: const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
                     ),
-                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 28),
+                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 120),
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 720),

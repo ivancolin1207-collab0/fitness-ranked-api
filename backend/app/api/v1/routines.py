@@ -4,9 +4,10 @@ from __future__ import annotations
 Endpoints del Motor Cognitivo de Rutinas Dinámicas con Gemini 2.5 Flash (`/api/v1/routines`).
 """
 
+import traceback
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -27,9 +28,24 @@ async def get_current_routine(
 ) -> dict[str, Any]:
     """
     Devuelve la planificación dinámica actual de 5 días x 6 ejercicios del atleta (`user_routines`).
-    Si aún no existe una rutina generada por IA para el usuario, retorna `{"has_routine": False}`.
+    Si aún no existe una rutina de 5 días generada para el usuario, la genera automáticamente.
     """
-    return await fetch_current_ai_routine_dict(db, current_user)
+    try:
+        current = await fetch_current_ai_routine_dict(db, current_user)
+        days = current.get("days")
+        if not current.get("has_routine") or not isinstance(days, list) or len(days) < 5:
+            return await generate_and_persist_ai_routine(db, current_user)
+        return {
+            "status": "success",
+            "routine": current,
+            **current,
+        }
+    except Exception as exc:
+        print("ERROR DETALLADO EN GET_CURRENT_ROUTINE:", traceback.format_exc())
+        await db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Fallo al consultar rutina: {str(exc)}"
+        ) from exc
 
 
 @router.post("/generate-ai", status_code=status.HTTP_200_OK)
@@ -43,4 +59,11 @@ async def generate_ai_routine(
     de 5 días con 6 ejercicios exactos por día y cargas reales en KG, la almacena
     en PostgreSQL y reemplaza cualquier planificación anterior.
     """
-    return await generate_and_persist_ai_routine(db, current_user)
+    try:
+        return await generate_and_persist_ai_routine(db, current_user)
+    except Exception as exc:
+        print("ERROR DETALLADO EN GENERATE_AI:", traceback.format_exc())
+        await db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Fallo al generar rutina: {str(exc)}"
+        ) from exc

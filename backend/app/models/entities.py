@@ -160,6 +160,10 @@ class Biometric(Base):
 
     user: Mapped["User"] = relationship(back_populates="biometrics")
 
+    @property
+    def body_fat_pct(self) -> float:
+        return float(self.fat_percentage)
+
 
 class WearableMetric(Base):
     __tablename__ = "wearable_metrics"

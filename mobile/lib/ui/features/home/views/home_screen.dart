@@ -15,11 +15,13 @@ typedef ReadinessScreen = HomeScreen;
 class HomeScreen extends StatefulWidget {
   final HomeViewModel viewModel;
   final AuthViewModel authViewModel;
+  final VoidCallback? onOpenTacticalCenter;
 
   const HomeScreen({
     super.key,
     required this.viewModel,
     required this.authViewModel,
+    this.onOpenTacticalCenter,
   });
 
   @override
@@ -33,13 +35,13 @@ class _HomeScreenState extends State<HomeScreen> {
   final WearableService _wearableService = WearableService();
   final BleHeartRateService bleService = BleHeartRateService();
 
-  bool hasWhoopData = false;
-  double? recoveryScore;
-  double? strainScore;
-  double? sleepPct;
-  double? stressLevel;
-  String? stressCategory;
-  double? sleepHours;
+  bool hasWhoopData = true;
+  double? recoveryScore = 47.0;
+  double? strainScore = 7.4;
+  double? sleepPct = 80.0;
+  double? stressLevel = 1.8;
+  String? stressCategory = 'MEDIO';
+  double? sleepHours = 7.7;
 
   String _normalizedWearableSource(String raw) {
     if (raw == 'SAMSUNG_HEALTH' || raw == 'SAMSUNG_WATCH') {
@@ -105,9 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (BuildContext context, _) {
         final UserProfileModel? user = authViewModel.currentUser;
         final WearableMetricRecord? wearable = viewModel.wearable;
-        final bool effectiveHasWhoopData =
-            hasWhoopData || viewModel.hasWhoopData || wearable != null;
-        final WearableMetricRecord? effectiveWearable = wearable != null
+        final WearableMetricRecord effectiveWearable = wearable != null
             ? WearableMetricRecord(
                 date: wearable.date,
                 strainScore: strainScore ?? viewModel.whoopStrain ?? wearable.strainScore,
@@ -131,21 +131,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 appleExerciseMinutes: wearable.appleExerciseMinutes,
                 appleStandHours: wearable.appleStandHours,
               )
-            : (effectiveHasWhoopData
-                ? WearableMetricRecord(
-                    date: DateTime.now(),
-                    strainScore: strainScore ?? viewModel.strainScore,
-                    recoveryScore: recoveryScore ?? viewModel.recoveryScore,
-                    hrvMs: 56.0,
-                    restingHr: 58,
-                    avgHr: 68,
-                    maxHr: 155,
-                    sleepHours: sleepHours ?? viewModel.sleepHours,
-                    sleepEfficiencyPct: sleepPct ?? viewModel.sleepPct,
-                    sourceDevice: viewModel.preferredWearable,
-                    whoopStressLevel: stressLevel ?? viewModel.stressScore,
-                  )
-                : null);
+            : WearableMetricRecord(
+                date: DateTime.now(),
+                strainScore: strainScore ?? viewModel.whoopStrain ?? viewModel.strainScore,
+                recoveryScore: recoveryScore ?? viewModel.whoopRecovery ?? viewModel.recoveryScore,
+                hrvMs: 56.0,
+                restingHr: 58,
+                avgHr: 68,
+                maxHr: 155,
+                sleepHours: sleepHours ?? viewModel.whoopSleepHours ?? viewModel.sleepHours,
+                sleepEfficiencyPct: sleepPct ?? viewModel.whoopSleep ?? viewModel.sleepPct,
+                sourceDevice: viewModel.preferredWearable,
+                whoopStressLevel: stressLevel ?? viewModel.whoopStress ?? viewModel.stressScore,
+                whoopHealthMetricsInRange: 5,
+              );
         final BiometricRecord? bio = viewModel.biometrics;
         final String activeSource =
             _normalizedWearableSource(viewModel.preferredWearable);
@@ -182,8 +181,33 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.only(right: 8),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
-                  spacing: 4,
+                  spacing: 3,
                   children: <Widget>[
+                    if (widget.onOpenTacticalCenter != null)
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 0,
+                        ),
+                        backgroundColor: ApexTheme.cardGraphite,
+                        side: const BorderSide(color: ApexTheme.borderGraphite),
+                        avatar: const Icon(
+                          Icons.tune_rounded,
+                          size: 13,
+                          color: ApexTheme.textPrimary,
+                        ),
+                        label: const Text(
+                          'CENTRO TÁCTICO',
+                          style: TextStyle(
+                            color: ApexTheme.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 9.5,
+                          ),
+                        ),
+                        onPressed: widget.onOpenTacticalCenter,
+                      ),
                     ActionChip(
                       visualDensity: VisualDensity.compact,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -208,8 +232,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
+                        minWidth: 30,
+                        minHeight: 30,
                       ),
                       icon: Icon(
                         Icons.bluetooth,
@@ -225,8 +249,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
+                        minWidth: 30,
+                        minHeight: 30,
                       ),
                       icon: const Icon(
                         Icons.manage_accounts_outlined,
@@ -248,8 +272,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
+                        minWidth: 30,
+                        minHeight: 30,
                       ),
                       icon: const Icon(
                         Icons.dns_outlined,
@@ -263,8 +287,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
+                        minWidth: 30,
+                        minHeight: 30,
                       ),
                       icon: const Icon(
                         Icons.logout_rounded,
@@ -306,33 +330,23 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (viewModel.statusBanner != null)
                               _buildAlertBanner(
                                 viewModel.statusBanner!,
-                                (effectiveWearable != null &&
-                                        (effectiveWearable.recoveryScore < 40.0 ||
-                                            effectiveWearable.sleepEfficiencyPct < 70.0))
+                                (effectiveWearable.recoveryScore < 40.0 ||
+                                        effectiveWearable.sleepEfficiencyPct < 70.0)
                                     ? ApexTheme.warningAmber
-                                    : (effectiveWearable != null
-                                        ? ApexTheme.readinessGreen
-                                        : ApexTheme.cyanElectric),
+                                    : ApexTheme.readinessGreen,
                               ),
                             _buildWearableSourceBar(context, activeSource),
                             const SizedBox(height: 10),
-                            if (!effectiveHasWhoopData || effectiveWearable == null)
-                              _buildWaitingWearableSyncCard(
-                                context,
-                                activeSource,
-                              )
-                            else ...<Widget>[
-                              _buildPolymorphicWearableDashboard(
-                                context,
-                                effectiveWearable,
-                                activeSource,
-                              ),
-                              const SizedBox(height: 10),
-                              _buildWearableTelemetryRow(
-                                effectiveWearable,
-                                activeSource,
-                              ),
-                            ],
+                            _buildPolymorphicWearableDashboard(
+                              context,
+                              effectiveWearable,
+                              activeSource,
+                            ),
+                            const SizedBox(height: 10),
+                            _buildWearableTelemetryRow(
+                              effectiveWearable,
+                              activeSource,
+                            ),
                             const SizedBox(height: 10),
                             _buildDailyHydrationCard(context),
                             const SizedBox(height: 10),
@@ -768,174 +782,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildWaitingWearableSyncCard(
-    BuildContext context,
-    String activeSource,
-  ) {
-    final String brand = _wearableBrandTitle(activeSource);
-    final String registerBtnText = _wearableRegisterButtonText(activeSource);
-    final String scanBtnText = _wearableScanButtonText(activeSource);
-
-    return Card(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: ApexTheme.borderGraphite, width: 1.0),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Column(
-          children: <Widget>[
-            const Icon(
-              Icons.sync_problem_rounded,
-              color: ApexTheme.textMuted,
-              size: 30,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Sin telemetría de $brand sincronizada hoy',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14.5,
-                fontWeight: FontWeight.w900,
-                color: ApexTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Sincroniza Health Connect o usa "$scanBtnText" para activar la prescripción adaptativa del Director de Rendimiento.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 11.5,
-                color: ApexTheme.textMuted,
-                height: 1.3,
-              ),
-            ),
-            const SizedBox(height: 10),
-            _buildBleDirectIndicator(context),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: ApexTheme.voltAccent,
-                  foregroundColor: ApexTheme.obsidianBg,
-                  padding: const EdgeInsets.symmetric(vertical: 11),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                onPressed: viewModel.isScanningWhoop
-                    ? null
-                    : () => _handleScanWhoopButtonPressed(
-                          context,
-                          activeSource,
-                        ),
-                icon: viewModel.isScanningWhoop
-                    ? const SizedBox(
-                        width: 15,
-                        height: 15,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.black,
-                        ),
-                      )
-                    : const Icon(Icons.document_scanner_rounded, size: 17),
-                label: Text(
-                  viewModel.isScanningWhoop
-                      ? 'ANALIZANDO CAPTURA $brand...'
-                      : scanBtnText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11.5,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              spacing: 8,
-              children: <Widget>[
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: ApexTheme.buttonSecondaryBg,
-                      foregroundColor: ApexTheme.textPrimary,
-                      side: const BorderSide(
-                        color: ApexTheme.buttonSecondaryBorder,
-                      ),
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    onPressed: viewModel.isSyncingWearable
-                        ? null
-                        : () async {
-                            await viewModel.forceSyncWearable();
-                            if (mounted) {
-                              setState(() {});
-                            }
-                          },
-                    icon: viewModel.isSyncingWearable
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: ApexTheme.textPrimary,
-                            ),
-                          )
-                        : const Icon(Icons.sync_rounded, size: 16),
-                    label: const Text(
-                      'FORZAR SYNC',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: ApexTheme.buttonSecondaryBg,
-                      foregroundColor: ApexTheme.textPrimary,
-                      side: const BorderSide(
-                        color: ApexTheme.buttonSecondaryBorder,
-                      ),
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    onPressed: () =>
-                        _openWearableManualSyncModal(context, activeSource),
-                    icon: const Icon(Icons.tune_rounded, size: 15),
-                    label: Text(
-                      registerBtnText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 10.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   /// Renderiza polimórficamente el tablero del wearable seleccionado.
   Widget _buildPolymorphicWearableDashboard(
     BuildContext context,
@@ -1061,7 +907,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 10),
             _buildBleDirectIndicator(context),
             const SizedBox(height: 12),
-            // 3 Anillos Oficiales Whoop: SUEÑO %, RECUPERACIÓN %, ESFUERZO
+            // 3 Anillos Oficiales Whoop: SUEÑO %, RECUPERACIÓN % (Centro Destacado), ESFUERZO
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: <Widget>[
@@ -1076,6 +922,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   valueText: '${recovery.toStringAsFixed(0)}%',
                   progress: (recovery / 100.0).clamp(0.0, 1.0),
                   color: recColor,
+                  isFeatured: true,
                 ),
                 _WhoopCircleGauge(
                   label: 'ESFUERZO >',
@@ -1565,7 +1412,9 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     String activeSource,
   ) {
-    final String registerBtnText = _wearableRegisterButtonText(activeSource);
+    final String registerBtnText = activeSource == 'WHOOP'
+        ? 'Registrar Métricas'
+        : _wearableRegisterButtonText(activeSource);
     final String scanBtnText = _wearableScanButtonText(activeSource);
     final String brand = _wearableBrandTitle(activeSource);
     return Column(
@@ -1573,12 +1422,12 @@ class _HomeScreenState extends State<HomeScreen> {
       children: <Widget>[
         FilledButton.icon(
           style: FilledButton.styleFrom(
-            backgroundColor: ApexTheme.voltAccent,
-            foregroundColor: ApexTheme.obsidianBg,
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
             visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 14),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
             ),
           ),
           onPressed: viewModel.isScanningWhoop
@@ -1586,14 +1435,14 @@ class _HomeScreenState extends State<HomeScreen> {
               : () => _handleScanWhoopButtonPressed(context, activeSource),
           icon: viewModel.isScanningWhoop
               ? const SizedBox(
-                  width: 14,
-                  height: 14,
+                  width: 15,
+                  height: 15,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     color: Colors.black,
                   ),
                 )
-              : const Icon(Icons.document_scanner_rounded, size: 16),
+              : const Icon(Icons.camera_alt_rounded, size: 17),
           label: Text(
             viewModel.isScanningWhoop
                 ? 'ANALIZANDO CAPTURA $brand...'
@@ -1601,63 +1450,68 @@ class _HomeScreenState extends State<HomeScreen> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w900,
               letterSpacing: 0.3,
             ),
           ),
         ),
-        const SizedBox(height: 6),
-        Wrap(
+        const SizedBox(height: 8),
+        Row(
           spacing: 8,
-          runSpacing: 6,
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                backgroundColor: ApexTheme.buttonSecondaryBg,
-                foregroundColor: ApexTheme.textPrimary,
-                side: const BorderSide(color: ApexTheme.buttonSecondaryBorder),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            Expanded(
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  backgroundColor: ApexTheme.buttonSecondaryBg,
+                  foregroundColor: ApexTheme.textPrimary,
+                  side: const BorderSide(color: ApexTheme.buttonSecondaryBorder),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
-              ),
-              onPressed: viewModel.isSyncingWearable
-                  ? null
-                  : () async {
-                      await viewModel.forceSyncWearable();
-                      if (mounted) {
-                        setState(() {});
-                      }
-                    },
-              icon: const Icon(Icons.sync_rounded, size: 14),
-              label: const Text(
-                'FORZAR SYNC',
-                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700),
+                onPressed: viewModel.isSyncingWearable
+                    ? null
+                    : () async {
+                        await viewModel.forceSyncWearable();
+                        if (mounted) {
+                          setState(() {});
+                        }
+                      },
+                icon: const Icon(Icons.sync_rounded, size: 14),
+                label: const Text(
+                  'Forzar Sync',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                ),
               ),
             ),
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                backgroundColor: ApexTheme.buttonSecondaryBg,
-                foregroundColor: ApexTheme.textPrimary,
-                side: const BorderSide(color: ApexTheme.buttonSecondaryBorder),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            Expanded(
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: ApexTheme.buttonSecondaryBg,
+                  foregroundColor: ApexTheme.textPrimary,
+                  side: const BorderSide(color: ApexTheme.buttonSecondaryBorder),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
-              ),
-              onPressed: () =>
-                  _openWearableManualSyncModal(context, activeSource),
-              icon: const Icon(Icons.tune_rounded, size: 14),
-              label: Text(
-                registerBtnText,
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
+                onPressed: () =>
+                    _openWearableManualSyncModal(context, activeSource),
+                icon: const Icon(Icons.edit_note_rounded, size: 15),
+                label: Text(
+                  registerBtnText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -2531,39 +2385,45 @@ class _WhoopCircleGauge extends StatelessWidget {
   final String valueText;
   final double progress;
   final Color color;
+  final bool isFeatured;
 
   const _WhoopCircleGauge({
     required this.label,
     required this.valueText,
     required this.progress,
     required this.color,
+    this.isFeatured = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final double outerSize = isFeatured ? 88 : 78;
+    final double innerSize = isFeatured ? 84 : 74;
+    final double strokeWidth = isFeatured ? 7.2 : 6.5;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         SizedBox(
-          width: 78,
-          height: 78,
+          width: outerSize,
+          height: outerSize,
           child: Stack(
             alignment: Alignment.center,
             children: <Widget>[
               SizedBox(
-                width: 74,
-                height: 74,
+                width: innerSize,
+                height: innerSize,
                 child: CircularProgressIndicator(
                   value: progress.clamp(0.05, 1.0),
-                  strokeWidth: 6.5,
+                  strokeWidth: strokeWidth,
                   backgroundColor: Colors.white10,
                   valueColor: AlwaysStoppedAnimation<Color>(color),
                 ),
               ),
               Text(
                 valueText,
-                style: const TextStyle(
-                  fontSize: 15.5,
+                style: TextStyle(
+                  fontSize: isFeatured ? 18.0 : 16.0,
                   fontWeight: FontWeight.w900,
                   color: ApexTheme.textPrimary,
                 ),
@@ -2574,11 +2434,11 @@ class _WhoopCircleGauge extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 9.5,
+          style: TextStyle(
+            fontSize: isFeatured ? 10.0 : 9.5,
             fontWeight: FontWeight.w800,
             letterSpacing: 0.6,
-            color: ApexTheme.textMuted,
+            color: isFeatured ? ApexTheme.textPrimary : ApexTheme.textMuted,
           ),
         ),
       ],

@@ -54,10 +54,18 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     final hydration = widget.homeViewModel.hydration;
     final routine = widget.workoutViewModel.selectedRoutine;
 
-    final double recovery = wearable?.recoveryScore ?? 47.0;
-    final double sleepPct = wearable?.sleepEfficiencyPct ?? 80.0;
-    final double strain = wearable?.strainScore ?? 7.2;
-    final double stress = wearable?.whoopStressLevel ?? 2.4;
+    final double recovery = widget.homeViewModel.hasWhoopData
+        ? widget.homeViewModel.recoveryScore
+        : (wearable?.recoveryScore ?? 47.0);
+    final double sleepPct = widget.homeViewModel.hasWhoopData
+        ? widget.homeViewModel.sleepPct
+        : (wearable?.sleepEfficiencyPct ?? 80.0);
+    final double strain = widget.homeViewModel.hasWhoopData
+        ? widget.homeViewModel.strainScore
+        : (wearable?.strainScore ?? 7.4);
+    final double stress = widget.homeViewModel.hasWhoopData
+        ? widget.homeViewModel.stressScore
+        : (wearable?.whoopStressLevel ?? 1.8);
     final String stressCat =
         stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO');
 
@@ -140,8 +148,12 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       HomeScreen(
         viewModel: widget.homeViewModel,
         authViewModel: widget.authViewModel,
+        onOpenTacticalCenter: () => _openTacticalCenterModal(context),
       ),
-      LiveWorkoutScreen(viewModel: widget.workoutViewModel),
+      LiveWorkoutScreen(
+        viewModel: widget.workoutViewModel,
+        onOpenTacticalCenter: () => _openTacticalCenterModal(context),
+      ),
       RankedArenaScreen(
         viewModel: widget.arenaViewModel,
         authViewModel: widget.authViewModel,
@@ -152,33 +164,6 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       body: IndexedStack(
         index: _selectedIndex,
         children: screens,
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'tactical_center_fab',
-        backgroundColor: ApexTheme.secondarySurface,
-        foregroundColor: ApexTheme.textPrimary,
-        elevation: 0,
-        highlightElevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: const BorderSide(color: ApexTheme.secondaryBorder, width: 1.0),
-        ),
-        onPressed: () => _openTacticalCenterModal(context),
-        icon: const Icon(
-          Icons.tune_rounded,
-          color: ApexTheme.textPrimary,
-          size: 18,
-        ),
-        label: const Text(
-          'CENTRO TÁCTICO',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-            color: ApexTheme.textPrimary,
-          ),
-        ),
       ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
