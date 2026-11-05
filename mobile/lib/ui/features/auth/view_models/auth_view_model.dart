@@ -41,16 +41,43 @@ class AuthViewModel extends ChangeNotifier {
 
     try {
       await _repository.initializeSavedApiUrl();
+      // Auto-login inmediato si existe JWT persistido en FlutterSecureStorage / disco
+      final UserProfileModel? cachedSession =
+          await _repository.restoreCachedSessionProfile();
+      if (cachedSession != null) {
+        _currentUser = cachedSession;
+        _isBootstrapping = false;
+        notifyListeners();
+
+        // Sincronización silenciosa en segundo plano sin cerrar jamás la sesión
+        _refreshSessionInBackground();
+        return;
+      }
+
       _healthStatus = await _repository.checkServerHealth();
       if (_healthStatus != null && _healthStatus!.isOnline) {
         _currentUser = await _repository.fetchCurrentSessionProfile();
       }
     } catch (_) {
-      _currentUser = null;
+      // Nunca cerrar una sesión previamente restaurada por fallos de red
     } finally {
       _isBootstrapping = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _refreshSessionInBackground() async {
+    try {
+      _healthStatus = await _repository.checkServerHealth();
+      if (_healthStatus != null && _healthStatus!.isOnline) {
+        final UserProfileModel? fresh =
+            await _repository.fetchCurrentSessionProfile();
+        if (fresh != null) {
+          _currentUser = fresh;
+          notifyListeners();
+        }
+      }
+    } catch (_) {}
   }
 
   Future<ServerHealthCheckModel> pingServerHealth({String? specificUrl}) async {
@@ -131,6 +158,37 @@ class AuthViewModel extends ChangeNotifier {
         username: username,
         email: email,
         password: password,
+      );
+      return true;
+    } catch (e) {
+      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+      return false;
+    } finally {
+      _isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> resetPassword({
+    required String email,
+    required String newPassword,
+  }) async {
+    _isSubmitting = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final ServerHealthCheckModel health =
+          await _repository.checkServerHealth();
+      _healthStatus = health;
+      if (!health.isOnline) {
+        _errorMessage = health.message;
+        return false;
+      }
+
+      _currentUser = await _repository.resetPasswordDirect(
+        email: email,
+        newPassword: newPassword,
       );
       return true;
     } catch (e) {

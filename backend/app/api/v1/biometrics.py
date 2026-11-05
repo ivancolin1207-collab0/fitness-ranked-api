@@ -5,8 +5,9 @@ Endpoints de Ingesta Biométrica Dual (`POST /biometrics` Manual + `POST /biomet
 y Sincronización Real de Wearables (`/wearables/today`, `/wearables/sync`).
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy import select
@@ -19,12 +20,24 @@ from app.models.entities import Biometric, User, WearableMetric
 from app.schemas.biometrics import (
     BiometricRecordResponse,
     FitdaysExtractedMetrics,
+    HydrationAddRequest,
+    HydrationLogEntrySchema,
+    HydrationTodayResponse,
     WearableSyncRequest,
     WearableSyncResponse,
 )
 from app.services.gemini_service import extract_fitdays_biometrics_from_image
 
 router = APIRouter(tags=["Biometrics & Wearables"])
+
+# Almacenamiento reactivo en memoria por (user_id, fecha) para logs de hidratación intradía
+_HYDRATION_LOGS_STORE: dict[tuple[UUID, str], list[HydrationLogEntrySchema]] = {}
+
+
+def get_user_today_hydration_ml(user_id: UUID) -> int:
+    today_key = date.today().isoformat()
+    entries = _HYDRATION_LOGS_STORE.get((user_id, today_key), [])
+    return sum(e.amount_ml for e in entries)
 
 
 @router.post(
@@ -200,3 +213,98 @@ async def sync_wearable_metrics(
     record = result.scalar_one()
     await db.commit()
     return WearableSyncResponse.model_validate(record)
+
+
+async def _compute_hydration_target_ml(
+    db: AsyncSession, user_id: UUID
+) -> int:
+    latest_bio = (
+        await db.execute(
+            select(Biometric)
+            .where(Biometric.user_id == user_id)
+            .order_by(Biometric.captured_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    today_wearable = (
+        await db.execute(
+            select(WearableMetric)
+            .where(
+                WearableMetric.user_id == user_id,
+                WearableMetric.date == date.today(),
+            )
+            .order_by(WearableMetric.synced_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    weight_kg = float(latest_bio.weight_kg) if latest_bio is not None else 78.0
+    strain = float(today_wearable.strain_score) if today_wearable is not None else 9.6
+    # Fórmula clínica deportiva: 35 ml/kg + 60 ml por punto de Strain
+    target = int(round((weight_kg * 35.0 + strain * 60.0) / 50.0) * 50)
+    return max(2200, min(5500, target))
+
+
+@router.get(
+    "/biometrics/hydration/today",
+    response_model=HydrationTodayResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_today_hydration(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> HydrationTodayResponse:
+    today_key = date.today().isoformat()
+    entries = _HYDRATION_LOGS_STORE.get((current_user.id, today_key), [])
+    total_ml = sum(e.amount_ml for e in entries)
+    target_ml = await _compute_hydration_target_ml(db, current_user.id)
+    progress = round(min(100.0, (total_ml / max(1, target_ml)) * 100.0), 1)
+    return HydrationTodayResponse(
+        date=today_key,
+        total_ml=total_ml,
+        target_ml=target_ml,
+        progress_pct=progress,
+        logs=entries,
+    )
+
+
+@router.post(
+    "/biometrics/hydration",
+    response_model=HydrationTodayResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def log_hydration_intake(
+    payload: HydrationAddRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> HydrationTodayResponse:
+    now = datetime.now(timezone.utc)
+    today_key = date.today().isoformat()
+    amount_str = (
+        f"{payload.amount_ml / 1000.0:.1f} L"
+        if payload.amount_ml >= 1000
+        else f"{payload.amount_ml} ml"
+    )
+    time_str = payload.timestamp_label or now.strftime("%I:%M %p")
+    label = f"{time_str}: {amount_str} consumido"
+
+    entry = HydrationLogEntrySchema(
+        amount_ml=payload.amount_ml,
+        timestamp_label=label,
+        recorded_at=now.isoformat(),
+    )
+    key = (current_user.id, today_key)
+    current_list = list(_HYDRATION_LOGS_STORE.get(key, []))
+    current_list.insert(0, entry)
+    _HYDRATION_LOGS_STORE[key] = current_list
+
+    total_ml = sum(e.amount_ml for e in current_list)
+    target_ml = await _compute_hydration_target_ml(db, current_user.id)
+    progress = round(min(100.0, (total_ml / max(1, target_ml)) * 100.0), 1)
+    return HydrationTodayResponse(
+        date=today_key,
+        total_ml=total_ml,
+        target_ml=target_ml,
+        progress_pct=progress,
+        logs=current_list,
+    )

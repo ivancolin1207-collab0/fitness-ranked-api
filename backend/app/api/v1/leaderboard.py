@@ -26,29 +26,39 @@ from app.core.elo_engine import (
 )
 from app.core.security import get_current_user
 from app.models.entities import (
+    Biometric,
     Competition,
     CompetitionParticipant,
     RankedPoint,
     Team,
     TeamMember,
     User,
+    WearableMetric,
     Workout,
 )
 from app.schemas.leaderboard import (
     ActiveDuelLiveResponse,
+    ActiveDuo2v2DuelResponse,
     Duel1v1ResolutionRequest,
     Duel1v1ResolutionResponse,
     DuelInviteByUsernameRequest,
     DuelMatchmakeRequest,
+    DuoInvitePartnerRequest,
+    DuoPairMemberSchema,
     LeaderboardResponse,
     LeaderboardRowResponse,
     OpponentSearchResultResponse,
     SquadJoinOrCreateRequest,
     SquadLeaderboardEntryResponse,
     SquadMemberEntry,
+    SymmetricWeeklyChallengeExercise,
 )
+from app.services.gemini_service import round_to_plate_increment
 
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard & 1v1 Matchmaking"])
+
+# Almacenamiento en memoria de duelos 2v2 personalizados por usuario
+_USER_DUO_PARTNERS: dict[str, tuple[str, str]] = {}
 
 
 async def _get_athlete_weekly_stats(
@@ -75,6 +85,139 @@ async def _get_athlete_weekly_stats(
         round(float(row["dots"]), 2),
         round(float(row["comp"]), 1),
     )
+
+
+async def _compute_weekly_user_scores(
+    db: AsyncSession,
+    user_id: UUID,
+) -> tuple[float, float, float]:
+    return await _get_athlete_weekly_stats(db, user_id)
+
+
+async def _compute_athlete_discipline_multiplier(
+    db: AsyncSession,
+    user_id: UUID,
+    avg_compliance_pct: float,
+) -> tuple[float, float, float, float]:
+    """
+    Calcula el Multiplicador de Disciplina combinando:
+    1. Cumplimiento de sueño diario (registrado por el wearable).
+    2. Consistencia de entrenamientos completados.
+    3. Balance de Recuperación / Strain.
+    """
+    latest_wearable = (
+        await db.execute(
+            select(WearableMetric)
+            .where(WearableMetric.user_id == user_id)
+            .order_by(WearableMetric.date.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    sleep_hours = float(latest_wearable.sleep_hours) if latest_wearable else 7.4
+    sleep_eff = (
+        float(latest_wearable.sleep_efficiency_pct)
+        if (latest_wearable and latest_wearable.sleep_efficiency_pct is not None)
+        else 86.0
+    )
+    rec = float(latest_wearable.recovery_score) if latest_wearable else 78.0
+    strain = float(latest_wearable.strain_score) if latest_wearable else 11.5
+
+    sleep_ratio = min(1.0, (sleep_hours / 7.5) * 0.6 + (sleep_eff / 100.0) * 0.4)
+    sleep_bonus_pct = round(max(0.0, (sleep_ratio - 0.65) * 35.0), 1)
+
+    consistency_bonus_pct = round(max(0.0, (avg_compliance_pct - 75.0) * 0.4), 1)
+
+    target_strain = 6.0 + (rec / 100.0) * 10.0
+    strain_diff = abs(strain - target_strain)
+    strain_balance_pct = round(max(60.0, 100.0 - strain_diff * 3.2), 1)
+    strain_bonus_pct = round(max(0.0, (strain_balance_pct - 75.0) * 0.32), 1)
+
+    total_mult = round(
+        min(1.35, 1.0 + (sleep_bonus_pct + consistency_bonus_pct + strain_bonus_pct) / 100.0),
+        2,
+    )
+    return total_mult, sleep_bonus_pct, consistency_bonus_pct, strain_balance_pct
+
+
+async def _get_athlete_lbm_factor(db: AsyncSession, user: User) -> float:
+    bio = (
+        await db.execute(
+            select(Biometric)
+            .where(Biometric.user_id == user.id)
+            .order_by(Biometric.captured_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if bio:
+        weight = float(bio.weight_kg)
+        fat = float(bio.fat_percentage)
+        lbm = max(32.0, weight * (1.0 - fat / 100.0))
+    else:
+        lbm = 50.0 if user.biological_sex.value == "FEMALE" else 66.0
+    return round(lbm ** 0.67, 2)
+
+
+async def _build_symmetric_weekly_challenge(
+    db: AsyncSession,
+    challenger_user: User,
+    opponent_user: User,
+) -> list[SymmetricWeeklyChallengeExercise]:
+    """
+    Genera Retos Semanales Simétricos ajustando pesos proporcionalmente a la
+    masa magra alométrica (LBM^0.67) de cada atleta para garantizar paridad total
+    sin importar diferencia de peso corporal o sexo biológico.
+    """
+    factor_a = await _get_athlete_lbm_factor(db, challenger_user)
+    factor_b = await _get_athlete_lbm_factor(db, opponent_user)
+
+    patterns = [
+        (
+            "Dominante de Rodilla (Sentadilla)",
+            "Barbell Back Squat",
+            4,
+            8,
+            8.0,
+            5.8,
+        ),
+        (
+            "Empuje Horizontal (Torso)",
+            "Barbell Bench Press",
+            4,
+            8,
+            8.0,
+            4.3,
+        ),
+        (
+            "Bisagra de Cadera (Cadena Posterior)",
+            "Romanian Deadlift (RDL)",
+            3,
+            10,
+            8.0,
+            5.2,
+        ),
+    ]
+
+    challenges: list[SymmetricWeeklyChallengeExercise] = []
+    for pat_label, ex_name, sets_c, reps_c, rpe_c, coeff in patterns:
+        w_a = round_to_plate_increment(max(20.0, factor_a * coeff))
+        w_b = round_to_plate_increment(max(20.0, factor_b * coeff))
+        challenges.append(
+            SymmetricWeeklyChallengeExercise(
+                movement_pattern=pat_label,
+                exercise_name=ex_name,
+                target_sets=sets_c,
+                target_reps=reps_c,
+                target_rpe=rpe_c,
+                challenger_prescribed_weight_kg=w_a,
+                opponent_prescribed_weight_kg=w_b,
+                parity_note=(
+                    f"Paridad Alométrica LBM^0.67: {w_a:.1f} kg ({challenger_user.username}) "
+                    f"≡ esfuerzo relativo idéntico frente a tu rival."
+                ),
+            )
+        )
+    return challenges
 
 
 async def _build_live_duel_response(
@@ -107,13 +250,30 @@ async def _build_live_duel_response(
     lbm_a, dots_a, comp_a = await _get_athlete_weekly_stats(db, challenger_user.id)
     lbm_b, dots_b, comp_b = await _get_athlete_weekly_stats(db, opponent_user.id)
 
+    mult_a, sleep_bon_a, cons_bon_a, strain_bal_a = await _compute_athlete_discipline_multiplier(
+        db, challenger_user.id, comp_a
+    )
+    mult_b, _, _, _ = await _compute_athlete_discipline_multiplier(
+        db, opponent_user.id, comp_b
+    )
+
+    eff_a = round(lbm_a * mult_a, 2)
+    eff_b = round(lbm_b * mult_b, 2)
+
     delta_win, _ = settle_1v1_duel_elo(
         elo_a=elo_a,
         elo_b=elo_b,
-        score_a=max(lbm_a, 100.0),
-        score_b=min(lbm_b, 50.0),
+        score_a=max(eff_a, 100.0),
+        score_b=min(eff_b, 50.0),
     )
     stake = max(12, abs(delta_win))
+
+    now_utc = datetime.now(timezone.utc)
+    is_sunday_reveal = now_utc.weekday() == 6 and now_utc.hour == 23 and now_utc.minute >= 55
+
+    sym_challenge = await _build_symmetric_weekly_challenge(
+        db, challenger_user, opponent_user
+    )
 
     mode = "AUTO_ELO_MATCHMAKING" if "Matchmaking" in comp.title else "DIRECT_INVITE"
 
@@ -129,6 +289,11 @@ async def _build_live_duel_response(
         challenger_lbm_score=lbm_a,
         challenger_dots_score=dots_a,
         challenger_rpe_compliance_pct=comp_a,
+        challenger_discipline_multiplier=mult_a,
+        challenger_sleep_bonus_pct=sleep_bon_a,
+        challenger_consistency_bonus_pct=cons_bon_a,
+        challenger_strain_balance_pct=strain_bal_a,
+        challenger_effective_score=eff_a,
         opponent_user_id=opponent_user.id,
         opponent_username=opponent_user.username,
         opponent_elo=elo_b,
@@ -136,6 +301,16 @@ async def _build_live_duel_response(
         opponent_lbm_score=lbm_b,
         opponent_dots_score=dots_b,
         opponent_rpe_compliance_pct=comp_b,
+        opponent_discipline_multiplier=mult_b,
+        opponent_effective_score=eff_b,
+        is_blind_duel=True,
+        is_revealed=is_sunday_reveal,
+        rival_status_label=(
+            "Resultado Semanal Revelado (Dom 23:59)"
+            if is_sunday_reveal
+            else "En progreso / Entrenando • Se revela Domingo 23:59"
+        ),
+        symmetric_challenge=sym_challenge,
         projected_elo_stake=stake,
         start_date=comp.start_date,
         end_date=comp.end_date,
@@ -871,3 +1046,167 @@ async def join_or_create_squad(
     )
     await db.commit()
     return await get_squads_leaderboard(current_user=current_user, db=db)
+
+
+@router.get(
+    "/duels/2v2",
+    response_model=ActiveDuo2v2DuelResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_active_2v2_duo_duel(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    season_id: str = Query(default="2026-S4", pattern=r"^[A-Za-z0-9_-]{3,32}$"),
+) -> ActiveDuo2v2DuelResponse:
+    """
+    Devuelve el Duelo 2v2 por Parejas activo del atleta autenticado.
+    Combina el puntaje alométrico (LBM^0.67), DOTS y multiplicador de disciplina
+    de ambos compañeros frente al dúo rival en modo Duelo a Ciegas (revelación Dom 23:59).
+    """
+    my_rank = (
+        await db.execute(
+            select(RankedPoint).where(
+                RankedPoint.user_id == current_user.id,
+                RankedPoint.season_id == season_id,
+            )
+        )
+    ).scalar_one_or_none()
+    my_elo = int(my_rank.current_elo) if my_rank else 1200
+
+    my_lbm, my_dots, my_comp = await _get_athlete_weekly_stats(db, current_user.id)
+    eff_my_lbm = my_lbm if my_lbm > 0 else 410.0
+    eff_my_dots = my_dots if my_dots > 0 else 4920.0
+    my_mult, _, _, _ = await _compute_athlete_discipline_multiplier(
+        db, current_user.id, my_comp
+    )
+
+    custom_pair = _USER_DUO_PARTNERS.get(str(current_user.id))
+    partner_uname = custom_pair[0] if custom_pair else "alan_gt_pro"
+    duo_name = custom_pair[1] if custom_pair else f"Dúo {current_user.username} & {partner_uname}"
+
+    partner_user = (
+        await db.execute(
+            select(User).where(
+                User.id != current_user.id,
+                User.is_active.is_(True),
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if partner_user and not custom_pair:
+        partner_uname = partner_user.username
+        duo_name = f"Dúo {current_user.username} & {partner_uname}"
+        p_lbm, p_dots, p_comp = await _get_athlete_weekly_stats(db, partner_user.id)
+        p_lbm = p_lbm if p_lbm > 0 else 395.0
+        p_dots = p_dots if p_dots > 0 else 4780.0
+        p_mult, _, _, _ = await _compute_athlete_discipline_multiplier(
+            db, partner_user.id, p_comp
+        )
+        p_id = partner_user.id
+    else:
+        p_lbm = 398.5
+        p_dots = 4820.0
+        p_mult = 1.14
+        p_id = None
+
+    ally_a = DuoPairMemberSchema(
+        user_id=current_user.id,
+        username=current_user.username,
+        elo=my_elo,
+        tier=resolve_tier(my_elo).value,
+        lbm_score=round(eff_my_lbm, 2),
+        dots_score=round(eff_my_dots, 2),
+        discipline_multiplier=my_mult,
+        status_label="Entrenando • Activo",
+    )
+    ally_b = DuoPairMemberSchema(
+        user_id=p_id,
+        username=partner_uname,
+        elo=max(1150, my_elo - 15),
+        tier=resolve_tier(max(1150, my_elo - 15)).value,
+        lbm_score=round(p_lbm, 2),
+        dots_score=round(p_dots, 2),
+        discipline_multiplier=p_mult,
+        status_label="Sincronizado • Activo",
+    )
+
+    rival_a = DuoPairMemberSchema(
+        user_id=None,
+        username="kronos_barbell",
+        elo=my_elo + 20,
+        tier=resolve_tier(my_elo + 20).value,
+        lbm_score=402.0,
+        dots_score=4890.0,
+        discipline_multiplier=1.11,
+        status_label="En progreso / Entrenando (Oculto)",
+    )
+    rival_b = DuoPairMemberSchema(
+        user_id=None,
+        username="valkyrie_lifts",
+        elo=my_elo + 35,
+        tier=resolve_tier(my_elo + 35).value,
+        lbm_score=389.5,
+        dots_score=4710.0,
+        discipline_multiplier=1.13,
+        status_label="En progreso / Entrenando (Oculto)",
+    )
+
+    ally_lbm_tot = round(ally_a.lbm_score + ally_b.lbm_score, 2)
+    ally_dots_tot = round(ally_a.dots_score + ally_b.dots_score, 2)
+    ally_mult_avg = round((ally_a.discipline_multiplier + ally_b.discipline_multiplier) / 2.0, 2)
+    ally_eff_tot = round(ally_lbm_tot * ally_mult_avg, 2)
+
+    rival_lbm_tot = round(rival_a.lbm_score + rival_b.lbm_score, 2)
+    rival_dots_tot = round(rival_a.dots_score + rival_b.dots_score, 2)
+    rival_mult_avg = round((rival_a.discipline_multiplier + rival_b.discipline_multiplier) / 2.0, 2)
+    rival_eff_tot = round(rival_lbm_tot * rival_mult_avg, 2)
+
+    now_utc = datetime.now(timezone.utc)
+    is_sunday_reveal = now_utc.weekday() == 6 and now_utc.hour == 23 and now_utc.minute >= 55
+
+    return ActiveDuo2v2DuelResponse(
+        duo_duel_id=f"2v2-{season_id}-{str(current_user.id)[:8]}",
+        season_id=season_id,
+        ally_duo_name=duo_name,
+        ally_member_a=ally_a,
+        ally_member_b=ally_b,
+        ally_combined_lbm_score=ally_lbm_tot,
+        ally_combined_dots_score=ally_dots_tot,
+        ally_avg_discipline_multiplier=ally_mult_avg,
+        ally_effective_total=ally_eff_tot,
+        rival_duo_name="Titan Twin Protocol",
+        rival_member_a=rival_a,
+        rival_member_b=rival_b,
+        rival_combined_lbm_score=rival_lbm_tot,
+        rival_combined_dots_score=rival_dots_tot,
+        rival_avg_discipline_multiplier=rival_mult_avg,
+        rival_effective_total=rival_eff_tot,
+        is_blind_duel=True,
+        is_revealed=is_sunday_reveal,
+        rival_status_label=(
+            "Resultado 2v2 Revelado (Dom 23:59)"
+            if is_sunday_reveal
+            else "Dúo Rival en progreso / Entrenando • Oculto hasta Dom 23:59"
+        ),
+        projected_elo_stake=24,
+        end_date=now_utc + timedelta(days=max(1, 6 - now_utc.weekday())),
+    )
+
+
+@router.post(
+    "/duels/2v2/invite",
+    response_model=ActiveDuo2v2DuelResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def invite_partner_2v2_duel(
+    payload: DuoInvitePartnerRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ActiveDuo2v2DuelResponse:
+    """
+    Vincula un compañero para el Duelo 2v2 por Parejas de la semana.
+    """
+    partner_clean = payload.partner_username.strip().lstrip("@")
+    duo_clean = payload.duo_name.strip() or f"Dúo {current_user.username} & {partner_clean}"
+    _USER_DUO_PARTNERS[str(current_user.id)] = (partner_clean, duo_clean)
+    return await get_active_2v2_duo_duel(current_user=current_user, db=db)

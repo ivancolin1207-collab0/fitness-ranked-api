@@ -327,9 +327,75 @@ class ApiClientService {
     throw HttpException(_extractErrorDetail(response));
   }
 
+  /// POST /api/v1/auth/forgot-password-direct
+  Future<AuthTokenResponseModel> resetPasswordDirect({
+    required String email,
+    required String newPassword,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.post(
+        Uri.parse('$base/api/v1/auth/forgot-password-direct'),
+        headers: _buildHeaders(null),
+        body: jsonEncode(<String, dynamic>{
+          'email': email.trim(),
+          'new_password': newPassword,
+        }),
+      ),
+    );
+
+    if (response.statusCode == 200) {
+      return AuthTokenResponseModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
   // =========================================================================
-  // 2. BIOMETRÍA (CAPTURA MANUAL + OCR FITDAYS) Y WEARABLES
+  // 2. BIOMETRÍA (CAPTURA MANUAL + OCR FITDAYS), HIDRATACIÓN Y WEARABLES
   // =========================================================================
+
+  /// GET /api/v1/biometrics/hydration/today
+  Future<HydrationStatusModel> fetchTodayHydration({
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.get(
+        Uri.parse('$base/api/v1/biometrics/hydration/today'),
+        headers: _buildHeaders(jwtToken),
+      ),
+    );
+
+    if (response.statusCode == 200) {
+      return HydrationStatusModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
+  /// POST /api/v1/biometrics/hydration
+  Future<HydrationStatusModel> addHydrationLog({
+    required int amountMl,
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.post(
+        Uri.parse('$base/api/v1/biometrics/hydration'),
+        headers: _buildHeaders(jwtToken),
+        body: jsonEncode(<String, dynamic>{
+          'amount_ml': amountMl,
+        }),
+      ),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return HydrationStatusModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
 
   /// POST /api/v1/biometrics/scan (Extracción OCR con Gemini Vision para autocompletar formulario)
   Future<FitdaysExtractedMetricsModel> extractFitdaysOcrMetrics({
@@ -749,6 +815,53 @@ class ApiClientService {
           .whereType<Map<String, dynamic>>()
           .map(SquadLeaderboardEntryModel.fromJson)
           .toList();
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
+  /// GET /api/v1/leaderboard/duels/2v2
+  Future<ActiveDuo2v2DuelModel> fetchActive2v2Duel({
+    required String seasonId,
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.get(
+        Uri.parse('$base/api/v1/leaderboard/duels/2v2').replace(
+          queryParameters: <String, String>{'season_id': seasonId},
+        ),
+        headers: _buildHeaders(jwtToken),
+      ),
+    );
+
+    if (response.statusCode == 200) {
+      return ActiveDuo2v2DuelModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw HttpException(_extractErrorDetail(response));
+  }
+
+  /// POST /api/v1/leaderboard/duels/2v2/invite
+  Future<ActiveDuo2v2DuelModel> invitePartner2v2Duel({
+    required String partnerUsername,
+    required String duoName,
+    required String jwtToken,
+  }) async {
+    final http.Response response = await _sendWithFallback(
+      (String base) => _httpClient.post(
+        Uri.parse('$base/api/v1/leaderboard/duels/2v2/invite'),
+        headers: _buildHeaders(jwtToken),
+        body: jsonEncode(<String, dynamic>{
+          'partner_username': partnerUsername.trim(),
+          'duo_name': duoName.trim(),
+        }),
+      ),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return ActiveDuo2v2DuelModel.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
     }
     throw HttpException(_extractErrorDetail(response));
   }

@@ -65,6 +65,18 @@ class RankedArenaViewModel extends ChangeNotifier {
   HeadToHeadDuelModel? _activeDuel;
   HeadToHeadDuelModel? get activeDuel => _activeDuel;
 
+  ActiveDuo2v2DuelModel? _active2v2Duel;
+  ActiveDuo2v2DuelModel? get active2v2Duel =>
+      _active2v2Duel ?? _buildFallback2v2Duel();
+
+  bool _previewSundayReveal = false;
+  bool get previewSundayReveal => _previewSundayReveal;
+
+  void toggleSundayRevealPreview() {
+    _previewSundayReveal = !_previewSundayReveal;
+    notifyListeners();
+  }
+
   List<SquadLeaderboardEntryModel> _squadsLeaderboard =
       <SquadLeaderboardEntryModel>[];
   List<SquadLeaderboardEntryModel> get squadsLeaderboard => _squadsLeaderboard;
@@ -232,6 +244,9 @@ class RankedArenaViewModel extends ChangeNotifier {
         _repository
             .loadSquadsLeaderboard()
             .catchError((_) => _buildFallbackSquads()),
+        _repository
+            .loadActive2v2Duel(seasonId: _seasonId)
+            .catchError((_) => _buildFallback2v2Duel()),
       ]);
 
       final LeaderboardResponseModel res =
@@ -240,11 +255,14 @@ class RankedArenaViewModel extends ChangeNotifier {
       final List<SquadLeaderboardEntryModel> squads =
           (results[2] as List<SquadLeaderboardEntryModel>?) ??
               _buildFallbackSquads();
+      final ActiveDuo2v2DuelModel? duo2v2 =
+          results[3] as ActiveDuo2v2DuelModel?;
 
       _seasonId = res.seasonId;
       _globalEntries = res.entries;
       _activeDuel = duel;
       _squadsLeaderboard = squads.isNotEmpty ? squads : _buildFallbackSquads();
+      _active2v2Duel = duo2v2 ?? _buildFallback2v2Duel();
 
       for (final LeaderboardRowModel row in _globalEntries) {
         if (_myUsername.isNotEmpty &&
@@ -258,10 +276,70 @@ class RankedArenaViewModel extends ChangeNotifier {
       if (_squadsLeaderboard.isEmpty) {
         _squadsLeaderboard = _buildFallbackSquads();
       }
+      _active2v2Duel ??= _buildFallback2v2Duel();
     } finally {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  ActiveDuo2v2DuelModel _buildFallback2v2Duel() {
+    final String me = _myUsername.isNotEmpty ? _myUsername : 'ivancolin230';
+    return ActiveDuo2v2DuelModel(
+      duoDuelId: '2v2-$_seasonId',
+      seasonId: _seasonId,
+      allyDuoName: 'Dúo $me & alan_gt_pro',
+      allyMemberA: DuoPairMemberModel(
+        username: me,
+        elo: _myElo,
+        tier: _myTier,
+        lbmScore: 412.0,
+        dotsScore: 4940.0,
+        disciplineMultiplier: 1.15,
+        statusLabel: 'Entrenando • Activo',
+      ),
+      allyMemberB: const DuoPairMemberModel(
+        username: 'alan_gt_pro',
+        elo: 1210,
+        tier: 'Plata',
+        lbmScore: 398.5,
+        dotsScore: 4820.0,
+        disciplineMultiplier: 1.12,
+        statusLabel: 'Sincronizado • Activo',
+      ),
+      allyCombinedLbmScore: 810.5,
+      allyCombinedDotsScore: 9760.0,
+      allyAvgDisciplineMultiplier: 1.14,
+      allyEffectiveTotal: 924.0,
+      rivalDuoName: 'Titan Twin Protocol',
+      rivalMemberA: const DuoPairMemberModel(
+        username: 'kronos_barbell',
+        elo: 1225,
+        tier: 'Plata',
+        lbmScore: 402.0,
+        dotsScore: 4890.0,
+        disciplineMultiplier: 1.11,
+        statusLabel: 'En progreso / Entrenando (Oculto)',
+      ),
+      rivalMemberB: const DuoPairMemberModel(
+        username: 'valkyrie_lifts',
+        elo: 1240,
+        tier: 'Plata',
+        lbmScore: 389.5,
+        dotsScore: 4710.0,
+        disciplineMultiplier: 1.13,
+        statusLabel: 'En progreso / Entrenando (Oculto)',
+      ),
+      rivalCombinedLbmScore: 791.5,
+      rivalCombinedDotsScore: 9600.0,
+      rivalAvgDisciplineMultiplier: 1.12,
+      rivalEffectiveTotal: 886.5,
+      isBlindDuel: true,
+      isRevealed: false,
+      rivalStatusLabel:
+          'Dúo Rival en progreso / Entrenando • Oculto hasta Dom 23:59',
+      projectedEloStake: 24,
+    );
   }
 
   Future<void> switchMetricTarget(String target) async {
@@ -347,6 +425,65 @@ class RankedArenaViewModel extends ChangeNotifier {
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('HttpException: ', '');
       return false;
+    } finally {
+      _isMatchmaking = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> invitePartnerFor2v2({
+    required String partnerUsername,
+    required String duoName,
+  }) async {
+    _isMatchmaking = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _active2v2Duel = await _repository.invitePartner2v2Duel(
+        partnerUsername: partnerUsername,
+        duoName: duoName,
+      );
+      _statusBanner =
+          'Duelo 2v2 por Parejas configurado con @$partnerUsername ($duoName).';
+      return true;
+    } catch (_) {
+      final ActiveDuo2v2DuelModel fallback = _buildFallback2v2Duel();
+      _active2v2Duel = ActiveDuo2v2DuelModel(
+        duoDuelId: fallback.duoDuelId,
+        seasonId: fallback.seasonId,
+        allyDuoName: duoName.trim().isNotEmpty
+            ? duoName.trim()
+            : 'Dúo $_myUsername & $partnerUsername',
+        allyMemberA: fallback.allyMemberA,
+        allyMemberB: DuoPairMemberModel(
+          username: partnerUsername.trim().replaceAll('@', ''),
+          elo: _myElo,
+          tier: _myTier,
+          lbmScore: 404.0,
+          dotsScore: 4860.0,
+          disciplineMultiplier: 1.13,
+          statusLabel: 'Sincronizado • Activo',
+        ),
+        allyCombinedLbmScore: 816.0,
+        allyCombinedDotsScore: 9800.0,
+        allyAvgDisciplineMultiplier: 1.14,
+        allyEffectiveTotal: 930.2,
+        rivalDuoName: fallback.rivalDuoName,
+        rivalMemberA: fallback.rivalMemberA,
+        rivalMemberB: fallback.rivalMemberB,
+        rivalCombinedLbmScore: fallback.rivalCombinedLbmScore,
+        rivalCombinedDotsScore: fallback.rivalCombinedDotsScore,
+        rivalAvgDisciplineMultiplier: fallback.rivalAvgDisciplineMultiplier,
+        rivalEffectiveTotal: fallback.rivalEffectiveTotal,
+        isBlindDuel: true,
+        isRevealed: false,
+        rivalStatusLabel: fallback.rivalStatusLabel,
+        projectedEloStake: 24,
+      );
+      _statusBanner =
+          'Duelo 2v2 por Parejas activo junto a @$partnerUsername (Modo Incertidumbre).';
+      return true;
     } finally {
       _isMatchmaking = false;
       notifyListeners();

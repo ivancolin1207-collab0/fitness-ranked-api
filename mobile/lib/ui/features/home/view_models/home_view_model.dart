@@ -24,6 +24,9 @@ class HomeViewModel extends ChangeNotifier {
   List<BiometricRecord> _biometricsHistory = <BiometricRecord>[];
   List<BiometricRecord> get biometricsHistory => _biometricsHistory;
 
+  HydrationStatusModel? _hydration;
+  HydrationStatusModel? get hydration => _hydration;
+
   String _unitSystem = 'KG';
   String get unitSystem => _unitSystem;
 
@@ -67,6 +70,10 @@ class HomeViewModel extends ChangeNotifier {
       _biometrics = results[1] as BiometricRecord?;
       _biometricsHistory =
           (results[2] as List<BiometricRecord>?) ?? <BiometricRecord>[];
+      _hydration = await _repository.loadTodayHydration(
+        weightKg: _biometrics?.weightKg ?? 78.0,
+        strainScore: _wearable?.strainScore ?? 10.0,
+      );
       if (_wearable == null) {
         _statusBanner = 'Sin telemetría sincronizada en Health Connect hoy';
       }
@@ -221,5 +228,43 @@ class HomeViewModel extends ChangeNotifier {
       _isSavingBiometrics = false;
       notifyListeners();
     }
+  }
+
+  Future<void> addWaterIntake(int amountMl) async {
+    _errorMessage = null;
+    try {
+      _hydration = await _repository.addWaterIntakeMl(
+        amountMl: amountMl,
+        weightKg: _biometrics?.weightKg ?? 78.0,
+        strainScore: _wearable?.strainScore ?? 10.0,
+      );
+      final double liters = _hydration!.totalMl / 1000.0;
+      _statusBanner =
+          '+$amountMl ml registrados • Hidratación hoy: ${liters.toStringAsFixed(2)} L (${_hydration!.completionPct.toStringAsFixed(0)}% de tu meta)';
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+      notifyListeners();
+    }
+  }
+
+  String get aiCoachAthletePrescriptionSummary {
+    final double rec = _wearable?.recoveryScore ?? 78.0;
+    final double sleepH = _wearable?.sleepHours ?? 7.4;
+    final double sleepEff = _wearable?.sleepEfficiencyPct ?? 85.0;
+    final double lbm = _biometrics?.leanBodyMassKg ?? 65.0;
+    final int waterMl = _hydration?.totalMl ?? 0;
+    final int goalMl = _hydration?.recommendedGoalMl ?? 2800;
+
+    if (rec < 40.0 || sleepEff < 70.0 || sleepH < 6.0) {
+      return 'Readiness en Zona Roja (${rec.toStringAsFixed(0)}%) y sueño/estrés comprometidos en $_preferredWearable. Gemini Coach reduce volumen (-15% a -20%) y limita a RPE 6.5 (enfoque movilidad/técnica). Hidratación actual: ${(waterMl / 1000.0).toStringAsFixed(2)} L / ${(goalMl / 1000.0).toStringAsFixed(1)} L.';
+    }
+    if (waterMl < 1000) {
+      return 'Alerta de Hidratación ($waterMl ml / $goalMl ml): registra al menos +500 ml antes de tus series principales para sostener tu fuerza alométrica (LBM ${lbm.toStringAsFixed(1)} kg) sin fatiga prematura.';
+    }
+    if (rec >= 80.0) {
+      return 'Zona Verde ($_preferredWearable ${rec.toStringAsFixed(0)}%) + Hidratación óptima (${(waterMl / 1000.0).toStringAsFixed(2)} L). Gemini Coach habilita sobrecarga progresiva (+2.5 kg) escalada a tu LBM (${lbm.toStringAsFixed(1)} kg).';
+    }
+    return 'Zona Amarilla ($_preferredWearable ${rec.toStringAsFixed(0)}%). Mantén cargas objetivo @ RPE 8.0 con hidratación constante (${(waterMl / 1000.0).toStringAsFixed(2)} L / ${(goalMl / 1000.0).toStringAsFixed(1)} L).';
   }
 }

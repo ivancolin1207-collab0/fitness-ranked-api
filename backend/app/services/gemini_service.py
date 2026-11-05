@@ -33,13 +33,20 @@ Devuelve exclusivamente un objeto JSON válido que cumpla con el esquema `Fitday
 """.strip()
 
 COACH_ADAPTIVE_SYSTEM_PROMPT = """
-Eres un Fisiólogo del Ejercicio Clínico (CSCS) y Motor de Prescripción Autoregulada en Tiempo Real.
+Eres un Fisiólogo del Ejercicio Clínico (CSCS) y AI Fit Coach Personalizado por Atleta en Tiempo Real.
+Recibes en `athlete_context` el perfil biométrico completo del atleta:
+- Wearable específico (`source_device`: WHOOP, HUAWEI_GT, SAMSUNG_WATCH, APPLE_WATCH).
+- Sueño (`sleep_hours`, `sleep_efficiency_pct`), estrés/VFC (`hrv_ms`, `resting_hr`), `recovery_score` y `strain_score`.
+- Bioimpedancia Fitdays (`weight_kg`, `fat_percentage`, `muscle_mass_kg`, `body_water_pct`, `visceral_fat`, `bmr`).
+- Hidratación diaria consumida hoy (`hydration_ml_today` vs `hydration_goal_ml`).
+
 Calcula de forma determinista y biomecánicamente segura las cargas (`prescribed_weight_kg`),
 repeticiones (`prescribed_reps`) y esfuerzo (`prescribed_rpe`) de las series restantes:
-1. ZONA ROJA (`recovery_score < 40.0` o `sleep_efficiency_pct < 70.0`): Reduce el volumen o carga planeada entre -15% y -25% de peso, cambia enfoque a hipertrofia moderada/movilidad (`prescribed_rpe <= 6.5`) y en `adjustment_rationale` escribe explícitamente: "Recuperación comprometida ({recovery_score}%) y estrés elevado. Redujimos el volumen prescrito para evitar fatiga del SNC."
-2. ZONA VERDE (`recovery_score > 80.0`): Si la serie previa fue exitosa (`completed_binary_ui == true` y `actual_rpe <= prescribed_rpe`), aplica sobrecarga progresiva (+2.5 kg en sistema KG o +2.27 kg / +5 lb en sistema LB).
-3. FALLO O FATIGA AGUDA (`completed_binary_ui == false` o `actual_reps < prescribed_reps` o `actual_rpe >= 9.5`): Reduce inmediatamente la carga entre -5% y -10% (mínimo -2.5 kg) en las series restantes.
-4. GUARDRAIL: Nunca prescribas un peso mayor al 95% de `historical_1rm_kg` y redondea siempre a múltiplos de 2.5 kg.
+1. ZONA ROJA (`recovery_score < 40.0` o `sleep_efficiency_pct < 70.0` o `sleep_hours < 5.8`): Reduce el volumen o carga planeada entre -15% y -25% de peso, cambia enfoque a hipertrofia moderada/movilidad (`prescribed_rpe <= 6.5`) y en `adjustment_rationale` explica cómo el sueño/estrés detectado por su wearable y su hidratación diaria motivaron la descarga para evitar fatiga del SNC.
+2. DÉFICIT DE HIDRATACIÓN (`hydration_ml_today < 1000`): Si el agua consumida hoy es baja (< 1.0 L), advierte brevemente en `adjustment_rationale` y modera el RPE objetivo (-0.5 RPE) para proteger el rendimiento neuromuscular.
+3. ZONA VERDE (`recovery_score > 80.0`): Si la serie previa fue exitosa (`completed_binary_ui == true` y `actual_rpe <= prescribed_rpe`), aplica sobrecarga progresiva (+2.5 kg en sistema KG o +2.27 kg / +5 lb en sistema LB).
+4. FALLO O FATIGA AGUDA (`completed_binary_ui == false` o `actual_reps < prescribed_reps` o `actual_rpe >= 9.5`): Reduce inmediatamente la carga entre -5% y -10% (mínimo -2.5 kg) en las series restantes.
+5. GUARDRAIL: Nunca prescribas un peso mayor al 95% de `historical_1rm_kg` y redondea siempre a múltiplos de 2.5 kg.
 """.strip()
 
 
@@ -109,12 +116,15 @@ def deterministic_fallback_prescription(
     remaining_sets: list[int],
     unit_system: str = "KG",
     sleep_efficiency_pct: float = 85.0,
+    hydration_ml_today: int = 2000,
+    source_device: str = "WHOOP",
 ) -> AdaptivePrescriptionResponse:
     """
     Motor determinista de prescripción y guardrail biomecánico de respaldo.
     """
     overload_step = 2.5 if unit_system == "KG" else 2.27
     low_sleep_or_stress = sleep_efficiency_pct < 70.0
+    low_hydration = hydration_ml_today < 1000
 
     if recovery_score < 40.0 or low_sleep_or_stress:
         zone = "RED_DELOAD"
@@ -126,6 +136,15 @@ def deterministic_fallback_prescription(
         zone = "YELLOW_MAINTENANCE"
         target_rpe = prescribed_rpe
 
+    if low_hydration and zone != "RED_DELOAD":
+        target_rpe = max(6.5, round(target_rpe - 0.5, 1))
+
+    hydration_suffix = (
+        f" Hidratación baja hoy ({hydration_ml_today} ml): hidrátate entre series."
+        if low_hydration
+        else ""
+    )
+
     if not completed_binary or actual_reps < prescribed_reps or actual_rpe >= 9.5:
         next_weight = round_to_plate_increment(max(20.0, actual_weight_kg * 0.925))
         next_reps = max(
@@ -133,22 +152,22 @@ def deterministic_fallback_prescription(
             prescribed_reps if actual_reps >= prescribed_reps - 1 else prescribed_reps - 1,
         )
         rationale = (
-            f"Ajuste reactivo: RPE {actual_rpe} superó el umbral objetivo. "
-            f"Carga ajustada a {next_weight} kg para proteger técnica y ELO."
+            f"Ajuste reactivo ({source_device}): RPE {actual_rpe} superó el umbral objetivo. "
+            f"Carga ajustada a {next_weight} kg para proteger técnica y ELO.{hydration_suffix}"
         )
     elif zone == "RED_DELOAD":
         deload_factor = 0.80 if (recovery_score < 40.0 and low_sleep_or_stress) else 0.85
         next_weight = round_to_plate_increment(prescribed_weight_kg * deload_factor)
         next_reps = prescribed_reps
         rationale = (
-            f"Recuperación comprometida ({recovery_score:.0f}%) y estrés elevado. "
-            "Redujimos el volumen prescrito para evitar fatiga del SNC."
+            f"Recuperación comprometida ({recovery_score:.0f}%) y estrés elevado ({source_device}). "
+            f"Redujimos el volumen prescrito para evitar fatiga del SNC.{hydration_suffix}"
         )
-    elif zone == "GREEN_OVERLOAD" and actual_rpe <= prescribed_rpe:
+    elif zone == "GREEN_OVERLOAD" and actual_rpe <= prescribed_rpe and not low_hydration:
         next_weight = round_to_plate_increment(actual_weight_kg + overload_step)
         next_reps = prescribed_reps
         rationale = (
-            f"Recuperación óptima ({recovery_score:.0f}%) y serie sólida. "
+            f"Recuperación óptima ({recovery_score:.0f}% en {source_device}) y serie sólida. "
             f"Sobrecarga progresiva: +{overload_step:.1f} kg ({next_weight} kg)."
         )
     else:
@@ -156,7 +175,7 @@ def deterministic_fallback_prescription(
         next_reps = prescribed_reps
         rationale = (
             f"Estabilidad mecánica verificada ({next_weight} kg x {next_reps} reps "
-            f"@ RPE {actual_rpe}). Mantén la carga prescrita."
+            f"@ RPE {actual_rpe}). Mantén la carga prescrita.{hydration_suffix}"
         )
 
     max_safe = round_to_plate_increment(historical_1rm_kg * 0.95)
@@ -224,6 +243,9 @@ async def generate_adaptive_prescription(
             actual_rpe=feedback["actual_rpe"],
             remaining_sets=remaining,
             unit_system=athlete.get("unit_system", "KG"),
+            sleep_efficiency_pct=wearable.get("sleep_efficiency_pct", 85.0),
+            hydration_ml_today=athlete.get("hydration_ml_today", 2000),
+            source_device=wearable.get("source_device", "WHOOP"),
         )
 
     try:
@@ -288,4 +310,7 @@ async def generate_adaptive_prescription(
             actual_rpe=feedback["actual_rpe"],
             remaining_sets=remaining,
             unit_system=athlete.get("unit_system", "KG"),
+            sleep_efficiency_pct=wearable.get("sleep_efficiency_pct", 85.0),
+            hydration_ml_today=athlete.get("hydration_ml_today", 2000),
+            source_device=wearable.get("source_device", "WHOOP"),
         )

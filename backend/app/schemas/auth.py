@@ -74,6 +74,16 @@ class UserLoginRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
 
 
+class PasswordResetDirectRequest(BaseModel):
+    email: str = Field(
+        ...,
+        min_length=3,
+        max_length=255,
+        description="Correo electrónico o username verificado del atleta",
+    )
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 class UserProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

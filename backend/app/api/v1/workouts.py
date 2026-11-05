@@ -50,6 +50,7 @@ from app.schemas.workouts import (
     WorkoutSetDetailResponse,
     WorkoutStartRequest,
 )
+from app.api.v1.biometrics import get_user_today_hydration_ml
 from app.services.gemini_service import (
     generate_adaptive_prescription,
     round_to_plate_increment,
@@ -922,6 +923,14 @@ async def register_set_and_adapt(
         else 58
     )
     sleep_hours = float(latest_wearable.sleep_hours) if latest_wearable else 7.5
+    sleep_eff_val = (
+        float(latest_wearable.sleep_efficiency_pct)
+        if (latest_wearable and latest_wearable.sleep_efficiency_pct is not None)
+        else 85.0
+    )
+    body_water_pct = float(latest_bio.body_water_pct) if latest_bio else 58.0
+    hydration_ml_today = get_user_today_hydration_ml(current_user.id)
+    hydration_goal_ml = int(round(weight_kg * 35.0 + strain_score * 60.0, -1))
     source_dev = (
         latest_wearable.source_device.value
         if latest_wearable
@@ -932,12 +941,15 @@ async def register_set_and_adapt(
         "athlete_context": {
             "user_id": str(current_user.id),
             "unit_system": current_user.unit_system.value,
+            "hydration_ml_today": hydration_ml_today,
+            "hydration_goal_ml": hydration_goal_ml,
             "biometrics": {
                 "weight_kg": weight_kg,
                 "fat_percentage": fat_pct,
                 "muscle_mass_kg": muscle_kg,
                 "skeletal_muscle_pct": skeletal_pct,
                 "visceral_fat": visceral,
+                "body_water_pct": body_water_pct,
                 "bmr": bmr_val,
             },
             "wearable_recovery": {
@@ -947,6 +959,7 @@ async def register_set_and_adapt(
                 "hrv_ms": hrv_ms,
                 "resting_hr": resting_hr,
                 "sleep_hours": sleep_hours,
+                "sleep_efficiency_pct": sleep_eff_val,
             },
         },
         "exercise_context": {

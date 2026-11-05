@@ -36,6 +36,7 @@ from app.models.entities import (
     User,
 )
 from app.schemas.auth import (
+    PasswordResetDirectRequest,
     ProfileSetupUpdateRequest,
     TokenResponse,
     UserLoginRequest,
@@ -411,3 +412,68 @@ async def get_my_profile(
     ranked = await _get_or_create_ranked_point(db, current_user)
     await db.commit()
     return _to_user_profile(current_user, ranked)
+
+
+@router.post(
+    "/reset-password",
+    response_model=TokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+@router.post(
+    "/forgot-password-direct",
+    response_model=TokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def reset_password_direct(
+    payload: PasswordResetDirectRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _rl: Annotated[None, Depends(rate_limit_dependency)],
+) -> TokenResponse:
+    """
+    Permite restablecer la contraseña ingresando el correo electrónico (o username)
+    del atleta registrado en PostgreSQL y emite un nuevo JWT persistente.
+    """
+    try:
+        settings = get_settings()
+        identifier = payload.email.strip()
+        stmt = select(User).where(
+            or_(
+                User.email == identifier.lower(),
+                User.username == identifier,
+            ),
+            User.is_active.is_(True),
+        )
+        user = (await db.execute(stmt)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró ninguna cuenta activa con ese correo electrónico o username.",
+            )
+
+        user.password_hash = hash_password(payload.new_password)
+        ranked = await _get_or_create_ranked_point(db, user)
+        await db.commit()
+        await db.refresh(user)
+
+        token = create_access_token(
+            subject=user.id,
+            extra_claims={
+                "unit_system": user.unit_system.value,
+                "sex": user.biological_sex.value,
+            },
+        )
+        return TokenResponse(
+            access_token=token,
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            user=_to_user_profile(user, ranked),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        traceback.print_exc()
+        logger.exception("Error en reset_password_direct: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No se pudo restablecer la contraseña: {str(e)}",
+        ) from e

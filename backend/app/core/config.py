@@ -6,6 +6,7 @@ Soporta resolución multi-nivel de secretos y conversión automática de
 DATABASE_URL al esquema asíncrono `postgresql+asyncpg://` requerido por SQLAlchemy 2.0.
 """
 
+import hashlib
 import logging
 import os
 import secrets
@@ -23,13 +24,18 @@ BACKEND_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 
 def _resolve_secret_key() -> str:
     """
-    Resolución segura de SECRET_KEY:
-    Entorno -> Archivo local de secreto -> Generación criptográfica persistida localmente (desarrollo).
-    Nunca utiliza cadenas literales estáticas por defecto en código fuente.
+    Resolución segura y persistente de SECRET_KEY:
+    1. Variable de entorno explícita SECRET_KEY / JWT_SECRET_KEY.
+    2. Derivación determinista desde DATABASE_URL en Render para que los tokens JWT
+       nunca se invaliden tras reinicios de contenedores efímeros.
+    3. Archivo local persistido para desarrollo.
     """
     env_key = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET_KEY")
     if env_key:
         return env_key
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    if db_url:
+        return hashlib.sha256(f"apexmetrix-jwt-key::{db_url}".encode("utf-8")).hexdigest()
     secret_file = BACKEND_ENV_PATH.parent / "jwt_secret.txt"
     if secret_file.exists():
         existing = secret_file.read_text(encoding="utf-8").strip()
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     SECRET_KEY: str = _resolve_secret_key()
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 365
 
     ALLOWED_ORIGINS: list[str] = [
         "https://apexmetrix-api.onrender.com",

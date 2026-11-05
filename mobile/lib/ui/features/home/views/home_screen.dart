@@ -232,6 +232,10 @@ class HomeScreen extends StatelessWidget {
                               ),
                             ],
                             const SizedBox(height: 10),
+                            _buildDailyHydrationCard(context),
+                            const SizedBox(height: 10),
+                            _buildPersonalizedAiFitCoachCard(context),
+                            const SizedBox(height: 10),
                             _buildDualBiometricCaptureActions(context),
                             const SizedBox(height: 10),
                             if (bio != null)
@@ -316,6 +320,278 @@ class HomeScreen extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 fontSize: 11.5,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDailyHydrationCard(BuildContext context) {
+    final HydrationStatusModel? hyd = viewModel.hydration;
+    final double weightKg = viewModel.biometrics?.weightKg ?? 78.0;
+    final double strain = viewModel.wearable?.strainScore ?? 10.0;
+    final int goalMl = hyd?.recommendedGoalMl ??
+        ((weightKg * 35.0) + (strain * 60.0)).round().clamp(2000, 6000);
+    final int totalMl = hyd?.totalMl ?? 0;
+    final double progress = (totalMl / goalMl).clamp(0.0, 1.0);
+    final double pct = ((totalMl / goalMl) * 100.0).clamp(0.0, 150.0);
+    final List<HydrationLogEntryModel> logs =
+        hyd?.logs ?? const <HydrationLogEntryModel>[];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: ApexTheme.cyanElectric.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(
+                      color: ApexTheme.cyanElectric.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.water_drop_rounded,
+                    color: ApexTheme.cyanElectric,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Text(
+                        'HIDRATACIÓN REACTIVA DIARIA',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      Text(
+                        'Meta dinámica (Peso ${weightKg.toStringAsFixed(0)} kg + Strain ${strain.toStringAsFixed(1)}): ${(goalMl / 1000.0).toStringAsFixed(2)} L',
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          color: ApexTheme.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (pct >= 80
+                            ? ApexTheme.readinessGreen
+                            : ApexTheme.cyanElectric)
+                        .withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: pct >= 80
+                          ? ApexTheme.readinessGreen
+                          : ApexTheme.cyanElectric,
+                    ),
+                  ),
+                  child: Text(
+                    '${(totalMl / 1000.0).toStringAsFixed(2)} / ${(goalMl / 1000.0).toStringAsFixed(1)} L (${pct.toStringAsFixed(0)}%)',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: pct >= 80
+                          ? ApexTheme.readinessGreen
+                          : ApexTheme.cyanElectric,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: ApexTheme.obsidianBg,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  pct >= 80 ? ApexTheme.readinessGreen : ApexTheme.cyanElectric,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: ApexTheme.cyanElectric,
+                      side: const BorderSide(color: ApexTheme.cyanElectric),
+                    ),
+                    onPressed: () => viewModel.addWaterIntake(250),
+                    icon: const Icon(Icons.add_rounded, size: 15),
+                    label: const Text(
+                      '+250 ml',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: ApexTheme.voltAccent,
+                      side: const BorderSide(color: ApexTheme.voltAccent),
+                    ),
+                    onPressed: () => viewModel.addWaterIntake(500),
+                    icon: const Icon(Icons.add_rounded, size: 15),
+                    label: const Text(
+                      '+500 ml',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: ApexTheme.cyanElectric,
+                      foregroundColor: Colors.black,
+                    ),
+                    onPressed: () => viewModel.addWaterIntake(1000),
+                    icon: const Icon(Icons.water_drop_rounded, size: 14),
+                    label: const Text(
+                      '+1 L',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (logs.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: ApexTheme.obsidianBg,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: ApexTheme.textMuted.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: logs.reversed.take(4).map((HydrationLogEntryModel e) {
+                    final String amountLabel = e.amountMl >= 1000
+                        ? '${(e.amountMl / 1000.0).toStringAsFixed(1)} L consumido'
+                        : '${e.amountMl} ml consumido';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: <Widget>[
+                          const Icon(
+                            Icons.schedule_rounded,
+                            size: 12,
+                            color: ApexTheme.cyanElectric,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${e.formattedTime}: ',
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              color: ApexTheme.cyanElectric,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              amountLabel,
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                color: ApexTheme.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPersonalizedAiFitCoachCard(BuildContext context) {
+    final String summary = viewModel.aiCoachAthletePrescriptionSummary;
+    final WearableMetricRecord? w = viewModel.wearable;
+    final bool isRed = w != null &&
+        (w.recoveryScore < 40.0 || w.sleepEfficiencyPct < 70.0);
+    final Color accent = isRed
+        ? ApexTheme.deloadCrimson
+        : (w != null && w.recoveryScore >= 80.0
+            ? ApexTheme.readinessGreen
+            : ApexTheme.voltAccent);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.7)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.auto_awesome_rounded, color: accent, size: 19),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'GEMINI AI FIT COACH • PERFIL BIOMÉTRICO INTEGRAL',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w900,
+                    color: accent,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  summary,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: ApexTheme.textPrimary,
+                    height: 1.32,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

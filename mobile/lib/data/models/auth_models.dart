@@ -56,17 +56,39 @@ class UserProfileModel {
           : DateTime.now(),
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'username': username,
+      'full_name': fullName,
+      'masked_email': maskedEmail,
+      'birth_date': birthDate?.toIso8601String(),
+      'age_years': ageYears,
+      'biological_sex': biologicalSex,
+      'height_cm': heightCm,
+      'training_goal': trainingGoal,
+      'preferred_wearable': preferredWearable,
+      'unit_system': unitSystem,
+      'onboarding_completed': onboardingCompleted,
+      'current_elo': currentElo,
+      'current_tier': currentTier,
+      'created_at': createdAt.toIso8601String(),
+    };
+  }
 }
 
 class AuthTokenResponseModel {
   final String accessToken;
   final String tokenType;
   final int expiresInSeconds;
+  final UserProfileModel? user;
 
   const AuthTokenResponseModel({
     required this.accessToken,
     required this.tokenType,
     required this.expiresInSeconds,
+    this.user,
   });
 
   factory AuthTokenResponseModel.fromJson(Map<String, dynamic> json) {
@@ -74,7 +96,10 @@ class AuthTokenResponseModel {
       accessToken: (json['access_token'] as String?) ?? '',
       tokenType: (json['token_type'] as String?) ?? 'bearer',
       expiresInSeconds:
-          (json['expires_in_seconds'] as num?)?.toInt() ?? 3600,
+          (json['expires_in_seconds'] as num?)?.toInt() ?? 31536000,
+      user: json['user'] is Map<String, dynamic>
+          ? UserProfileModel.fromJson(json['user'] as Map<String, dynamic>)
+          : null,
     );
   }
 }

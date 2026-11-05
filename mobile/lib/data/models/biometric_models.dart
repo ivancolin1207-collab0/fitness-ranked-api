@@ -305,3 +305,67 @@ class WearableMetricRecord {
     };
   }
 }
+
+class HydrationLogEntryModel {
+  final int amountMl;
+  final String formattedTime;
+  final DateTime loggedAt;
+
+  const HydrationLogEntryModel({
+    required this.amountMl,
+    required this.formattedTime,
+    required this.loggedAt,
+  });
+
+  factory HydrationLogEntryModel.fromJson(Map<String, dynamic> json) {
+    final String rawAt = (json['logged_at'] as String?) ?? '';
+    return HydrationLogEntryModel(
+      amountMl: (json['amount_ml'] as num?)?.toInt() ?? 250,
+      formattedTime: (json['formatted_time'] as String?) ?? '09:00 AM',
+      loggedAt: DateTime.tryParse(rawAt) ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'amount_ml': amountMl,
+      'formatted_time': formattedTime,
+      'logged_at': loggedAt.toIso8601String(),
+    };
+  }
+}
+
+class HydrationStatusModel {
+  final String date;
+  final int totalMl;
+  final int recommendedGoalMl;
+  final double completionPct;
+  final List<HydrationLogEntryModel> logs;
+
+  const HydrationStatusModel({
+    required this.date,
+    required this.totalMl,
+    required this.recommendedGoalMl,
+    required this.completionPct,
+    required this.logs,
+  });
+
+  factory HydrationStatusModel.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> rawLogs =
+        (json['logs'] as List<dynamic>?) ?? <dynamic>[];
+    final int tot = (json['total_ml'] as num?)?.toInt() ?? 0;
+    final int goal =
+        ((json['recommended_goal_ml'] as num?)?.toInt() ?? 2800).clamp(1500, 6500);
+    return HydrationStatusModel(
+      date: (json['date'] as String?) ?? '',
+      totalMl: tot,
+      recommendedGoalMl: goal,
+      completionPct: (json['completion_pct'] as num?)?.toDouble() ??
+          ((tot / goal) * 100.0).clamp(0.0, 150.0),
+      logs: rawLogs
+          .whereType<Map<String, dynamic>>()
+          .map(HydrationLogEntryModel.fromJson)
+          .toList(),
+    );
+  }
+}

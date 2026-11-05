@@ -111,13 +111,24 @@ class RankedArenaScreen extends StatelessWidget {
                             const SizedBox(height: 10),
                             _buildMatchmakingActionsRow(context),
                             const SizedBox(height: 10),
-                            // 1. Duelo Semanal 1v1 Activo
+                            // 1. Duelo Semanal 1v1 Activo (Modo Incertidumbre / Blind Duel + Reto Simétrico IA)
                             if (viewModel.activeDuel != null)
-                              _buildHeadToHeadDuelCard(viewModel.activeDuel!)
+                              _buildHeadToHeadDuelCard(
+                                context,
+                                viewModel.activeDuel!,
+                              )
                             else
                               _buildNoActiveDuelCard(context),
                             const SizedBox(height: 14),
-                            // 2. Duelo Simultáneo de Escuadras / Grupal (3 a 5 atletas)
+                            // 2. Duelo 2v2 por Parejas (Blind Duel Activo)
+                            if (viewModel.active2v2Duel != null) ...<Widget>[
+                              _buildDuo2v2PairsDuelSection(
+                                context,
+                                viewModel.active2v2Duel!,
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            // 3. Guerra de Escuadras / Grupal (3 a 5 atletas)
                             _buildSquadsSimultaneousSection(context),
                             const SizedBox(height: 14),
                             const Text(
@@ -421,15 +432,27 @@ class RankedArenaScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeadToHeadDuelCard(HeadToHeadDuelModel duel) {
+  Widget _buildHeadToHeadDuelCard(
+    BuildContext context,
+    HeadToHeadDuelModel duel,
+  ) {
     final bool isLbm = viewModel.metricTarget == 'LBM_ALLOMETRIC_RATIO';
-    final double myScore =
+    final double myBaseScore =
         isLbm ? duel.challengerLbmScore : duel.challengerDotsScore;
-    final double oppScore =
+    final double oppBaseScore =
         isLbm ? duel.opponentLbmScore : duel.opponentDotsScore;
-    final double total = myScore + oppScore;
-    final double myRatio =
-        total > 0 ? (myScore / total).clamp(0.1, 0.9) : 0.5;
+    final double myEffective = duel.challengerEffectiveScore > 0
+        ? duel.challengerEffectiveScore
+        : myBaseScore * duel.challengerDisciplineMultiplier;
+    final double oppEffective = duel.opponentEffectiveScore > 0
+        ? duel.opponentEffectiveScore
+        : oppBaseScore * duel.opponentDisciplineMultiplier;
+
+    final bool isRevealed = duel.isRevealed || viewModel.previewSundayReveal;
+    final double total = myEffective + oppEffective;
+    final double myRatio = isRevealed
+        ? (total > 0 ? (myEffective / total).clamp(0.1, 0.9) : 0.5)
+        : 0.5;
 
     return Card(
       shape: RoundedRectangleBorder(
@@ -443,9 +466,17 @@ class RankedArenaScreen extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
+                const Icon(
+                  Icons.visibility_off_rounded,
+                  size: 16,
+                  color: ApexTheme.cyanElectric,
+                ),
+                const SizedBox(width: 6),
                 const Expanded(
                   child: Text(
-                    '1. DUELO SEMANAL 1v1 ACTIVO • HEAD-TO-HEAD',
+                    '1. DUELO 1v1 A CIEGAS • MODO INCERTIDUMBRE',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w900,
@@ -454,10 +485,45 @@ class RankedArenaScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: viewModel.toggleSundayRevealPreview,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (isRevealed
+                              ? ApexTheme.readinessGreen
+                              : ApexTheme.warningAmber)
+                          .withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: isRevealed
+                            ? ApexTheme.readinessGreen
+                            : ApexTheme.warningAmber,
+                      ),
+                    ),
+                    child: Text(
+                      isRevealed
+                          ? 'REVELADO DOM 23:59'
+                          : 'OCULTO • VER DOM 23:59',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w900,
+                        color: isRevealed
+                            ? ApexTheme.readinessGreen
+                            : ApexTheme.warningAmber,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
+                    horizontal: 7,
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
@@ -465,7 +531,7 @@ class RankedArenaScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    'EN JUEGO: ±${duel.projectedEloStake} ELO',
+                    '±${duel.projectedEloStake} ELO',
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w900,
@@ -475,7 +541,7 @@ class RankedArenaScreen extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Row(
               children: <Widget>[
                 Expanded(
@@ -493,15 +559,15 @@ class RankedArenaScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${duel.challengerElo} ELO • ${duel.challengerTier}',
+                        '${duel.challengerElo} ELO • Mult. Disciplina ${duel.challengerDisciplineMultiplier.toStringAsFixed(2)}x',
                         style: const TextStyle(
-                          fontSize: 11,
+                          fontSize: 10.5,
                           color: ApexTheme.textMuted,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${myScore.toStringAsFixed(1)} pts • RPE ${duel.challengerRpeCompliancePct}%',
+                        '${myEffective.toStringAsFixed(1)} pts • RPE ${duel.challengerRpeCompliancePct}%',
                         style: const TextStyle(
                           color: ApexTheme.voltAccent,
                           fontWeight: FontWeight.w800,
@@ -538,19 +604,30 @@ class RankedArenaScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${duel.opponentElo} ELO • ${duel.opponentTier}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: ApexTheme.textMuted,
+                        isRevealed
+                            ? '${duel.opponentElo} ELO • Mult. ${duel.opponentDisciplineMultiplier.toStringAsFixed(2)}x'
+                            : 'Estado: En progreso / Entrenando',
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: isRevealed
+                              ? ApexTheme.textMuted
+                              : ApexTheme.warningAmber,
+                          fontWeight:
+                              isRevealed ? FontWeight.w500 : FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${oppScore.toStringAsFixed(1)} pts • RPE ${duel.opponentRpeCompliancePct}%',
+                        isRevealed
+                            ? '${oppEffective.toStringAsFixed(1)} pts • RPE ${duel.opponentRpeCompliancePct}%'
+                            : '??? pts • OCULTO (Dom 23:59)',
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: ApexTheme.cyanElectric,
-                          fontWeight: FontWeight.w800,
+                        style: TextStyle(
+                          color: isRevealed
+                              ? ApexTheme.cyanElectric
+                              : ApexTheme.warningAmber,
+                          fontWeight: FontWeight.w900,
                           fontSize: 11.5,
                         ),
                       ),
@@ -575,7 +652,353 @@ class RankedArenaScreen extends StatelessWidget {
                     flex: ((1.0 - myRatio) * 100).round(),
                     child: Container(
                       height: 9,
-                      color: ApexTheme.cyanElectric,
+                      color: isRevealed
+                          ? ApexTheme.cyanElectric
+                          : ApexTheme.warningAmber.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Desglose del Multiplicador de Disciplina (Sueño + Consistencia + Strain)
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: ApexTheme.obsidianBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: ApexTheme.cardBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      const Icon(
+                        Icons.verified_rounded,
+                        size: 14,
+                        color: ApexTheme.voltAccent,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'MULTIPLICADOR DE DISCIPLINA INTEGRADO: ${duel.challengerDisciplineMultiplier.toStringAsFixed(2)}x',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            color: ApexTheme.voltAccent,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: <Widget>[
+                      _buildDisciplinePill(
+                        'Sueño Wearable: +${duel.challengerSleepBonusPct.toStringAsFixed(1)}%',
+                        ApexTheme.cyanElectric,
+                      ),
+                      _buildDisciplinePill(
+                        'Consistencia Entrenos: +${duel.challengerConsistencyBonusPct.toStringAsFixed(1)}%',
+                        ApexTheme.readinessGreen,
+                      ),
+                      _buildDisciplinePill(
+                        'Balance Rec/Strain: ${duel.challengerStrainBalancePct.toStringAsFixed(0)}%',
+                        ApexTheme.voltAccent,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (duel.symmetricChallenge.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              _buildSymmetricWeeklyChallengeBox(duel, isRevealed),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDisciplinePill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 9.5,
+          fontWeight: FontWeight.w800,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSymmetricWeeklyChallengeBox(
+    HeadToHeadDuelModel duel,
+    bool isRevealed,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: ApexTheme.obsidianBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: ApexTheme.cyanElectric.withValues(alpha: 0.55),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            children: <Widget>[
+              Icon(
+                Icons.balance_rounded,
+                size: 14,
+                color: ApexTheme.cyanElectric,
+              ),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'RETO SEMANAL SIMÉTRICO IA • PARIDAD ALOMÉTRICA (LBM^0.67)',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    color: ApexTheme.cyanElectric,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          const Text(
+            'Mismos patrones biomecánicos con cargas escaladas a la masa magra y fuerza relativa de cada atleta (paridad 100% sin importar peso o sexo biológico):',
+            style: TextStyle(fontSize: 9.8, color: ApexTheme.textMuted),
+          ),
+          const SizedBox(height: 6),
+          ...duel.symmetricChallenge.map((SymmetricChallengeExerciseModel ex) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                children: <Widget>[
+                  const Icon(
+                    Icons.fitness_center_rounded,
+                    size: 12,
+                    color: ApexTheme.voltAccent,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${ex.exerciseName} (${ex.targetSets}×${ex.targetReps} @ RPE ${ex.targetRpe.toStringAsFixed(1)})',
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        color: ApexTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    isRevealed
+                        ? 'Tú: ${ex.challengerPrescribedWeightKg.toStringAsFixed(1)} kg | Rival: ${ex.opponentPrescribedWeightKg.toStringAsFixed(1)} kg'
+                        : 'Tu meta: ${ex.challengerPrescribedWeightKg.toStringAsFixed(1)} kg (Rival oculto)',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: ApexTheme.voltAccent,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  /// Sección 2: Duelo 2v2 por Parejas (Suma combinada de ambos compañeros vs Pareja Rival en Duelo a Ciegas)
+  Widget _buildDuo2v2PairsDuelSection(
+    BuildContext context,
+    ActiveDuo2v2DuelModel duo,
+  ) {
+    final bool isRevealed = duo.isRevealed || viewModel.previewSundayReveal;
+
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: ApexTheme.cyanElectric.withValues(alpha: 0.8),
+          width: 1.2,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.people_alt_rounded,
+                  color: ApexTheme.cyanElectric,
+                  size: 18,
+                ),
+                const SizedBox(width: 7),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '2. DUELO 2v2 POR PAREJAS • MODO INCERTIDUMBRE',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w900,
+                          color: ApexTheme.cyanElectric,
+                        ),
+                      ),
+                      Text(
+                        'Suma combinada LBM^0.67 × Disciplina de ambos compañeros vs Dúo Rival',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: ApexTheme.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () => _openDuo2v2Modal(context),
+                  icon: const Icon(
+                    Icons.person_add_alt_1_rounded,
+                    size: 14,
+                    color: ApexTheme.voltAccent,
+                  ),
+                  label: const Text(
+                    'Pareja 2v2',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: ApexTheme.voltAccent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: ApexTheme.obsidianBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: ApexTheme.cardBorder),
+              ),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          duo.allyDuoName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: ApexTheme.voltAccent,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '@${duo.allyMemberA.username} (${duo.allyMemberA.lbmScore.toStringAsFixed(0)}) + @${duo.allyMemberB.username} (${duo.allyMemberB.lbmScore.toStringAsFixed(0)})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: ApexTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'Total Dúo: ${duo.allyEffectiveTotal.toStringAsFixed(1)} pts (Mult. ${duo.allyAvgDisciplineMultiplier.toStringAsFixed(2)}x)',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: ApexTheme.voltAccent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      '2v2',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color: ApexTheme.cyanElectric,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: <Widget>[
+                        Text(
+                          duo.rivalDuoName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: ApexTheme.cyanElectric,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '@${duo.rivalMemberA.username} & @${duo.rivalMemberB.username}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: ApexTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          isRevealed
+                              ? 'Total Rival: ${duo.rivalEffectiveTotal.toStringAsFixed(1)} pts'
+                              : '??? pts • En progreso (Dom 23:59)',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: isRevealed
+                                ? ApexTheme.cyanElectric
+                                : ApexTheme.warningAmber,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -620,7 +1043,7 @@ class RankedArenaScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        '2. DUELO DE ESCUADRAS • SQUADS LEADERBOARD (3–5 ATLETAS)',
+                        '3. GUERRA DE ESCUADRAS • SQUADS LEADERBOARD (3–5 ATLETAS)',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -868,6 +1291,92 @@ class RankedArenaScreen extends StatelessWidget {
       ),
       builder: (BuildContext sheetContext) {
         return _OpponentSearchModalSheet(viewModel: viewModel);
+      },
+    );
+  }
+
+  void _openDuo2v2Modal(BuildContext context) {
+    final ActiveDuo2v2DuelModel? duo = viewModel.active2v2Duel;
+    final TextEditingController partnerCtrl = TextEditingController(
+      text: duo?.allyMemberB.username ?? 'alan_gt_pro',
+    );
+    final TextEditingController duoNameCtrl = TextEditingController(
+      text: duo?.allyDuoName ?? 'Apex Twin Barbell',
+    );
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: ApexTheme.cardGraphite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (BuildContext sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 18,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text(
+                'CONFIGURAR PAREJA 2v2 (DUELO A CIEGAS)',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: ApexTheme.cyanElectric,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Tu puntaje LBM^0.67 y Multiplicador de Disciplina se suman a los de tu compañero frente al Dúo Rival (puntaje rival oculto hasta Domingo 23:59).',
+                style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: partnerCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Username de tu compañero (ej. Alan)',
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: duoNameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Nombre del Dúo 2v2',
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: ApexTheme.cyanElectric,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                onPressed: () async {
+                  final bool ok = await viewModel.invitePartnerFor2v2(
+                    partnerUsername: partnerCtrl.text.trim(),
+                    duoName: duoNameCtrl.text.trim(),
+                  );
+                  if (ok && sheetContext.mounted) {
+                    Navigator.of(sheetContext).pop();
+                  }
+                },
+                icon: const Icon(Icons.people_alt_rounded),
+                label: const Text(
+                  'GUARDAR PAREJA 2v2',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+        );
       },
     );
   }

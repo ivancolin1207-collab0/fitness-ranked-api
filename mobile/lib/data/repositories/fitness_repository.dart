@@ -77,8 +77,45 @@ class FitnessRepository {
   }
 
   // =========================================================================
-  // 1. AUTENTICACIÓN Y PERFIL
+  // 1. AUTENTICACIÓN, AUTO-LOGIN PERSISTENTE Y RECUPERACIÓN DE CUENTA
   // =========================================================================
+
+  /// Verifica si existe un token JWT válido en disco y restaura de inmediato
+  /// el perfil persistido para saltar directo a la pantalla principal (Auto-login).
+  Future<UserProfileModel?> restoreCachedSessionProfile() async {
+    final String? token = await _storageService.readJwtToken();
+    if (token == null || token.isEmpty) {
+      return null;
+    }
+
+    final UserProfileModel? cached =
+        await _storageService.readUserProfileCache();
+    if (cached != null) {
+      return cached;
+    }
+
+    final String savedUnit = await _storageService.readUnitSystem();
+    final String savedWearable = await _storageService.readPreferredWearable();
+    final String? savedUserId = await _storageService.readUserId();
+
+    final UserProfileModel fallback = UserProfileModel(
+      id: savedUserId ?? 'persisted-session',
+      username: 'atleta_activo',
+      fullName: 'Atleta ApexMetrix',
+      maskedEmail: '',
+      biologicalSex: 'MALE',
+      heightCm: 175.0,
+      trainingGoal: 'HIPERTROFIA',
+      preferredWearable: savedWearable,
+      unitSystem: savedUnit,
+      onboardingCompleted: true,
+      currentElo: 1200,
+      currentTier: 'Plata',
+      createdAt: DateTime.now(),
+    );
+    await _storageService.saveUserProfileCache(fallback);
+    return fallback;
+  }
 
   Future<UserProfileModel> login({
     required String email,
@@ -89,9 +126,12 @@ class FitnessRepository {
       password: password,
     );
     await _storageService.saveJwtToken(tokenRes.accessToken);
-    final UserProfileModel profile = await _apiClient.fetchMyProfile(
-      jwtToken: tokenRes.accessToken,
-    );
+    final UserProfileModel profile = tokenRes.user ??
+        await _apiClient.fetchMyProfile(
+          jwtToken: tokenRes.accessToken,
+        );
+    await _storageService.saveUserId(profile.id);
+    await _storageService.saveUserProfileCache(profile);
     await _storageService.saveUnitSystem(profile.unitSystem);
     await _storageService.savePreferredWearable(profile.preferredWearable);
     return profile;
@@ -122,9 +162,33 @@ class FitnessRepository {
       unitSystem: unitSystem,
     );
     await _storageService.saveJwtToken(tokenRes.accessToken);
-    final UserProfileModel profile = await _apiClient.fetchMyProfile(
-      jwtToken: tokenRes.accessToken,
+    final UserProfileModel profile = tokenRes.user ??
+        await _apiClient.fetchMyProfile(
+          jwtToken: tokenRes.accessToken,
+        );
+    await _storageService.saveUserId(profile.id);
+    await _storageService.saveUserProfileCache(profile);
+    await _storageService.saveUnitSystem(profile.unitSystem);
+    await _storageService.savePreferredWearable(profile.preferredWearable);
+    return profile;
+  }
+
+  Future<UserProfileModel> resetPasswordDirect({
+    required String email,
+    required String newPassword,
+  }) async {
+    final AuthTokenResponseModel tokenRes =
+        await _apiClient.resetPasswordDirect(
+      email: email,
+      newPassword: newPassword,
     );
+    await _storageService.saveJwtToken(tokenRes.accessToken);
+    final UserProfileModel profile = tokenRes.user ??
+        await _apiClient.fetchMyProfile(
+          jwtToken: tokenRes.accessToken,
+        );
+    await _storageService.saveUserId(profile.id);
+    await _storageService.saveUserProfileCache(profile);
     await _storageService.saveUnitSystem(profile.unitSystem);
     await _storageService.savePreferredWearable(profile.preferredWearable);
     return profile;
@@ -139,11 +203,13 @@ class FitnessRepository {
       final UserProfileModel profile = await _apiClient.fetchMyProfile(
         jwtToken: token,
       );
+      await _storageService.saveUserId(profile.id);
+      await _storageService.saveUserProfileCache(profile);
       await _storageService.saveUnitSystem(profile.unitSystem);
       await _storageService.savePreferredWearable(profile.preferredWearable);
       return profile;
     } catch (_) {
-      return null;
+      return await _storageService.readUserProfileCache();
     }
   }
 
@@ -155,6 +221,8 @@ class FitnessRepository {
       payload: payload,
       jwtToken: token,
     );
+    await _storageService.saveUserId(updated.id);
+    await _storageService.saveUserProfileCache(updated);
     await _storageService.saveUnitSystem(updated.unitSystem);
     await _storageService.savePreferredWearable(updated.preferredWearable);
     return updated;
@@ -276,6 +344,112 @@ class FitnessRepository {
     return _apiClient.saveBiometricRecord(
       payload: payload,
       jwtToken: token,
+    );
+  }
+
+  String _todayYmd() {
+    final DateTime now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  String _formatAmPm(DateTime dt) {
+    final int h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final String m = dt.minute.toString().padLeft(2, '0');
+    final String suffix = dt.hour < 12 ? 'AM' : 'PM';
+    return '${h.toString().padLeft(2, '0')}:$m $suffix';
+  }
+
+  Future<HydrationStatusModel> loadTodayHydration({
+    double weightKg = 78.0,
+    double strainScore = 10.0,
+  }) async {
+    final String ymd = _todayYmd();
+    final int recommendedGoal =
+        ((weightKg * 35.0) + (strainScore * 60.0)).round().clamp(2000, 6000);
+    final List<Map<String, dynamic>> localRaw =
+        await _storageService.readHydrationLogsForDate(ymd);
+
+    try {
+      final String? token = await _storageService.readJwtToken();
+      if (token != null && token.isNotEmpty) {
+        final HydrationStatusModel cloud = await _apiClient.fetchTodayHydration(
+          jwtToken: token,
+        );
+        if (cloud.logs.isNotEmpty || localRaw.isEmpty) {
+          await _storageService.saveHydrationLogsForDate(
+            ymd,
+            cloud.logs.map((HydrationLogEntryModel e) => e.toJson()).toList(),
+          );
+          return cloud;
+        }
+      }
+    } catch (_) {}
+
+    final List<HydrationLogEntryModel> localEntries =
+        localRaw.map(HydrationLogEntryModel.fromJson).toList();
+    final int total = localEntries.fold<int>(
+      0,
+      (int acc, HydrationLogEntryModel item) => acc + item.amountMl,
+    );
+    return HydrationStatusModel(
+      date: ymd,
+      totalMl: total,
+      recommendedGoalMl: recommendedGoal,
+      completionPct:
+          ((total / recommendedGoal) * 100.0).clamp(0.0, 150.0),
+      logs: localEntries,
+    );
+  }
+
+  Future<HydrationStatusModel> addWaterIntakeMl({
+    required int amountMl,
+    double weightKg = 78.0,
+    double strainScore = 10.0,
+  }) async {
+    final String ymd = _todayYmd();
+    final DateTime now = DateTime.now();
+    final HydrationLogEntryModel newEntry = HydrationLogEntryModel(
+      amountMl: amountMl,
+      formattedTime: _formatAmPm(now),
+      loggedAt: now,
+    );
+
+    final List<Map<String, dynamic>> currentRaw =
+        await _storageService.readHydrationLogsForDate(ymd);
+    final List<Map<String, dynamic>> updatedRaw = <Map<String, dynamic>>[
+      ...currentRaw,
+      newEntry.toJson(),
+    ];
+    await _storageService.saveHydrationLogsForDate(ymd, updatedRaw);
+
+    try {
+      final String? token = await _storageService.readJwtToken();
+      if (token != null && token.isNotEmpty) {
+        final HydrationStatusModel synced = await _apiClient.addHydrationLog(
+          amountMl: amountMl,
+          jwtToken: token,
+        );
+        if (synced.totalMl >= amountMl) {
+          return synced;
+        }
+      }
+    } catch (_) {}
+
+    final int recommendedGoal =
+        ((weightKg * 35.0) + (strainScore * 60.0)).round().clamp(2000, 6000);
+    final List<HydrationLogEntryModel> entries =
+        updatedRaw.map(HydrationLogEntryModel.fromJson).toList();
+    final int total = entries.fold<int>(
+      0,
+      (int acc, HydrationLogEntryModel item) => acc + item.amountMl,
+    );
+    return HydrationStatusModel(
+      date: ymd,
+      totalMl: total,
+      recommendedGoalMl: recommendedGoal,
+      completionPct:
+          ((total / recommendedGoal) * 100.0).clamp(0.0, 150.0),
+      logs: entries,
     );
   }
 
@@ -404,6 +578,28 @@ class FitnessRepository {
     return _apiClient.joinOrCreateSquad(
       squadName: squadName,
       squadTag: squadTag,
+      jwtToken: token,
+    );
+  }
+
+  Future<ActiveDuo2v2DuelModel> loadActive2v2Duel({
+    String seasonId = '2026-S4',
+  }) async {
+    final String token = await _requireToken();
+    return _apiClient.fetchActive2v2Duel(
+      seasonId: seasonId,
+      jwtToken: token,
+    );
+  }
+
+  Future<ActiveDuo2v2DuelModel> invitePartner2v2Duel({
+    required String partnerUsername,
+    required String duoName,
+  }) async {
+    final String token = await _requireToken();
+    return _apiClient.invitePartner2v2Duel(
+      partnerUsername: partnerUsername,
+      duoName: duoName,
       jwtToken: token,
     );
   }

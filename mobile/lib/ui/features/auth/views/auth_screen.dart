@@ -272,6 +272,24 @@ class _AuthScreenState extends State<AuthScreen> {
                               ),
                             ),
                             const SizedBox(height: 12),
+                            TextButton.icon(
+                              onPressed: widget.viewModel.isSubmitting
+                                  ? null
+                                  : () => _openResetPasswordDialog(context),
+                              icon: const Icon(
+                                Icons.lock_reset_rounded,
+                                size: 17,
+                                color: ApexTheme.voltAccent,
+                              ),
+                              label: const Text(
+                                '¿Olvidaste tu contraseña? Restablécela aquí',
+                                style: TextStyle(
+                                  color: ApexTheme.voltAccent,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ),
                             TextButton(
                               onPressed: widget.viewModel.isSubmitting
                                   ? null
@@ -482,6 +500,165 @@ class _AuthScreenState extends State<AuthScreen> {
               child: const Text('GUARDAR'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  void _openResetPasswordDialog(BuildContext context) {
+    final TextEditingController resetEmailCtrl = TextEditingController(
+      text: _emailCtrl.text.trim(),
+    );
+    final TextEditingController newPassCtrl = TextEditingController();
+    final TextEditingController confirmPassCtrl = TextEditingController();
+    String? dialogError;
+
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: ApexTheme.cardGraphite,
+              title: const Row(
+                children: <Widget>[
+                  Icon(Icons.lock_reset_rounded, color: ApexTheme.voltAccent),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'RESTABLECER CONTRASEÑA',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    const Text(
+                      'Ingresa el correo electrónico o username de tu cuenta verificada para actualizar tu contraseña y recuperar tu sesión al instante.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: ApexTheme.textMuted,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (dialogError != null) ...<Widget>[
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: ApexTheme.deloadCrimson.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: ApexTheme.deloadCrimson),
+                        ),
+                        child: Text(
+                          dialogError!,
+                          style: const TextStyle(
+                            color: ApexTheme.deloadCrimson,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                    TextField(
+                      controller: resetEmailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Correo electrónico o Username',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: newPassCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Nueva contraseña (mín. 8 caracteres)',
+                        prefixIcon: Icon(Icons.lock_outline_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: confirmPassCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Confirmar nueva contraseña',
+                        prefixIcon: Icon(Icons.verified_user_outlined),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('CANCELAR'),
+                ),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: ApexTheme.voltAccent,
+                    foregroundColor: Colors.black,
+                  ),
+                  onPressed: widget.viewModel.isSubmitting
+                      ? null
+                      : () async {
+                          final String emailVal = resetEmailCtrl.text.trim();
+                          final String newPass = newPassCtrl.text;
+                          final String confPass = confirmPassCtrl.text;
+
+                          if (emailVal.length < 3) {
+                            setDialogState(() {
+                              dialogError =
+                                  'Ingresa tu correo electrónico o username.';
+                            });
+                            return;
+                          }
+                          if (newPass.length < 8) {
+                            setDialogState(() {
+                              dialogError =
+                                  'La nueva contraseña debe tener al menos 8 caracteres.';
+                            });
+                            return;
+                          }
+                          if (newPass != confPass) {
+                            setDialogState(() {
+                              dialogError = 'Las contraseñas no coinciden.';
+                            });
+                            return;
+                          }
+
+                          final bool ok = await widget.viewModel.resetPassword(
+                            email: emailVal,
+                            newPassword: newPass,
+                          );
+                          if (ok) {
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                          } else {
+                            setDialogState(() {
+                              dialogError = widget.viewModel.errorMessage ??
+                                  'No se pudo actualizar la contraseña.';
+                            });
+                          }
+                        },
+                  icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
+                  label: const Text(
+                    'ACTUALIZAR Y ENTRAR',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );

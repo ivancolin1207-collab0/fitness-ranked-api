@@ -84,3 +84,22 @@ class WearableSyncResponse(BaseModel):
     sleep_efficiency_pct: Optional[float]
     source_device: WearableSource
     synced_at: datetime
+
+
+class HydrationLogEntrySchema(BaseModel):
+    amount_ml: int
+    timestamp_label: str
+    recorded_at: str
+
+
+class HydrationAddRequest(BaseModel):
+    amount_ml: int = Field(..., ge=50, le=5000)
+    timestamp_label: Optional[str] = None
+
+
+class HydrationTodayResponse(BaseModel):
+    date: str
+    total_ml: int
+    target_ml: int
+    progress_pct: float
+    logs: list[HydrationLogEntrySchema] = Field(default_factory=list)

@@ -57,6 +57,17 @@ class DuelMatchmakeRequest(BaseModel):
     metric_target: MetricTarget = MetricTarget.LBM_ALLOMETRIC_RATIO
 
 
+class SymmetricWeeklyChallengeExercise(BaseModel):
+    movement_pattern: str
+    exercise_name: str
+    target_sets: int
+    target_reps: int
+    target_rpe: float
+    challenger_prescribed_weight_kg: float
+    opponent_prescribed_weight_kg: float
+    parity_note: str
+
+
 class ActiveDuelLiveResponse(BaseModel):
     competition_id: UUID
     season_id: str
@@ -69,6 +80,11 @@ class ActiveDuelLiveResponse(BaseModel):
     challenger_lbm_score: float
     challenger_dots_score: float
     challenger_rpe_compliance_pct: float
+    challenger_discipline_multiplier: float = 1.12
+    challenger_sleep_bonus_pct: float = 6.0
+    challenger_consistency_bonus_pct: float = 4.0
+    challenger_strain_balance_pct: float = 92.0
+    challenger_effective_score: float = 0.0
     opponent_user_id: UUID
     opponent_username: str
     opponent_elo: int
@@ -76,9 +92,55 @@ class ActiveDuelLiveResponse(BaseModel):
     opponent_lbm_score: float
     opponent_dots_score: float
     opponent_rpe_compliance_pct: float
+    opponent_discipline_multiplier: float = 1.08
+    opponent_effective_score: float = 0.0
+    is_blind_duel: bool = True
+    is_revealed: bool = False
+    rival_status_label: str = "En progreso / Entrenando • Se revela Domingo 23:59"
+    symmetric_challenge: list[SymmetricWeeklyChallengeExercise] = Field(default_factory=list)
     projected_elo_stake: int
     start_date: datetime
     end_date: datetime
+
+
+class DuoPairMemberSchema(BaseModel):
+    user_id: Optional[UUID] = None
+    username: str
+    elo: int = 1200
+    tier: str = "Plata"
+    lbm_score: float = 0.0
+    dots_score: float = 0.0
+    discipline_multiplier: float = 1.10
+    status_label: str = "Entrenando • Activo"
+
+
+class ActiveDuo2v2DuelResponse(BaseModel):
+    duo_duel_id: str
+    season_id: str = "2026-S4"
+    ally_duo_name: str
+    ally_member_a: DuoPairMemberSchema
+    ally_member_b: DuoPairMemberSchema
+    ally_combined_lbm_score: float
+    ally_combined_dots_score: float
+    ally_avg_discipline_multiplier: float
+    ally_effective_total: float
+    rival_duo_name: str
+    rival_member_a: DuoPairMemberSchema
+    rival_member_b: DuoPairMemberSchema
+    rival_combined_lbm_score: float
+    rival_combined_dots_score: float
+    rival_avg_discipline_multiplier: float
+    rival_effective_total: float
+    is_blind_duel: bool = True
+    is_revealed: bool = False
+    rival_status_label: str = "Dúo Rival en progreso / Entrenando • Oculto hasta Dom 23:59"
+    projected_elo_stake: int = 24
+    end_date: datetime
+
+
+class DuoInvitePartnerRequest(BaseModel):
+    partner_username: str = Field(..., min_length=2, max_length=32)
+    duo_name: str = Field(default="Apex Twin Barbell", min_length=2, max_length=60)
 
 
 class Duel1v1ResolutionRequest(BaseModel):
