@@ -586,6 +586,8 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
               ),
             ),
             const SizedBox(height: 10),
+            _buildExerciseQuickSwitcher(),
+            const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
               key: ValueKey<String>(
                 'preview_${safeIndex}_${previewEx?.exerciseKey ?? ""}_${previewEx?.exerciseName ?? ""}',
@@ -633,6 +635,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                     setState(() {
                       _selectedPreviewExerciseIndex = idx;
                     });
+                    viewModel.selectExercise(idx);
                   },
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 7),
@@ -979,10 +982,80 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
     }
   }
 
+  Widget _buildExerciseQuickSwitcher() {
+    final List<RoutineExerciseItemModel> exercises =
+        viewModel.activeDayExercises;
+    if (exercises.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final int selectedExerciseIndex = viewModel.selectedExerciseIndex;
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: exercises
+            .asMap()
+            .entries
+            .map((MapEntry<int, RoutineExerciseItemModel> entry) {
+          final int index = entry.key;
+          final RoutineExerciseItemModel exercise = entry.value;
+          final bool isSelected = selectedExerciseIndex == index;
+          final bool isCompleted = viewModel.isExerciseCompleted(index);
+
+          return Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: ChoiceChip(
+              label: Text('#${index + 1} ${exercise.exerciseName}'),
+              selected: isSelected,
+              selectedColor: const Color(0xFF1E232E),
+              backgroundColor: const Color(0xFF14171E),
+              side: BorderSide(
+                color: isSelected
+                    ? const Color(0xFFF59E0B)
+                    : (isCompleted
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFF2C3242)),
+                width: isSelected ? 1.5 : 1.0,
+              ),
+              avatar: isCompleted
+                  ? const Icon(
+                      Icons.check_circle,
+                      size: 16,
+                      color: Color(0xFF10B981),
+                    )
+                  : null,
+              labelStyle: TextStyle(
+                color: isSelected ? Colors.white : Colors.white70,
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+              ),
+              onSelected: (_) {
+                setState(() {
+                  _selectedPreviewExerciseIndex = index;
+                });
+                // Actualiza el visor biomecánico y cargas al ejercicio tocado sin bloqueo lineal
+                viewModel.selectExercise(index);
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildActiveSetCard(BuildContext context, WorkoutSetModel activeSet) {
     final String unit = viewModel.unitSystem;
     final double shownWeight =
         viewModel.displayWeight(activeSet.prescribedWeightKg);
+    final int exIdx = viewModel.selectedExerciseIndex;
+    final List<WorkoutSetModel> currentExSets =
+        viewModel.setsForExercise(exIdx);
+    final RoutineTemplateModel? routine = viewModel.selectedRoutine;
+    final RoutineExerciseItemModel? matchedExSpec =
+        (routine != null && exIdx >= 0 && exIdx < routine.exercises.length)
+            ? routine.exercises[exIdx]
+            : null;
 
     return Card(
       shape: RoundedRectangleBorder(
@@ -994,18 +1067,36 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
+            // Cabecera del día + Serie Activa
             Row(
               children: <Widget>[
                 Expanded(
-                  child: Text(
-                    activeSet.exerciseName.toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.3,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      if (routine != null)
+                        Text(
+                          '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: ApexTheme.cyanElectric,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      Text(
+                        '#${exIdx + 1} ${activeSet.exerciseName.toUpperCase()}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1015,11 +1106,15 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: ApexTheme.voltAccent,
+                    color: activeSet.completed
+                        ? const Color(0xFF10B981)
+                        : ApexTheme.voltAccent,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    'SERIE ACTIVA #${activeSet.setNumber}',
+                    activeSet.completed
+                        ? 'SERIE #${activeSet.setNumber} ✓'
+                        : 'SERIE ACTIVA #${activeSet.setNumber}',
                     style: const TextStyle(
                       color: Colors.black,
                       fontWeight: FontWeight.w900,
@@ -1029,17 +1124,101 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+            // Selector Horizontal de Ejercicios (Exercise Quick Switcher - Libre sin bloqueo)
+            _buildExerciseQuickSwitcher(),
+            const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
+              key: ValueKey<String>(
+                'active_${exIdx}_${activeSet.id}_${activeSet.exerciseKey}_${activeSet.exerciseName}',
+              ),
               exerciseName: activeSet.exerciseName,
               exerciseKey: activeSet.exerciseKey,
               recoveryScore: viewModel.recoveryScore,
               targetReps: activeSet.prescribedReps,
+              targetRepsRange: matchedExSpec?.targetRepsRange,
               prescribedRpe: activeSet.prescribedRpe,
               customTempo: activeSet.tempo,
               customCoachingCue: activeSet.coachingCue,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+            // Selector rápido de series de este ejercicio (muestra ejecutadas y pendientes)
+            if (currentExSets.isNotEmpty) ...<Widget>[
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  children: currentExSets.map((WorkoutSetModel s) {
+                    final bool isCurrentSet = s.id == activeSet.id;
+                    final double w = viewModel.displayWeight(
+                      s.completed
+                          ? (s.actualWeightKg ?? s.prescribedWeightKg)
+                          : s.prescribedWeightKg,
+                    );
+                    final int reps = s.completed
+                        ? (s.actualReps ?? s.prescribedReps)
+                        : s.prescribedReps;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => viewModel.selectSet(s),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isCurrentSet
+                                ? const Color(0xFF1E232E)
+                                : const Color(0xFF14171E),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isCurrentSet
+                                  ? const Color(0xFFF59E0B)
+                                  : (s.completed
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF2C3242)),
+                              width: isCurrentSet ? 1.4 : 1.0,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                s.completed
+                                    ? Icons.check_circle
+                                    : Icons.radio_button_unchecked,
+                                size: 13,
+                                color: s.completed
+                                    ? const Color(0xFF10B981)
+                                    : (isCurrentSet
+                                        ? const Color(0xFFF59E0B)
+                                        : ApexTheme.textMuted),
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                'S#${s.setNumber}: ${w.toStringAsFixed(1)} $unit × $reps',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: isCurrentSet
+                                      ? FontWeight.w800
+                                      : FontWeight.w600,
+                                  color: isCurrentSet
+                                      ? Colors.white
+                                      : Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             // Píldora táctica con RPE, Tempo y Coaching Cue generados por Gemini
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -1247,23 +1426,43 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
 
   Widget _buildSetProgressionList() {
     final String unit = viewModel.unitSystem;
+    final WorkoutSetModel? currentActive = viewModel.currentActiveSet;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Text(
-              'PROGRESIÓN DE SERIES EN TIEMPO REAL',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                color: ApexTheme.textMuted,
-                letterSpacing: 0.5,
-              ),
+            const Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'PROGRESIÓN DE SERIES EN TIEMPO REAL',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: ApexTheme.textMuted,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                Text(
+                  'TOCA PARA PREVISUALIZAR / EDITAR',
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFFF59E0B),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             ...viewModel.sets.map((WorkoutSetModel s) {
+              final bool isSelectedSet = currentActive?.id == s.id;
+              final bool isSameExercise = currentActive != null &&
+                  currentActive.exerciseName.toLowerCase().trim() ==
+                      s.exerciseName.toLowerCase().trim();
               final double w = viewModel.displayWeight(
                 s.completed
                     ? (s.actualWeightKg ?? s.prescribedWeightKg)
@@ -1276,49 +1475,89 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                   ? (s.actualRpe ?? s.prescribedRpe)
                   : s.prescribedRpe;
 
-              return ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  radius: 15,
-                  backgroundColor: s.completed
-                      ? ApexTheme.readinessGreen.withValues(alpha: 0.2)
-                      : ApexTheme.obsidianBg,
-                  child: Icon(
-                    s.completed ? Icons.check_rounded : Icons.fitness_center,
-                    color: s.completed
-                        ? ApexTheme.readinessGreen
-                        : ApexTheme.textMuted,
-                    size: 16,
-                  ),
-                ),
-                title: Text(
-                  '${s.exerciseName} • Serie #${s.setNumber}: $w $unit × $reps reps @ RPE ${rpe.toStringAsFixed(1)}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12.5,
-                    color: s.completed
-                        ? ApexTheme.textPrimary
-                        : ApexTheme.textMuted,
-                  ),
-                ),
-                subtitle: s.estimated1RmKg != null
-                    ? Text(
-                        'e1RM estimado: ${viewModel.displayWeight(s.estimated1RmKg!)} $unit',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: ApexTheme.voltAccent,
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => viewModel.selectSet(s),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelectedSet
+                          ? const Color(0xFF1E232E)
+                          : (isSameExercise
+                              ? const Color(0xFF14171E)
+                              : Colors.transparent),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: isSelectedSet
+                            ? const Color(0xFFF59E0B)
+                            : (s.completed
+                                ? const Color(0xFF10B981).withValues(alpha: 0.45)
+                                : const Color(0xFF232834)),
+                        width: isSelectedSet ? 1.4 : 1.0,
+                      ),
+                    ),
+                    child: ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        radius: 15,
+                        backgroundColor: s.completed
+                            ? ApexTheme.readinessGreen.withValues(alpha: 0.2)
+                            : (isSelectedSet
+                                ? const Color(0xFFF59E0B).withValues(alpha: 0.2)
+                                : ApexTheme.obsidianBg),
+                        child: Icon(
+                          s.completed
+                              ? Icons.check_rounded
+                              : Icons.fitness_center,
+                          color: s.completed
+                              ? ApexTheme.readinessGreen
+                              : (isSelectedSet
+                                  ? const Color(0xFFF59E0B)
+                                  : ApexTheme.textMuted),
+                          size: 16,
                         ),
-                      )
-                    : (s.aiRecalculated
-                        ? const Text(
-                            'Recalculado por Gemini Coach (temp=0.2)',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: ApexTheme.cyanElectric,
-                            ),
-                          )
-                        : null),
+                      ),
+                      title: Text(
+                        '${s.exerciseName} • Serie #${s.setNumber}: $w $unit × $reps reps @ RPE ${rpe.toStringAsFixed(1)}',
+                        style: TextStyle(
+                          fontWeight: isSelectedSet
+                              ? FontWeight.w900
+                              : FontWeight.w700,
+                          fontSize: 12.5,
+                          color: isSelectedSet
+                              ? Colors.white
+                              : (s.completed
+                                  ? ApexTheme.textPrimary
+                                  : ApexTheme.textMuted),
+                        ),
+                      ),
+                      subtitle: s.estimated1RmKg != null
+                          ? Text(
+                              'e1RM estimado: ${viewModel.displayWeight(s.estimated1RmKg!)} $unit',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: ApexTheme.voltAccent,
+                              ),
+                            )
+                          : (s.aiRecalculated
+                              ? const Text(
+                                  'Recalculado por Gemini Coach (temp=0.2)',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: ApexTheme.cyanElectric,
+                                  ),
+                                )
+                              : null),
+                    ),
+                  ),
+                ),
               );
             }),
           ],

@@ -108,6 +108,12 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
   Timer? _restTimer;
 
+  int _selectedExerciseIndex = 0;
+  int get selectedExerciseIndex => _selectedExerciseIndex;
+
+  String? _selectedSetId;
+  String? get selectedSetId => _selectedSetId;
+
   void _onBleServiceChanged() {
     if (_bleService.latestBpm != null) {
       _liveHeartRate = _bleService.latestBpm!;
@@ -115,13 +121,218 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Lista de los ejercicios (6 por día) disponibles en la rutina activa,
+  /// sin ningún bloqueo lineal.
+  List<RoutineExerciseItemModel> get activeDayExercises {
+    final List<RoutineExerciseItemModel> routineEx =
+        _selectedRoutine?.exercises ?? const <RoutineExerciseItemModel>[];
+    if (routineEx.isNotEmpty) {
+      return routineEx;
+    }
+    // Fallback si solo hay sets cargados desde servidor
+    final Map<String, RoutineExerciseItemModel> distinct =
+        <String, RoutineExerciseItemModel>{};
+    int order = 1;
+    for (final WorkoutSetModel s in _sets) {
+      final String k = s.exerciseName.toLowerCase().trim();
+      distinct.putIfAbsent(
+        k,
+        () => RoutineExerciseItemModel(
+          id: s.exerciseId,
+          exerciseId: s.exerciseId,
+          exerciseName: s.exerciseName,
+          exerciseKey: s.exerciseKey,
+          muscleGroup: 'General',
+          displayOrder: order++,
+          targetSets: _sets
+              .where((WorkoutSetModel item) =>
+                  item.exerciseName.toLowerCase().trim() == k)
+              .length,
+          targetReps: s.prescribedReps,
+          targetRepsRange: '${s.prescribedReps}',
+          targetWeightKg: s.prescribedWeightKg,
+          targetRpe: s.prescribedRpe,
+          restSeconds: s.restSeconds,
+          tempo: s.tempo,
+          coachingCue: s.coachingCue,
+        ),
+      );
+    }
+    return distinct.values.toList();
+  }
+
+  bool _matchesExercise(WorkoutSetModel s, RoutineExerciseItemModel ex) {
+    final String sName = s.exerciseName.toLowerCase().trim();
+    final String exName = ex.exerciseName.toLowerCase().trim();
+    if (sName == exName || s.exerciseId == ex.exerciseId) {
+      return true;
+    }
+    if (s.exerciseKey.isNotEmpty &&
+        ex.exerciseKey.isNotEmpty &&
+        s.exerciseKey.toLowerCase().trim() ==
+            ex.exerciseKey.toLowerCase().trim()) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Devuelve todas las series pertenecientes al ejercicio en `exerciseIndex`.
+  List<WorkoutSetModel> setsForExercise(int exerciseIndex) {
+    final List<RoutineExerciseItemModel> exercises = activeDayExercises;
+    if (exercises.isEmpty) {
+      return _sets;
+    }
+    final int safeIdx = exerciseIndex.clamp(0, exercises.length - 1);
+    final RoutineExerciseItemModel targetEx = exercises[safeIdx];
+    return _sets
+        .where((WorkoutSetModel s) => _matchesExercise(s, targetEx))
+        .toList();
+  }
+
+  /// Indica si todas las series de un ejercicio ya fueron completadas.
+  bool isExerciseCompleted(int exerciseIndex) {
+    final List<WorkoutSetModel> exSets = setsForExercise(exerciseIndex);
+    return exSets.isNotEmpty && exSets.every((WorkoutSetModel s) => s.completed);
+  }
+
+  /// Cambia libremente al ejercicio indicado (sin bloqueo lineal) y selecciona
+  /// su primera serie pendiente (o la última si ya está completado para permitir edición/vista).
+  void selectExercise(int index) {
+    final List<RoutineExerciseItemModel> exercises = activeDayExercises;
+    if (exercises.isEmpty) {
+      return;
+    }
+    _selectedExerciseIndex = index.clamp(0, exercises.length - 1);
+    final List<WorkoutSetModel> exSets = setsForExercise(_selectedExerciseIndex);
+    if (exSets.isNotEmpty) {
+      WorkoutSetModel? firstPending;
+      for (final WorkoutSetModel s in exSets) {
+        if (!s.completed) {
+          firstPending = s;
+          break;
+        }
+      }
+      _selectedSetId = (firstPending ?? exSets.last).id;
+    } else {
+      _selectedSetId = null;
+    }
+    notifyListeners();
+  }
+
+  /// Permite tocar cualquier serie de "Progresión de series en tiempo real"
+  /// para saltar de inmediato a ese ejercicio y serie.
+  void selectSet(WorkoutSetModel set) {
+    _selectedSetId = set.id;
+    final List<RoutineExerciseItemModel> exercises = activeDayExercises;
+    for (int i = 0; i < exercises.length; i++) {
+      if (_matchesExercise(set, exercises[i])) {
+        _selectedExerciseIndex = i;
+        break;
+      }
+    }
+    notifyListeners();
+  }
+
+  /// Devuelve la serie actualmente activa según el ejercicio/serie seleccionado por el usuario.
+  /// Nunca bloquea el acceso a otros ejercicios ni oculta el visor si un ejercicio ya se completó.
   WorkoutSetModel? get currentActiveSet {
+    if (_sets.isEmpty) {
+      return null;
+    }
+    if (_selectedSetId != null) {
+      for (final WorkoutSetModel s in _sets) {
+        if (s.id == _selectedSetId) {
+          return s;
+        }
+      }
+    }
+    final List<WorkoutSetModel> exSets = setsForExercise(_selectedExerciseIndex);
+    if (exSets.isNotEmpty) {
+      for (final WorkoutSetModel s in exSets) {
+        if (!s.completed) {
+          return s;
+        }
+      }
+      return exSets.last;
+    }
     for (final WorkoutSetModel s in _sets) {
       if (!s.completed) {
         return s;
       }
     }
-    return null;
+    return _sets.first;
+  }
+
+  /// Garantiza que `_sets` contenga las series de los 6 ejercicios del día seleccionado,
+  /// preservando el progreso de series ya registradas en el servidor o localmente.
+  void _syncSetsWithSelectedRoutine({
+    List<WorkoutSetModel>? incomingSets,
+    bool resetSelection = false,
+  }) {
+    final List<WorkoutSetModel> sourceSets =
+        _enrichSetsWithRoutineMetadata(incomingSets ?? _sets);
+    final RoutineTemplateModel? routine = _selectedRoutine;
+    if (routine == null || routine.exercises.isEmpty) {
+      _sets = sourceSets;
+      return;
+    }
+
+    final List<WorkoutSetModel> merged = <WorkoutSetModel>[];
+    for (int i = 0; i < routine.exercises.length; i++) {
+      final RoutineExerciseItemModel ex = routine.exercises[i];
+      final List<WorkoutSetModel> existingForEx = sourceSets
+          .where((WorkoutSetModel s) => _matchesExercise(s, ex))
+          .toList();
+
+      if (existingForEx.isNotEmpty) {
+        merged.addAll(existingForEx);
+      } else {
+        final int totalSets = ex.targetSets > 0 ? ex.targetSets : 3;
+        for (int setNum = 1; setNum <= totalSets; setNum++) {
+          merged.add(
+            WorkoutSetModel(
+              id: 'routine_${routine.dayOfWeek}_ex_${i + 1}_s_$setNum',
+              exerciseId: ex.exerciseId.isNotEmpty
+                  ? ex.exerciseId
+                  : 'routine_${routine.dayOfWeek}_ex_${i + 1}',
+              exerciseName: ex.exerciseName,
+              exerciseKey: ex.exerciseKey,
+              setNumber: setNum,
+              prescribedWeightKg: ex.targetWeightKg,
+              prescribedReps: ex.targetReps,
+              prescribedRpe: ex.targetRpe,
+              restSeconds: ex.restSeconds,
+              tempo: ex.tempo,
+              coachingCue: ex.coachingCue,
+              completed: false,
+            ),
+          );
+        }
+      }
+    }
+
+    _sets = merged;
+    _activeWorkoutId ??= 'local_session_day_${routine.dayOfWeek}';
+
+    if (resetSelection ||
+        _selectedExerciseIndex >= routine.exercises.length) {
+      _selectedExerciseIndex = 0;
+      _selectedSetId = null;
+    }
+    final List<WorkoutSetModel> activeExSets =
+        setsForExercise(_selectedExerciseIndex);
+    if (activeExSets.isNotEmpty &&
+        (_selectedSetId == null ||
+            !activeExSets.any((WorkoutSetModel s) => s.id == _selectedSetId))) {
+      WorkoutSetModel? pending;
+      for (final WorkoutSetModel s in activeExSets) {
+        if (!s.completed) {
+          pending = s;
+          break;
+        }
+      }
+      _selectedSetId = (pending ?? activeExSets.first).id;
+    }
   }
 
   List<WorkoutSetModel> _enrichSetsWithRoutineMetadata(
@@ -203,6 +414,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         _selectedRoutine = matchedDay ?? _weeklyRoutines.first;
       }
 
+      _syncSetsWithSelectedRoutine();
       _isLoadingPlan = false;
       notifyListeners();
 
@@ -247,7 +459,9 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
       if (plan?.activeWorkout != null) {
         _activeWorkoutId = plan!.activeWorkout!.id;
-        _sets = _enrichSetsWithRoutineMetadata(plan.activeWorkout!.sets);
+        _syncSetsWithSelectedRoutine(
+          incomingSets: plan.activeWorkout!.sets,
+        );
         _sessionLbmScore = plan.activeWorkout!.lbmAllometricScore;
         final String? notes = plan.activeWorkout!.aiPrescriptionNotes;
         if (notes != null && notes.isNotEmpty) {
@@ -259,6 +473,8 @@ class LiveWorkoutViewModel extends ChangeNotifier {
             _readinessZone = 'GREEN_OVERLOAD';
           }
         }
+      } else {
+        _syncSetsWithSelectedRoutine();
       }
     } catch (e) {
       final String clean = ApiErrorSanitizer.sanitizeRawErrorString(e);
@@ -291,8 +507,9 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         _aiRoutineTitle = aiPlan.routineName;
         _aiWeeklyFocus = aiPlan.weeklyFocus;
         _selectedRoutine = aiPlan.days.first;
-        _activeWorkoutId = null;
+        _activeWorkoutId = 'local_session_day_${_selectedRoutine!.dayOfWeek}';
         _sets = <WorkoutSetModel>[];
+        _syncSetsWithSelectedRoutine(resetSelection: true);
         _geminiRationale =
             '${aiPlan.routineName} • ${aiPlan.weeklyFocus}. Cargas recalculadas por Gemini 2.5 Flash.';
       }
@@ -864,6 +1081,8 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
   void selectRoutineTemplate(RoutineTemplateModel routine) {
     _selectedRoutine = routine;
+    _sets = <WorkoutSetModel>[];
+    _syncSetsWithSelectedRoutine(resetSelection: true);
     notifyListeners();
   }
 
@@ -885,7 +1104,10 @@ class LiveWorkoutViewModel extends ChangeNotifier {
             _todayPlan?.activeRoutine?.id == routine.id,
       );
       _activeWorkoutId = session.id;
-      _sets = _enrichSetsWithRoutineMetadata(session.sets);
+      _syncSetsWithSelectedRoutine(
+        incomingSets: session.sets,
+        resetSelection: true,
+      );
       _sessionLbmScore = session.lbmAllometricScore;
       final String? notes = session.aiPrescriptionNotes;
       if (notes != null && notes.isNotEmpty) {
@@ -902,8 +1124,9 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         _geminiRationale =
             'Sesión "${routine.name}" iniciada con sobrecarga progresiva semanal calculada desde PostgreSQL.';
       }
-    } catch (e) {
-      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+    } catch (_) {
+      _activeWorkoutId = 'local_session_day_${routine.dayOfWeek}';
+      _syncSetsWithSelectedRoutine(resetSelection: true);
     } finally {
       _isStartingWorkout = false;
       notifyListeners();
@@ -991,74 +1214,112 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     required int actualReps,
     required double actualRpe,
   }) async {
-    final String? wId = _activeWorkoutId;
-    if (wId == null) {
-      return;
-    }
-
     _isSubmittingSet = true;
     _errorMessage = null;
     notifyListeners();
 
+    final double localE1Rm = double.parse(
+      (actualWeightKg * (1.0 + (actualReps / 30.0))).toStringAsFixed(1),
+    );
+
+    // 1. Actualización local inmediata sobre el ejercicio actualmente seleccionado (sin bloqueos)
+    _sets = _sets.map((WorkoutSetModel s) {
+      if (s.id == targetSet.id) {
+        return s.copyWith(
+          actualWeightKg: actualWeightKg,
+          actualReps: actualReps,
+          actualRpe: actualRpe,
+          estimated1RmKg: localE1Rm,
+          completed: true,
+        );
+      }
+      return s;
+    }).toList();
+
+    // Avanza a la siguiente serie pendiente del MISMO ejercicio seleccionado
+    final List<WorkoutSetModel> currentExSets =
+        setsForExercise(_selectedExerciseIndex);
+    WorkoutSetModel? nextPendingInSameEx;
+    for (final WorkoutSetModel s in currentExSets) {
+      if (!s.completed) {
+        nextPendingInSameEx = s;
+        break;
+      }
+    }
+    _selectedSetId =
+        (nextPendingInSameEx ??
+                (currentExSets.isNotEmpty ? currentExSets.last : targetSet))
+            .id;
+
+    _projectedEloDelta += completedBinaryUi ? 4 : 1;
+    _sessionLbmScore = double.parse(
+      (_sessionLbmScore + (actualWeightKg * actualReps * 0.012))
+          .toStringAsFixed(1),
+    );
+    _startRestCountdown(targetSet.restSeconds > 0 ? targetSet.restSeconds : 120);
+
     try {
-      final SetExecutionFeedbackRequestModel req =
-          SetExecutionFeedbackRequestModel(
-        exerciseId: targetSet.exerciseId,
-        setNumber: targetSet.setNumber,
-        completedBinaryUi: completedBinaryUi,
-        actualWeightKg: actualWeightKg,
-        actualReps: actualReps,
-        actualRpe: actualRpe,
-      );
+      final String? wId = _activeWorkoutId;
+      if (wId != null && !wId.startsWith('local_')) {
+        final SetExecutionFeedbackRequestModel req =
+            SetExecutionFeedbackRequestModel(
+          exerciseId: targetSet.exerciseId,
+          setNumber: targetSet.setNumber,
+          completedBinaryUi: completedBinaryUi,
+          actualWeightKg: actualWeightKg,
+          actualReps: actualReps,
+          actualRpe: actualRpe,
+        );
 
-      final SetExecutionFeedbackResponseModel res =
-          await _repository.registerSetAndRecalculate(
-        workoutId: wId,
-        feedback: req,
-      );
+        final SetExecutionFeedbackResponseModel res =
+            await _repository.registerSetAndRecalculate(
+          workoutId: wId,
+          feedback: req,
+        );
 
-      final Map<int, PrescribedSetModel> updatesBySetNum =
-          <int, PrescribedSetModel>{
-        for (final PrescribedSetModel item
-            in res.geminiPrescription.updatedSets)
-          item.setNumber: item,
-      };
+        final Map<int, PrescribedSetModel> updatesBySetNum =
+            <int, PrescribedSetModel>{
+          for (final PrescribedSetModel item
+              in res.geminiPrescription.updatedSets)
+            item.setNumber: item,
+        };
 
-      _sets = _sets.map((WorkoutSetModel s) {
-        if (s.id == targetSet.id) {
-          return s.copyWith(
-            actualWeightKg: actualWeightKg,
-            actualReps: actualReps,
-            actualRpe: actualRpe,
-            estimated1RmKg: res.estimated1RmKg,
-            completed: true,
-          );
-        }
-        if (!s.completed &&
-            s.exerciseId == targetSet.exerciseId &&
-            updatesBySetNum.containsKey(s.setNumber)) {
-          final PrescribedSetModel upd = updatesBySetNum[s.setNumber]!;
-          return s.copyWith(
-            prescribedWeightKg: upd.prescribedWeightKg,
-            prescribedReps: upd.prescribedReps,
-            prescribedRpe: upd.prescribedRpe,
-            aiRecalculated: true,
-          );
-        }
-        return s;
-      }).toList();
+        _sets = _sets.map((WorkoutSetModel s) {
+          if (s.id == targetSet.id) {
+            return s.copyWith(
+              actualWeightKg: actualWeightKg,
+              actualReps: actualReps,
+              actualRpe: actualRpe,
+              estimated1RmKg: res.estimated1RmKg,
+              completed: true,
+            );
+          }
+          if (!s.completed &&
+              s.exerciseId == targetSet.exerciseId &&
+              updatesBySetNum.containsKey(s.setNumber)) {
+            final PrescribedSetModel upd = updatesBySetNum[s.setNumber]!;
+            return s.copyWith(
+              prescribedWeightKg: upd.prescribedWeightKg,
+              prescribedReps: upd.prescribedReps,
+              prescribedRpe: upd.prescribedRpe,
+              aiRecalculated: true,
+            );
+          }
+          return s;
+        }).toList();
 
-      _projectedEloDelta = res.projectedEloDelta;
-      _sessionLbmScore = res.sessionLbmAllometricScore;
-      _readinessZone = res.geminiPrescription.readinessZone;
-      _geminiRationale = res.geminiPrescription.adjustmentRationale;
+        _projectedEloDelta = res.projectedEloDelta;
+        _sessionLbmScore = res.sessionLbmAllometricScore;
+        _readinessZone = res.geminiPrescription.readinessZone;
+        _geminiRationale = res.geminiPrescription.adjustmentRationale;
 
-      final int nextRest = res.geminiPrescription.updatedSets.isNotEmpty
-          ? res.geminiPrescription.updatedSets.first.restSeconds
-          : 150;
-      _startRestCountdown(nextRest);
-    } catch (e) {
-      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+        final int nextRest = res.geminiPrescription.updatedSets.isNotEmpty
+            ? res.geminiPrescription.updatedSets.first.restSeconds
+            : targetSet.restSeconds;
+        _startRestCountdown(nextRest);
+      }
+    } catch (_) {
+      // Mantiene el progreso local sin arrojar error bloqueante si el ejercicio es de la rutina IA de 6 ejercicios
     } finally {
       _isSubmittingSet = false;
       notifyListeners();
