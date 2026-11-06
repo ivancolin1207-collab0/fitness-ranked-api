@@ -91,6 +91,17 @@ class HomeViewModel extends ChangeNotifier {
   String? _statusBanner;
   String? get statusBanner => _statusBanner;
 
+  /// Purga el estado en memoria de biometría, hidratación y telemetría al cambiar de usuario.
+  void resetForUserSwitch() {
+    _wearable = null;
+    _biometrics = null;
+    _biometricsHistory = <BiometricRecord>[];
+    _hydration = null;
+    _errorMessage = null;
+    _statusBanner = null;
+    notifyListeners();
+  }
+
   Future<void> initializeDashboard() async {
     _errorMessage = null;
 

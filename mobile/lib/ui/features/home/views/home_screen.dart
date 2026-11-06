@@ -99,6 +99,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    bleService.autoReconnectSavedDevice(
+      userId: authViewModel.currentUser?.id,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge(
@@ -2071,7 +2079,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBleDirectIndicator(BuildContext context) {
     final bool connected = bleService.isConnected;
     final int? bpm = bleService.latestBpm;
-    final String deviceName = bleService.connectedDeviceName ?? 'WHOOP 4.0';
+    final String deviceName =
+        bleService.connectedDeviceName ??
+        bleService.savedDeviceName ??
+        'Wearable BLE';
 
     return InkWell(
       borderRadius: BorderRadius.circular(9),
@@ -2105,7 +2116,9 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Text(
                 connected
                     ? 'BLE: Conectado (${bpm ?? "--"} BPM) • $deviceName'
-                    : 'BLE: Vincular WHOOP (0x180D) • Pulso en vivo',
+                    : (bleService.savedDeviceName != null
+                        ? 'BLE Auto-Sync: ${bleService.savedDeviceName} (0x180D)'
+                        : 'BLE Universal: Huawei / Samsung / Whoop (0x180D)'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -2170,7 +2183,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               SizedBox(width: 8),
                               Flexible(
                                 child: Text(
-                                  'BLUETOOTH BLE • MONITOR BPM EN VIVO (0x180D)',
+                                  'BLUETOOTH BLE UNIVERSAL • MONITOR BPM (0x180D)',
                                   style: TextStyle(
                                     fontSize: 13.5,
                                     fontWeight: FontWeight.w900,
@@ -2198,7 +2211,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 6),
                     const Text(
-                      'Conecta tu Whoop (con "Broadcast Heart Rate" activo), banda Polar/Garmin o smartwatch compatible con GATT 0x180D / 0x2A37.',
+                      'Compatible con Huawei Band/GT/Watch, Samsung Galaxy Watch, Polar, Garmin y Whoop 4.0 (GATT 0x180D / 0x2A37 • Reconexión Zero-Touch activa).',
                       style: TextStyle(
                         fontSize: 11.5,
                         color: ApexTheme.textMuted,
@@ -2267,7 +2280,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             TextButton(
-                              onPressed: bleService.disconnect,
+                              onPressed: () => bleService.disconnect(
+                                forgetDevice: true,
+                                userId: authViewModel.currentUser?.id,
+                              ),
                               child: const Text(
                                 'Desconectar',
                                 style: TextStyle(color: ApexTheme.deloadCrimson),
@@ -2285,7 +2301,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               padding: EdgeInsets.symmetric(vertical: 20),
                               child: Center(
                                 child: Text(
-                                  'Buscando sensores BLE cercanos...',
+                                  'Buscando Huawei, Samsung, Garmin, Polar o Whoop cercanos...',
                                   style: TextStyle(
                                     color: ApexTheme.textMuted,
                                     fontSize: 12,
@@ -2303,10 +2319,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                 return ListTile(
                                   contentPadding: EdgeInsets.zero,
                                   leading: Icon(
-                                    d.advertisesHrService
-                                        ? Icons.monitor_heart_rounded
+                                    (d.advertisesHrService || d.isWearableBrand)
+                                        ? Icons.watch_rounded
                                         : Icons.bluetooth_rounded,
-                                    color: d.advertisesHrService
+                                    color: (d.advertisesHrService ||
+                                            d.isWearableBrand)
                                         ? ApexTheme.voltAccent
                                         : ApexTheme.textMuted,
                                   ),
@@ -2318,7 +2335,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                   ),
                                   subtitle: Text(
-                                    '${d.advertisesHrService ? "GATT 0x180D • " : ""}RSSI ${d.rssi} dBm • ${d.remoteId}',
+                                    '${d.advertisesHrService ? "GATT 0x180D • " : (d.isWearableBrand ? "Wearable BLE • " : "")}RSSI ${d.rssi} dBm • ${d.remoteId}',
                                     style: const TextStyle(
                                       fontSize: 11,
                                       color: ApexTheme.textMuted,
@@ -2333,8 +2350,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                     onPressed: bleService.isConnecting
                                         ? null
                                         : () async {
-                                            await bleService
-                                                .connectToDevice(d);
+                                            await bleService.connectToDevice(
+                                              d,
+                                              userId:
+                                                  authViewModel.currentUser?.id,
+                                            );
                                           },
                                     child: const Text(
                                       'VINCULAR',

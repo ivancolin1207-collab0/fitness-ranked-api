@@ -23,6 +23,12 @@ class LiveWorkoutScreen extends StatefulWidget {
 class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
   LiveWorkoutViewModel get viewModel => widget.viewModel;
 
+  @override
+  void initState() {
+    super.initState();
+    viewModel.bleService.autoReconnectSavedDevice();
+  }
+
   Future<void> _handleRegenerateAiRoutine(BuildContext context) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -1664,7 +1670,7 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'BLUETOOTH BLE • MONITOR BPM EN VIVO (0x180D)',
+                        'BLUETOOTH BLE UNIVERSAL • MONITOR BPM (0x180D)',
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w900,
@@ -1695,7 +1701,7 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Conecta tu Whoop (con "Broadcast Heart Rate" activo), banda Polar/Garmin o smartwatch compatible con GATT 0x180D / 0x2A37.',
+                  'Compatible con Huawei Band/GT/Watch, Samsung Galaxy Watch, Polar, Garmin y Whoop 4.0 (GATT 0x180D / 0x2A37 • Reconexión Zero-Touch activa).',
                   style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
                 ),
                 if (bleService.statusMessage != null) ...<Widget>[
@@ -1745,7 +1751,7 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                       ),
                     ),
                     trailing: TextButton(
-                      onPressed: bleService.disconnect,
+                      onPressed: () => bleService.disconnect(forgetDevice: true),
                       child: const Text(
                         'Desconectar',
                         style: TextStyle(color: ApexTheme.deloadCrimson),
@@ -1761,7 +1767,7 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                       children: <Widget>[
                         Text(
                           bleService.isScanning
-                              ? 'Escaneando sensores BLE cercanos (0x180D)...'
+                              ? 'Buscando Huawei, Samsung, Garmin, Polar o Whoop cercanos...'
                               : 'No se detectaron sensores BLE transmitiendo cerca.',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
@@ -1785,10 +1791,10 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                           leading: Icon(
-                            d.advertisesHrService
-                                ? Icons.monitor_heart_rounded
+                            (d.advertisesHrService || d.isWearableBrand)
+                                ? Icons.watch_rounded
                                 : Icons.bluetooth_rounded,
-                            color: d.advertisesHrService
+                            color: (d.advertisesHrService || d.isWearableBrand)
                                 ? ApexTheme.voltAccent
                                 : ApexTheme.cyanElectric,
                           ),
@@ -1799,7 +1805,7 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           subtitle: Text(
-                            '${d.advertisesHrService ? "GATT 0x180D • " : ""}RSSI ${d.rssi} dBm • ${d.remoteId}',
+                            '${d.advertisesHrService ? "GATT 0x180D • " : (d.isWearableBrand ? "Wearable BLE • " : "")}RSSI ${d.rssi} dBm • ${d.remoteId}',
                             style: const TextStyle(
                               fontSize: 11,
                               color: ApexTheme.textMuted,

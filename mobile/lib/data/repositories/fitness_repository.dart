@@ -96,6 +96,10 @@ class FitnessRepository {
     return _authService.readActiveJwtToken();
   }
 
+  Future<UserProfileModel?> getCurrentUserProfileCache() {
+    return _storageService.readUserProfileCache();
+  }
+
   Future<String> _requireToken() async {
     final String? token = await _authService.readActiveJwtToken();
     if (token == null || token.isEmpty) {

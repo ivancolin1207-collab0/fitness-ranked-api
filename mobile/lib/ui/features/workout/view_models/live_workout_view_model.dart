@@ -50,6 +50,29 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   double _lbmKg = 62.74;
   double get lbmKg => _lbmKg;
 
+  double _weightKg = 92.4;
+  double get weightKg => _weightKg;
+
+  /// Purga inmediatamente el estado en memoria cuando se cierra sesión o se cambia de cuenta
+  /// para evitar que un usuario nuevo vea rutinas, series o cargas del usuario anterior.
+  void resetForUserSwitch() {
+    _restTimer?.cancel();
+    _remainingRestSeconds = 0;
+    _weeklyRoutines = <RoutineTemplateModel>[];
+    _todayPlan = null;
+    _selectedRoutine = null;
+    _activeWorkoutId = null;
+    _sets = <WorkoutSetModel>[];
+    _selectedExerciseIndex = 0;
+    _selectedSetId = null;
+    _errorMessage = null;
+    _isRolloverActive = false;
+    _rolloverBanner = null;
+    _projectedEloDelta = 0;
+    _sessionLbmScore = 0.0;
+    notifyListeners();
+  }
+
   Future<void> setAthleteGender(String gender) async {
     _athleteGender = gender.toLowerCase().contains('fem') ? 'female' : 'male';
     notifyListeners();
@@ -388,26 +411,70 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _resolveUserBiometricsBaseline() async {
+    _athleteGender = await _repository.getAthleteGender();
+    final profile = await _repository.getCurrentUserProfileCache();
+    final String ident =
+        '${profile?.username ?? ''} ${profile?.maskedEmail ?? ''}'.toLowerCase();
+    final bool isCesarProfile =
+        ident.contains('ivancolin') || ident.contains('cesar');
+    final bool isFemale = _athleteGender == 'female';
+    final double heightCm =
+        (profile != null && profile.heightCm > 100)
+            ? profile.heightCm
+            : (isFemale ? 163.0 : 175.0);
+
+    final double defaultWeight = isCesarProfile
+        ? 92.4
+        : double.parse(
+            ((isFemale ? 21.2 : 22.8) *
+                    ((heightCm / 100.0) * (heightCm / 100.0)))
+                .toStringAsFixed(1),
+          );
+    final double defaultFat = isCesarProfile
+        ? 32.1
+        : (isFemale ? 24.5 : 18.5);
+    final double defaultLbm = double.parse(
+      (defaultWeight * (1.0 - defaultFat / 100.0)).toStringAsFixed(2),
+    );
+
+    _weightKg = defaultWeight;
+    _lbmKg = defaultLbm;
+
+    try {
+      final cachedBio =
+          await _repository.readCachedBiometrics() ??
+          await _repository.loadLatestBiometrics();
+      if (cachedBio != null && cachedBio.weightKg > 25) {
+        _weightKg = cachedBio.weightKg;
+        _lbmKg = cachedBio.leanBodyMassKg > 20
+            ? cachedBio.leanBodyMassKg
+            : double.parse(
+                (_weightKg * (1.0 - (cachedBio.fatPercentage / 100.0)))
+                    .toStringAsFixed(2),
+              );
+      }
+    } catch (_) {}
+  }
+
   Future<void> initializeWorkoutPlan() async {
     _errorMessage = null;
 
     try {
       _unitSystem = await _repository.getPreferredUnitSystem();
-      _athleteGender = await _repository.getAthleteGender();
-      final cachedBio = await _repository.readCachedBiometrics();
-      if (cachedBio != null && cachedBio.leanBodyMassKg > 20) {
-        _lbmKg = cachedBio.leanBodyMassKg;
-      }
+      await _resolveUserBiometricsBaseline();
 
-      // 1. Carga instantánea (0ms) desde SharedPreferences para abrir Entreno Vivo sin espera
+      // 1. Carga instantánea (0ms) desde SharedPreferences aislada por user_routine_${currentUser.id}
       AiGeneratedRoutinePlanModel? cachedPlan =
           await _repository.readCachedAiRoutinePlan();
-      if (cachedPlan == null || cachedPlan.days.length < 5) {
+      final bool hadUserCachedPlan =
+          cachedPlan != null && cachedPlan.days.length >= 5;
+
+      if (!hadUserCachedPlan) {
         cachedPlan = _buildInstantLocalLbmFiveDayPlan(
           lbmKg: _lbmKg,
-          weightKg: cachedBio?.weightKg ?? 92.4,
+          weightKg: _weightKg,
         );
-        await _repository.saveCachedAiRoutinePlan(cachedPlan);
       }
 
       _weeklyRoutines = cachedPlan.days;
@@ -432,10 +499,22 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       _isLoadingPlan = false;
       notifyListeners();
 
-      // 2. Sincronización en segundo plano de GET /api/v1/routines/current (<100ms, solo PostgreSQL)
+      // 2. Consultar GET /api/v1/routines/current filtrado exclusivamente por current_user.id.
+      // Si el usuario no tiene rutina registrada en PostgreSQL, dispara automáticamente POST /api/v1/routines/generate-ai.
       try {
-        final AiGeneratedRoutinePlanModel cloudPlan =
+        AiGeneratedRoutinePlanModel cloudPlan =
             await _repository.loadCurrentAiRoutine();
+        if (!cloudPlan.hasRoutine || cloudPlan.days.length < 5) {
+          _isGeneratingAiRoutine = true;
+          notifyListeners();
+          try {
+            cloudPlan = await _repository.generateAiRoutine();
+          } catch (_) {
+            cloudPlan = await _buildAndPersistLbmFiveDayPlanFallback();
+          } finally {
+            _isGeneratingAiRoutine = false;
+          }
+        }
         if (cloudPlan.hasRoutine && cloudPlan.days.length >= 5) {
           _weeklyRoutines = cloudPlan.days;
           _aiRoutineTitle = cloudPlan.routineName;
@@ -443,8 +522,14 @@ class LiveWorkoutViewModel extends ChangeNotifier {
           _geminiRationale =
               '${cloudPlan.routineName} • ${cloudPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
           await _repository.saveCachedAiRoutinePlan(cloudPlan);
+        } else if (!hadUserCachedPlan) {
+          await _repository.saveCachedAiRoutinePlan(cachedPlan);
         }
-      } catch (_) {}
+      } catch (_) {
+        if (!hadUserCachedPlan) {
+          await _repository.saveCachedAiRoutinePlan(cachedPlan);
+        }
+      }
 
       TodayWorkoutPlanModel? plan;
       try {
@@ -502,13 +587,14 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     }
   }
 
-  /// Dispara `POST /api/v1/routines/generate-ai` únicamente cuando el usuario pulsa "REGENERAR RUTINA CON IA".
+  /// Dispara `POST /api/v1/routines/generate-ai` para regenerar la rutina con la biometría del usuario actual.
   Future<void> regenerateRoutineWithAi() async {
     _isGeneratingAiRoutine = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
+      await _resolveUserBiometricsBaseline();
       AiGeneratedRoutinePlanModel aiPlan;
       try {
         aiPlan = await _repository.generateAiRoutine();
@@ -543,9 +629,16 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     required double lbmKg,
     required double weightKg,
   }) {
+    final bool isFemale = _athleteGender == 'female';
+    final double strengthScale =
+        isFemale ? 0.82 : (lbmKg < 52.0 ? 0.86 : 1.0);
+    final double floorScale = (isFemale || lbmKg < 54.0) ? 0.45 : 1.0;
+
     double scale(double coeff, double minKg) {
-      final double v = lbmKg * coeff * 0.96;
-      return _roundPlate(v < minKg ? minKg : v);
+      final double effectiveMin =
+          _roundPlate((minKg * floorScale) < 5.0 ? 5.0 : (minKg * floorScale));
+      final double v = lbmKg * coeff * strengthScale * 0.96;
+      return _roundPlate(v < effectiveMin ? effectiveMin : v);
     }
 
     final List<Map<String, dynamic>> rawDaysSpec =
@@ -601,21 +694,19 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   }
 
   Future<AiGeneratedRoutinePlanModel> _buildAndPersistLbmFiveDayPlanFallback() async {
-    double lbmKg = 62.74;
-    double weightKg = 92.4;
-    try {
-      final bio =
-          await _repository.readCachedBiometrics() ??
-          await _repository.loadLatestBiometrics();
-      if (bio != null) {
-        weightKg = bio.weightKg;
-        lbmKg = bio.leanBodyMassKg > 20 ? bio.leanBodyMassKg : 62.74;
-      }
-    } catch (_) {}
+    await _resolveUserBiometricsBaseline();
+    final double lbmKg = _lbmKg;
+    final double weightKg = _weightKg;
+    final bool isFemale = _athleteGender == 'female';
+    final double strengthScale =
+        isFemale ? 0.82 : (lbmKg < 52.0 ? 0.86 : 1.0);
+    final double floorScale = (isFemale || lbmKg < 54.0) ? 0.45 : 1.0;
 
     double scale(double coeff, double minKg) {
-      final double v = lbmKg * coeff * 0.96;
-      return _roundPlate(v < minKg ? minKg : v);
+      final double effectiveMin =
+          _roundPlate((minKg * floorScale) < 5.0 ? 5.0 : (minKg * floorScale));
+      final double v = lbmKg * coeff * strengthScale * 0.96;
+      return _roundPlate(v < effectiveMin ? effectiveMin : v);
     }
 
     final List<Map<String, dynamic>> rawDaysSpec =

@@ -13,14 +13,14 @@ class SecureStorageService {
   static const String _wearableKey = 'apexmetrix_preferred_wearable';
   static const String _apiBaseUrlKey = 'apexmetrix_cloud_api_url_v2';
   static const String _hydrationLogsPrefix = 'apexmetrix_hydration_logs_';
-  static const String _cachedAiRoutinePlanKey =
-      'apexmetrix_cached_ai_routine_plan_v2';
-  static const String _cachedRoutineTemplatesKey =
-      'apexmetrix_cached_routine_templates_v2';
-  static const String _cachedWhoopTelemetryKey =
-      'apexmetrix_cached_whoop_telemetry_v2';
-  static const String _cachedBiometricsKey =
-      'apexmetrix_cached_biometrics_v2';
+  static const String _userRoutinePrefix = 'user_routine_';
+  static const String _userRoutineTemplatesPrefix = 'user_routine_templates_';
+  static const String _userWearablePrefix = 'user_wearable_';
+  static const String _userBiometricsPrefix = 'user_biometrics_';
+  static const String _pairedBleIdPrefix = 'last_paired_ble_id_';
+  static const String _pairedBleNamePrefix = 'last_paired_ble_name_';
+  static const String _globalPairedBleIdKey = 'last_paired_ble_id';
+  static const String _globalPairedBleNameKey = 'last_paired_ble_name';
 
   final FlutterSecureStorage _secureStorage;
 
@@ -123,19 +123,38 @@ class SecureStorageService {
     await prefs.remove(_cachedProfileKey);
   }
 
+  Future<String> _resolveActiveUserId([String? explicitUserId]) async {
+    if (explicitUserId != null && explicitUserId.trim().isNotEmpty) {
+      return explicitUserId.trim();
+    }
+    final String? stored = await readUserId();
+    if (stored != null && stored.trim().isNotEmpty) {
+      return stored.trim();
+    }
+    final UserProfileModel? profile = await readUserProfileCache();
+    if (profile != null && profile.id.trim().isNotEmpty) {
+      return profile.id.trim();
+    }
+    return 'anonymous';
+  }
+
   Future<void> saveHydrationLogsForDate(
     String ymd,
-    List<Map<String, dynamic>> logs,
-  ) async {
+    List<Map<String, dynamic>> logs, {
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('$_hydrationLogsPrefix$ymd', jsonEncode(logs));
+    await prefs.setString('$_hydrationLogsPrefix${uid}_$ymd', jsonEncode(logs));
   }
 
   Future<List<Map<String, dynamic>>> readHydrationLogsForDate(
-    String ymd,
-  ) async {
+    String ymd, {
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString('$_hydrationLogsPrefix$ymd');
+    final String? raw = prefs.getString('$_hydrationLogsPrefix${uid}_$ymd');
     if (raw == null || raw.isEmpty) {
       return <Map<String, dynamic>>[];
     }
@@ -181,19 +200,29 @@ class SecureStorageService {
     return saved.trim();
   }
 
-  /// Guarda la periodización completa de 5 días en `SharedPreferences` para carga instantánea (0 ms).
-  Future<void> saveCachedAiRoutinePlan(AiGeneratedRoutinePlanModel plan) async {
+  /// Guarda la periodización completa de 5 días indexada estrictamente por `user_routine_${currentUser.id}`.
+  Future<void> saveCachedAiRoutinePlan(
+    AiGeneratedRoutinePlanModel plan, {
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_cachedAiRoutinePlanKey, jsonEncode(plan.toJson()));
+    await prefs.setString(
+      '$_userRoutinePrefix$uid',
+      jsonEncode(plan.toJson()),
+    );
     if (plan.days.isNotEmpty) {
-      await saveCachedRoutineTemplates(plan.days);
+      await saveCachedRoutineTemplates(plan.days, userId: uid);
     }
   }
 
-  /// Lee la rutina de 5 días desde `SharedPreferences` para que `Entreno Vivo` abra al instante.
-  Future<AiGeneratedRoutinePlanModel?> readCachedAiRoutinePlan() async {
+  /// Lee la rutina de 5 días aislada por usuario (`user_routine_${currentUser.id}`).
+  Future<AiGeneratedRoutinePlanModel?> readCachedAiRoutinePlan({
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString(_cachedAiRoutinePlanKey);
+    final String? raw = prefs.getString('$_userRoutinePrefix$uid');
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -207,17 +236,25 @@ class SecureStorageService {
   }
 
   Future<void> saveCachedRoutineTemplates(
-    List<RoutineTemplateModel> routines,
-  ) async {
+    List<RoutineTemplateModel> routines, {
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final List<Map<String, dynamic>> encodedList =
         routines.map((RoutineTemplateModel r) => r.toJson()).toList();
-    await prefs.setString(_cachedRoutineTemplatesKey, jsonEncode(encodedList));
+    await prefs.setString(
+      '$_userRoutineTemplatesPrefix$uid',
+      jsonEncode(encodedList),
+    );
   }
 
-  Future<List<RoutineTemplateModel>> readCachedRoutineTemplates() async {
+  Future<List<RoutineTemplateModel>> readCachedRoutineTemplates({
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString(_cachedRoutineTemplatesKey);
+    final String? raw = prefs.getString('$_userRoutineTemplatesPrefix$uid');
     if (raw == null || raw.isEmpty) {
       return <RoutineTemplateModel>[];
     }
@@ -232,8 +269,12 @@ class SecureStorageService {
     }
   }
 
-  /// Persiste localmente la telemetría de Whoop (80% Sueño, 47% Recuperación, 7.4 Esfuerzo, 1.8 Estrés).
-  Future<void> saveCachedWearableTelemetry(WearableMetricRecord record) async {
+  /// Persiste localmente la telemetría de wearable aislada por usuario (`user_wearable_${currentUser.id}`).
+  Future<void> saveCachedWearableTelemetry(
+    WearableMetricRecord record, {
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final Map<String, dynamic> payload = <String, dynamic>{
       'date': record.date.toIso8601String(),
@@ -260,16 +301,17 @@ class SecureStorageService {
       'apple_exercise_minutes': record.appleExerciseMinutes,
       'apple_stand_hours': record.appleStandHours,
     };
-    await prefs.setString(_cachedWhoopTelemetryKey, jsonEncode(payload));
+    await prefs.setString('$_userWearablePrefix$uid', jsonEncode(payload));
   }
 
-  /// Lee la telemetría de Whoop persistida en disco o retorna la línea base real del atleta
-  /// (80% Sueño, 47% Recuperación, 7.4 Esfuerzo, 1.8 Estrés MEDIO) para pintar los 3 diales al instante.
+  /// Lee la telemetría de wearable aislada por usuario (`user_wearable_${currentUser.id}`).
   Future<WearableMetricRecord> readCachedWearableTelemetry({
     String defaultSource = 'WHOOP',
+    String? userId,
   }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString(_cachedWhoopTelemetryKey);
+    final String? raw = prefs.getString('$_userWearablePrefix$uid');
     if (raw != null && raw.isNotEmpty) {
       try {
         final Map<String, dynamic> decoded =
@@ -297,18 +339,28 @@ class SecureStorageService {
       whoopStressLevel: 1.8,
       whoopHealthMetricsInRange: 5,
     );
-    await saveCachedWearableTelemetry(initial);
+    await saveCachedWearableTelemetry(initial, userId: uid);
     return initial;
   }
 
-  Future<void> saveCachedBiometrics(BiometricRecord record) async {
+  Future<void> saveCachedBiometrics(
+    BiometricRecord record, {
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_cachedBiometricsKey, jsonEncode(record.toJson()));
+    await prefs.setString(
+      '$_userBiometricsPrefix$uid',
+      jsonEncode(record.toJson()),
+    );
   }
 
-  Future<BiometricRecord?> readCachedBiometrics() async {
+  Future<BiometricRecord?> readCachedBiometrics({
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString(_cachedBiometricsKey);
+    final String? raw = prefs.getString('$_userBiometricsPrefix$uid');
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -319,5 +371,89 @@ class SecureStorageService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Guarda el dispositivo Bluetooth BLE emparejado (`last_paired_ble_id_${currentUser.id}` y `last_paired_ble_name_${currentUser.id}`)
+  /// para reconexión automática Zero-Touch en segundo plano.
+  Future<void> savePairedBleDevice({
+    required String deviceId,
+    required String deviceName,
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
+    final String idKey = '$_pairedBleIdPrefix$uid';
+    final String nameKey = '$_pairedBleNamePrefix$uid';
+    try {
+      await _secureStorage.write(key: idKey, value: deviceId);
+      await _secureStorage.write(key: nameKey, value: deviceName);
+      await _secureStorage.write(key: _globalPairedBleIdKey, value: deviceId);
+      await _secureStorage.write(
+        key: _globalPairedBleNameKey,
+        value: deviceName,
+      );
+    } catch (_) {}
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString(idKey, deviceId);
+    await prefs.setString(nameKey, deviceName);
+    await prefs.setString(_globalPairedBleIdKey, deviceId);
+    await prefs.setString(_globalPairedBleNameKey, deviceName);
+  }
+
+  /// Lee el último dispositivo BLE emparejado para el usuario activo.
+  Future<({String id, String name})?> readPairedBleDevice({
+    String? userId,
+  }) async {
+    final String uid = await _resolveActiveUserId(userId);
+    final String idKey = '$_pairedBleIdPrefix$uid';
+    final String nameKey = '$_pairedBleNamePrefix$uid';
+
+    String? savedId;
+    String? savedName;
+    try {
+      savedId = await _secureStorage.read(key: idKey);
+      savedName = await _secureStorage.read(key: nameKey);
+    } catch (_) {}
+
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    if (savedId == null || savedId.trim().isEmpty) {
+      savedId = prefs.getString(idKey);
+      savedName = prefs.getString(nameKey);
+    }
+    if (savedId == null || savedId.trim().isEmpty) {
+      try {
+        savedId = await _secureStorage.read(key: _globalPairedBleIdKey);
+        savedName = await _secureStorage.read(key: _globalPairedBleNameKey);
+      } catch (_) {}
+    }
+    if (savedId == null || savedId.trim().isEmpty) {
+      savedId = prefs.getString(_globalPairedBleIdKey);
+      savedName = prefs.getString(_globalPairedBleNameKey);
+    }
+    if (savedId == null || savedId.trim().isEmpty) {
+      return null;
+    }
+    final String cleanName =
+        (savedName != null && savedName.trim().isNotEmpty)
+            ? savedName.trim()
+            : 'Wearable BLE';
+    return (id: savedId.trim(), name: cleanName);
+  }
+
+  /// Borra el dispositivo BLE emparejado cuando el usuario pulsa explícitamente "Olvidar / Desvincular".
+  Future<void> clearPairedBleDevice({String? userId}) async {
+    final String uid = await _resolveActiveUserId(userId);
+    final String idKey = '$_pairedBleIdPrefix$uid';
+    final String nameKey = '$_pairedBleNamePrefix$uid';
+    try {
+      await _secureStorage.delete(key: idKey);
+      await _secureStorage.delete(key: nameKey);
+      await _secureStorage.delete(key: _globalPairedBleIdKey);
+      await _secureStorage.delete(key: _globalPairedBleNameKey);
+    } catch (_) {}
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove(idKey);
+    await prefs.remove(nameKey);
+    await prefs.remove(_globalPairedBleIdKey);
+    await prefs.remove(_globalPairedBleNameKey);
   }
 }

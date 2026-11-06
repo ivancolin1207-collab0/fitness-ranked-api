@@ -135,16 +135,35 @@ def _build_lbm_biomechanical_5x6_plan(
     recovery_pct: float,
     sleep_pct: float,
     stress_score: float,
+    biological_sex: str = "MALE",
 ) -> dict[str, Any]:
     """
     Calcula la periodización biomecánica personalizada de 5 días x 6 ejercicios (3 principales + 3 secundarios)
-    derivada matemáticamente del LBM real del atleta, su % de grasa y su recuperación actual.
+    derivada matemáticamente del LBM real del atleta, su % de grasa, su género biológico y su recuperación actual.
     Se utiliza para validar/completar la respuesta de Gemini o como motor determinista si la cuota de API falla.
     """
     base_rpe = 7.5 if recovery_pct < 36.0 else (8.5 if recovery_pct >= 70.0 else 8.0)
+    is_female = any(
+        token in (biological_sex or "").upper()
+        for token in ("FEM", "MUJER", "WOMAN", "F")
+    ) and not (biological_sex or "").upper().startswith("M")
 
-    def w(coeff: float, floor_kg: float = 10.0) -> float:
-        return _compute_lbm_scaled_weight(lbm_kg, recovery_pct, coeff, floor_kg)
+    # Factor biomecánico de escala según LBM y sexo biológico:
+    # Para atletas con LBM <= 52 kg o perfil femenino, ajusta coeficientes de tren superior e inferior
+    # y reduce los pisos mínimos (floor_kg) para prescribir cargas 100% realistas (ej. 45kg LBM -> Press Banca ~35-37.5kg).
+    upper_scale = 0.82 if is_female else (0.86 if lbm_kg < 52.0 else 1.0)
+    lower_scale = 0.88 if is_female else (0.90 if lbm_kg < 52.0 else 1.0)
+    floor_scale = 0.45 if (is_female or lbm_kg < 54.0) else 1.0
+
+    def w(coeff: float, floor_kg: float = 10.0, is_lower: bool = False) -> float:
+        scale = lower_scale if is_lower else upper_scale
+        effective_floor = max(5.0, round_to_plate_increment(floor_kg * floor_scale))
+        return _compute_lbm_scaled_weight(
+            lbm_kg,
+            recovery_pct,
+            coeff * scale,
+            effective_floor,
+        )
 
     days: list[dict[str, Any]] = [
         {
@@ -620,12 +639,16 @@ def _normalize_and_validate_ai_plan(
                 else fb_ex
             )
             raw_w = src_ex.get("prescribed_weight_kg")
+            fb_w = float(fb_ex["prescribed_weight_kg"])
             try:
-                parsed_w = float(raw_w) if raw_w is not None else float(fb_ex["prescribed_weight_kg"])
+                parsed_w = float(raw_w) if raw_w is not None else fb_w
                 if parsed_w <= 2.0:
-                    parsed_w = float(fb_ex["prescribed_weight_kg"])
+                    parsed_w = fb_w
+                else:
+                    # Limita alucinaciones de carga fuera del perfil biomecánico individual (LBM) del usuario
+                    parsed_w = max(fb_w * 0.75, min(fb_w * 1.20, parsed_w))
             except Exception:
-                parsed_w = float(fb_ex["prescribed_weight_kg"])
+                parsed_w = fb_w
 
             try:
                 parsed_sets = int(src_ex.get("target_sets") or fb_ex["target_sets"])
@@ -693,7 +716,7 @@ async def generate_and_persist_ai_routine(
     """
     await ensure_ai_routine_tables(db)
 
-    # 1. Extraer biometría con valores seguros por defecto para evitar NoneType / AttributeError
+    # 1. Extraer biometría individual del usuario autenticado (sin contaminar con datos de otra cuenta)
     bio_stmt = (
         select(Biometric)
         .where(Biometric.user_id == user.id)
@@ -702,16 +725,39 @@ async def generate_and_persist_ai_routine(
     )
     latest_bio = (await db.execute(bio_stmt)).scalar_one_or_none()
 
+    biological_sex = str(
+        getattr(user, "biological_sex", None)
+        or getattr(user, "gender", None)
+        or "MALE"
+    ).upper().strip()
+    is_female = any(
+        token in biological_sex for token in ("FEM", "MUJER", "WOMAN", "F")
+    ) and not biological_sex.startswith("M")
+    height_cm = float(
+        getattr(user, "height_cm", None) or (163.0 if is_female else 175.0)
+    )
+    username_lower = f"{getattr(user, 'username', '')} {getattr(user, 'email', '')}".lower()
+    is_cesar_profile = "ivancolin" in username_lower or "cesar" in username_lower
+
+    default_weight_for_profile = (
+        92.4
+        if is_cesar_profile
+        else round((21.2 if is_female else 22.8) * ((height_cm / 100.0) ** 2), 1)
+    )
+    default_fat_for_profile = (
+        32.1 if is_cesar_profile else (24.5 if is_female else 18.5)
+    )
+
     raw_weight = (
         getattr(latest_bio, "weight_kg", None)
         or getattr(user, "weight", None)
-        or 92.4
+        or default_weight_for_profile
     )
     raw_fat = (
         getattr(latest_bio, "fat_percentage", None)
         or getattr(latest_bio, "body_fat_pct", None)
         or getattr(user, "body_fat", None)
-        or 32.1
+        or default_fat_for_profile
     )
     weight_kg = float(raw_weight)
     body_fat_pct = float(raw_fat)
@@ -782,33 +828,46 @@ async def generate_and_persist_ai_routine(
         recovery_pct=recovery_pct,
         sleep_pct=sleep_pct,
         stress_score=stress_score,
+        biological_sex=biological_sex,
     )
+    ref_bench_kg = fallback_plan["days"][0]["exercises"][0]["prescribed_weight_kg"]
+    ref_squat_kg = fallback_plan["days"][2]["exercises"][0]["prescribed_weight_kg"]
+    ref_row_kg = fallback_plan["days"][1]["exercises"][0]["prescribed_weight_kg"]
 
     prompt = f"""
-Genera una rutina de hipertrofia y fuerza de 5 DÍAS para {full_name}:
-Peso: {weight_kg:.1f}kg, LBM: {lbm_kg:.2f}kg, Grasa: {body_fat_pct:.1f}%, Recuperación: {recovery_pct:.0f}%, Sueño: {sleep_pct:.0f}%, Estrés: {stress_score:.1f}.
-Cada día DEBE tener EXACTAMENTE 6 ejercicios (3 principales + 3 secundarios/sinergistas).
-Calcula el peso en kg específico (`prescribed_weight_kg`) para cada ejercicio según {lbm_kg:.2f}kg LBM y {recovery_pct:.0f}% recuperación.
-Responde ÚNICAMENTE un JSON válido con este formato exacto:
+Genera una rutina de hipertrofia y fuerza 100% PERSONALIZADA de 5 DÍAS para el atleta {full_name} (ID: {user.id}):
+- Género Biológico: {biological_sex}
+- Estatura: {height_cm:.0f} cm
+- Peso Corporal: {weight_kg:.1f} kg
+- Masa Magra (LBM): {lbm_kg:.2f} kg
+- Grasa Corporal: {body_fat_pct:.1f}%
+- Recuperación SNC: {recovery_pct:.0f}% | Sueño: {sleep_pct:.0f}% | Estrés: {stress_score:.1f}
+
+REGLAS ESTRICTAS DE PRESCRIPCIÓN BIOMECÁNICA:
+1. Cada día DEBE tener EXACTAMENTE 6 ejercicios (3 principales compuestos + 3 secundarios/sinergistas).
+2. Ajusta estrictamente `prescribed_weight_kg` al perfil de {weight_kg:.1f} kg ({lbm_kg:.2f} kg LBM, Género {biological_sex}).
+   Referencias biomecánicas para este usuario: Press de Banca ~{ref_bench_kg:.1f} kg, Remo con Barra ~{ref_row_kg:.1f} kg, Sentadilla ~{ref_squat_kg:.1f} kg.
+   PROHIBIDO usar cargas de otro usuario.
+3. Responde ÚNICAMENTE un JSON válido con este formato exacto:
 {{
-  "routine_name": "Hipertrofia 5 Días - {lbm_kg:.2f}kg LBM",
-  "weekly_focus": "Enfoque biomecánico adaptado a {lbm_kg:.2f}kg LBM",
+  "routine_name": "Hipertrofia Personalizada - {full_name} ({lbm_kg:.2f}kg LBM)",
+  "weekly_focus": "Recomposición & Fuerza adaptada a {lbm_kg:.2f}kg LBM ({biological_sex})",
   "days": [
     {{
       "day_number": 1,
-      "day_name": "Día 1: Pecho & Tríceps",
-      "target_muscles": ["Pecho", "Tríceps"],
+      "day_name": "Día 1: Empuje (Pectoral & Tríceps)",
+      "target_muscles": ["Pectoral", "Tríceps"],
       "exercises": [
         {{
           "order": 1,
           "exercise_key": "bench_press_barbell",
-          "name": "Press de Banca Plano",
-          "muscle_group": "Pecho",
+          "name": "Press de Banca Plano con Barra",
+          "muscle_group": "Pectoral",
           "target_sets": 4,
           "target_reps": "6-8",
-          "prescribed_weight_kg": 65.0,
+          "prescribed_weight_kg": {ref_bench_kg:.1f},
           "rpe_target": 8.0,
-          "rest_seconds": 90,
+          "rest_seconds": 120,
           "tempo": "3-0-1-0",
           "coaching_cue": "Retracción escapular activa"
         }}

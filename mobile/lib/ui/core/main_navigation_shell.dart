@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/services/ble_heart_rate_service.dart';
 import '../../data/models/biometric_models.dart';
 import '../../data/repositories/fitness_repository.dart';
 import '../features/arena/view_models/ranked_arena_view_model.dart';
@@ -31,6 +33,7 @@ class MainNavigationShell extends StatefulWidget {
 
 class _MainNavigationShellState extends State<MainNavigationShell> {
   int _selectedIndex = 0;
+  String? _activeUserId;
   final List<AiCoachChatMessageModel> _chatHistory = <AiCoachChatMessageModel>[];
   List<String> _suggestedPrompts = const <String>[
     '¿Qué puedo hacer para subir de peso limpio?',
@@ -42,9 +45,44 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   @override
   void initState() {
     super.initState();
+    _activeUserId = widget.authViewModel.currentUser?.id;
+    widget.authViewModel.addListener(_onAuthUserChanged);
+    widget.homeViewModel.resetForUserSwitch();
+    widget.workoutViewModel.resetForUserSwitch();
     widget.homeViewModel.initializeDashboard();
     widget.workoutViewModel.initializeWorkoutPlan();
     widget.arenaViewModel.loadArenaData();
+    unawaited(
+      BleHeartRateService.instance.autoReconnectSavedDevice(
+        userId: _activeUserId,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.authViewModel.removeListener(_onAuthUserChanged);
+    super.dispose();
+  }
+
+  void _onAuthUserChanged() {
+    final String? nextUserId = widget.authViewModel.currentUser?.id;
+    if (nextUserId != _activeUserId) {
+      _activeUserId = nextUserId;
+      _chatHistory.clear();
+      widget.homeViewModel.resetForUserSwitch();
+      widget.workoutViewModel.resetForUserSwitch();
+      if (nextUserId != null && nextUserId.isNotEmpty) {
+        widget.homeViewModel.initializeDashboard();
+        widget.workoutViewModel.initializeWorkoutPlan();
+        widget.arenaViewModel.loadArenaData();
+        unawaited(
+          BleHeartRateService.instance.autoReconnectSavedDevice(
+            userId: nextUserId,
+          ),
+        );
+      }
+    }
   }
 
   Map<String, dynamic> _buildLiveAthleteContext() {
