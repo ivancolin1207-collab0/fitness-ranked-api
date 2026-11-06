@@ -535,6 +535,68 @@ class ExerciseMediaService {
     return _catalog[3];
   }
 
+  static String activationHeadlineFor(ExerciseMediaSpec spec) {
+    switch (spec.archetype) {
+      case BiomechanicalArchetype.benchPress:
+        return 'Retracción Escapular Activa';
+      case BiomechanicalArchetype.squat:
+        return 'Bracing Abdominal 360° y Rodillas Alineadas';
+      case BiomechanicalArchetype.deadlift:
+        return 'Bisagra de Cadera y Dorsal Compacto';
+      case BiomechanicalArchetype.overheadPress:
+        return 'Estabilidad Lumbo-Pélvica y Empuje Vertical';
+      case BiomechanicalArchetype.latPulldown:
+        return 'Depresión Escapular Previa a la Tracción';
+      case BiomechanicalArchetype.barbellRow:
+        return 'Retracción de Romboides con Torso a 45°';
+      case BiomechanicalArchetype.bicepCurl:
+        return 'Flexión Pura de Codo con Húmero Fijo';
+      case BiomechanicalArchetype.lateralRaise:
+        return 'Abducción en Plano Escapular (30°)';
+      case BiomechanicalArchetype.tricepExtension:
+        return 'Bloqueo de Húmero y Extensión Completa';
+      case BiomechanicalArchetype.lunge:
+        return 'Control Unilateral de Cadera y Rodilla';
+      case BiomechanicalArchetype.hipThrust:
+        return 'Retroversión Pélvica y Tibia a 90°';
+      case BiomechanicalArchetype.rearDeltFacePull:
+        return 'Rotación Externa de Hombro a 90°';
+      case BiomechanicalArchetype.shrug:
+        return 'Elevación Escapular Vertical con Pausa';
+    }
+  }
+
+  static String jointShortCueFor(ExerciseMediaSpec spec) {
+    switch (spec.archetype) {
+      case BiomechanicalArchetype.benchPress:
+        return 'Codos a 45°';
+      case BiomechanicalArchetype.squat:
+        return 'Columna Neutra';
+      case BiomechanicalArchetype.deadlift:
+        return 'Tibia Vertical';
+      case BiomechanicalArchetype.overheadPress:
+        return 'Plano Escapular';
+      case BiomechanicalArchetype.latPulldown:
+        return 'Tracción Vertical';
+      case BiomechanicalArchetype.barbellRow:
+        return 'Torso a 45°';
+      case BiomechanicalArchetype.bicepCurl:
+        return 'Húmero Fijo';
+      case BiomechanicalArchetype.lateralRaise:
+        return '30° Escapular';
+      case BiomechanicalArchetype.tricepExtension:
+        return 'Codo Fijo';
+      case BiomechanicalArchetype.lunge:
+        return 'Rodilla Alineada';
+      case BiomechanicalArchetype.hipThrust:
+        return 'Tibia a 90°';
+      case BiomechanicalArchetype.rearDeltFacePull:
+        return 'Rot. Externa 90°';
+      case BiomechanicalArchetype.shrug:
+        return 'Escápula Elevada';
+    }
+  }
+
   static String formatTargetRange({
     required ExerciseMediaSpec spec,
     double? recoveryScore,
@@ -550,28 +612,24 @@ class ExerciseMediaService {
             : 8.0);
     final String repsRange =
         (targetRepsRange != null && targetRepsRange.trim().isNotEmpty)
-            ? '${targetRepsRange.trim()} reps'
+            ? '${targetRepsRange.trim()} REPS'
             : (targetReps != null
-                ? '${math.max(4, targetReps - 1)}-${targetReps + 1} reps'
-                : '8-10 reps');
-    final String zoneSuffix = recoveryScore != null
-        ? (recoveryScore < 34.0
-            ? 'Descarga SNC (${recoveryScore.round()}% rec)'
-            : (recoveryScore >= 67.0
-                ? 'Sobrecarga activa (${recoveryScore.round()}% rec)'
-                : 'según tu recuperación de hoy (${recoveryScore.round()}%)'))
-        : 'según tu recuperación de hoy';
-    return 'RPE ${rpe.toStringAsFixed(1)} | $repsRange $zoneSuffix';
+                ? '${math.max(4, targetReps - 1)}-${targetReps + 1} REPS'
+                : '8-10 REPS');
+    return 'RPE ${rpe.toStringAsFixed(1)} • $repsRange';
   }
 }
 
-/// Visor Biomecánico 3D / HD por Ejercicio (210dp, #0D1017 -> #14171E)
-/// Renderizado anatómico volumétrico 3D con iluminación muscular específica,
-/// goniómetro articular en tiempo real, PiP HD y 3 píldoras técnicas sincronizadas.
+/// Visor Biomecánico 3D / HD Desacoplado por Capas Verticales Limpias:
+/// 1. Cabecera del Visor (Barra Superior con Tag #F59E0B y Selector [3D / GIF] | [FOTO REAL])
+/// 2. Stage Central Libre de 230dp (#0E121A, borde #222733, sin cajas flotantes sobre el modelo)
+/// 3. Banda Técnica de Telemetría Muscular en 2 Columnas (Músculo Primario + Ángulo Articular)
+/// 4. Tarjetas Modulares de Parámetros Técnicos (Tempo, Activación y Prescripción IA)
 class BiomechanicalExerciseAvatarModule extends StatefulWidget {
   final String exerciseName;
   final String? exerciseKey;
   final double? recoveryScore;
+  final double? lbmKg;
   final int? targetReps;
   final String? targetRepsRange;
   final double? prescribedRpe;
@@ -583,6 +641,7 @@ class BiomechanicalExerciseAvatarModule extends StatefulWidget {
     required this.exerciseName,
     this.exerciseKey,
     this.recoveryScore,
+    this.lbmKg,
     this.targetReps,
     this.targetRepsRange,
     this.prescribedRpe,
@@ -599,7 +658,7 @@ class _BiomechanicalExerciseAvatarModuleState
     extends State<BiomechanicalExerciseAvatarModule>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  bool _showHdOverlayExpanded = false;
+  bool _showRealPhotoMode = false;
 
   @override
   void initState() {
@@ -615,7 +674,6 @@ class _BiomechanicalExerciseAvatarModuleState
     super.didUpdateWidget(oldWidget);
     if (oldWidget.exerciseName != widget.exerciseName ||
         oldWidget.exerciseKey != widget.exerciseKey) {
-      // Reinicia el ciclo cinemático al cambiar de ejercicio para feedback inmediato
       _controller
         ..reset()
         ..repeat();
@@ -630,7 +688,8 @@ class _BiomechanicalExerciseAvatarModuleState
 
   ({
     double depth,
-    String phaseLabel,
+    String phaseSubtitle,
+    String movementWord,
     Color phaseColor,
     double jointAngleDeg,
   }) _evaluatePhase(double t, ExerciseMediaSpec spec) {
@@ -646,38 +705,104 @@ class _BiomechanicalExerciseAvatarModuleState
     final double concEnd = bottomEnd + spec.concentricSec.toDouble();
 
     double depth;
-    String phaseLabel;
+    String phaseSubtitle;
+    String movementWord;
     Color phaseColor;
 
     if (sec <= eccEnd) {
       final double p = (sec / math.max(0.5, eccEnd)).clamp(0.0, 1.0);
       depth = Curves.easeInOutCubic.transform(p);
-      phaseLabel = 'EXCÉNTRICA • ${spec.eccentricSec}s CONTROL';
+      phaseSubtitle = 'Fase excéntrica controlada (${spec.eccentricSec}s)';
+      movementWord = 'Flexión';
       phaseColor = const Color(0xFF00E5FF);
     } else if (sec <= bottomEnd) {
       depth = 1.0;
-      phaseLabel = 'ISOMETRÍA • ${spec.pauseBottomSec}s PAUSA';
+      phaseSubtitle = 'Pausa isométrica inferior (${spec.pauseBottomSec}s)';
+      movementWord = 'Isometría';
       phaseColor = const Color(0xFFF59E0B);
     } else if (sec <= concEnd) {
       final double p =
           ((sec - bottomEnd) / math.max(0.5, spec.concentricSec)).clamp(0.0, 1.0);
       depth = 1.0 - Curves.easeOutCubic.transform(p).clamp(0.0, 1.0);
-      phaseLabel = 'CONCÉNTRICA • ${spec.concentricSec}s POTENCIA';
+      phaseSubtitle = 'Fase concéntrica activa (${spec.concentricSec}s)';
+      movementWord = 'Extensión';
       phaseColor = const Color(0xFFD2FF00);
     } else {
       depth = 0.0;
-      phaseLabel = 'CONTRACCIÓN MÁXIMA • ${spec.pauseTopSec}s';
+      phaseSubtitle = 'Contracción máxima superior (${spec.pauseTopSec}s)';
+      movementWord = 'Bloqueo';
       phaseColor = const Color(0xFF10B981);
     }
 
-    final double angle = spec.maxAngleDeg -
-        ((spec.maxAngleDeg - spec.minAngleDeg) * depth);
+    final double angle =
+        spec.maxAngleDeg - ((spec.maxAngleDeg - spec.minAngleDeg) * depth);
 
     return (
       depth: depth,
-      phaseLabel: phaseLabel,
+      phaseSubtitle: phaseSubtitle,
+      movementWord: movementWord,
       phaseColor: phaseColor,
       jointAngleDeg: angle,
+    );
+  }
+
+  Widget _buildTelemetryRow({
+    required IconData icon,
+    required Color accentColor,
+    required String label,
+    required String primaryValue,
+    required String secondaryDescription,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF14171E),
+        borderRadius: BorderRadius.circular(10.0),
+        border: Border.all(color: const Color(0xFF222733)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(icon, size: 18.0, color: accentColor),
+          const SizedBox(width: 12.0),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: accentColor,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 2.0),
+                Text(
+                  primaryValue,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.0,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (secondaryDescription.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 2.0),
+                  Text(
+                    secondaryDescription,
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -695,480 +820,348 @@ class _BiomechanicalExerciseAvatarModuleState
             widget.customCoachingCue!.trim().isNotEmpty)
         ? widget.customCoachingCue!.trim()
         : spec.activationCue;
-    final String targetRangeText = ExerciseMediaService.formatTargetRange(
+    final String activationHeadline =
+        ExerciseMediaService.activationHeadlineFor(spec);
+    final String jointShortCue = ExerciseMediaService.jointShortCueFor(spec);
+    final String targetPrimary = ExerciseMediaService.formatTargetRange(
       spec: spec,
       recoveryScore: widget.recoveryScore,
       targetReps: widget.targetReps,
       targetRepsRange: widget.targetRepsRange,
       prescribedRpe: widget.prescribedRpe,
     );
+    final double effectiveLbm = widget.lbmKg ?? 62.7;
+    final int effectiveRec = (widget.recoveryScore ?? 47.0).round();
+    final String targetSecondary =
+        'Carga calculada para ${effectiveLbm.toStringAsFixed(1)} kg LBM con $effectiveRec% de recuperación';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        // Visor Biomecánico 3D / HD de 208dp con iluminación anatómica volumétrica
-        Container(
-          height: 208,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: <Color>[
-                Color(0xFF0B0E15),
-                Color(0xFF141923),
-                Color(0xFF0E121A),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: const Color(0xFF283142),
-              width: 1.3,
-            ),
-            boxShadow: <BoxShadow>[
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 14,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (BuildContext context, _) {
-              final phase = _evaluatePhase(_controller.value, spec);
-              final String activeFrameUrl =
-                  phase.depth > 0.48 ? spec.frame1Url : spec.gifUrl;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, _) {
+        final phase = _evaluatePhase(_controller.value, spec);
+        final String activeFrameUrl =
+            phase.depth > 0.48 ? spec.frame1Url : spec.gifUrl;
 
-              return Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  // 1. Lienzo Anatómico Volumétrico 3D (60 FPS)
-                  CustomPaint(
-                    painter: _Biomechanical3DVisualizerPainter(
-                      archetype: spec.archetype,
-                      depth: phase.depth,
-                      phaseColor: phase.phaseColor,
-                      jointAngleDeg: phase.jointAngleDeg,
-                      pulseValue: _controller.value,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            // 1. Cabecera del Visor (Barra Superior limpia fuera del Canvas)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF14171E),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.65),
                     ),
                   ),
-
-                  // 2. Vista HD Real expandida (si el atleta activa modo HD completo)
-                  if (_showHdOverlayExpanded)
-                    Positioned.fill(
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(
+                        Icons.document_scanner_outlined,
+                        size: 13,
+                        color: Color(0xFFF59E0B),
+                      ),
+                      SizedBox(width: 5),
+                      Text(
+                        'VISOR BIOMECÁNICO 3D',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFFF59E0B),
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    InkWell(
+                      borderRadius: BorderRadius.circular(7),
+                      onTap: () {
+                        setState(() {
+                          _showRealPhotoMode = false;
+                        });
+                      },
                       child: Container(
-                        color: const Color(0xFF0B0E14).withValues(alpha: 0.92),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 28,
-                          vertical: 34,
+                          horizontal: 9,
+                          vertical: 5,
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.network(
-                            activeFrameUrl,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Center(
-                              child: Text(
-                                'Modo 3D Anatómico Activo (Sin conexión a CDN HD)',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF94A3B8),
-                                ),
-                              ),
+                        decoration: BoxDecoration(
+                          color: !_showRealPhotoMode
+                              ? const Color(0xFF1E232E)
+                              : const Color(0xFF14171E),
+                          borderRadius: BorderRadius.circular(7),
+                          border: Border.all(
+                            color: !_showRealPhotoMode
+                                ? const Color(0xFFF59E0B)
+                                : const Color(0xFF222733),
+                          ),
+                        ),
+                        child: Text(
+                          '3D / GIF',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: !_showRealPhotoMode
+                                ? Colors.white
+                                : const Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(7),
+                      onTap: () {
+                        setState(() {
+                          _showRealPhotoMode = true;
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _showRealPhotoMode
+                              ? const Color(0xFF1E232E)
+                              : const Color(0xFF14171E),
+                          borderRadius: BorderRadius.circular(7),
+                          border: Border.all(
+                            color: _showRealPhotoMode
+                                ? const Color(0xFFF59E0B)
+                                : const Color(0xFF222733),
+                          ),
+                        ),
+                        child: Text(
+                          'FOTO REAL',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: _showRealPhotoMode
+                                ? Colors.white
+                                : const Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // 2. Stage Central del Modelo / Avatar (230dp, Zona 100% Libre de cajas flotantes)
+            Container(
+              height: 230,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0E121A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: const Color(0xFF222733),
+                  width: 1.2,
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  if (!_showRealPhotoMode)
+                    CustomPaint(
+                      painter: _Biomechanical3DVisualizerPainter(
+                        archetype: spec.archetype,
+                        depth: phase.depth,
+                        phaseColor: phase.phaseColor,
+                        jointAngleDeg: phase.jointAngleDeg,
+                        pulseValue: _controller.value,
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          activeFrameUrl,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => CustomPaint(
+                            painter: _Biomechanical3DVisualizerPainter(
+                              archetype: spec.archetype,
+                              depth: phase.depth,
+                              phaseColor: phase.phaseColor,
+                              jointAngleDeg: phase.jointAngleDeg,
+                              pulseValue: _controller.value,
                             ),
                           ),
                         ),
                       ),
                     ),
 
-                  // 3. Miniatura PiP HD Real en la esquina derecha (si estamos en modo 3D)
-                  if (!_showHdOverlayExpanded)
-                    Positioned(
-                      right: 10,
-                      top: 38,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _showHdOverlayExpanded = true;
-                          });
-                        },
-                        child: Container(
-                          width: 66,
-                          height: 66,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0B0E14),
-                            borderRadius: BorderRadius.circular(9),
-                            border: Border.all(
-                              color: phase.phaseColor.withValues(alpha: 0.65),
-                              width: 1.2,
-                            ),
-                            boxShadow: <BoxShadow>[
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.5),
-                                blurRadius: 8,
-                              ),
-                            ],
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: <Widget>[
-                              Image.network(
-                                activeFrameUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  color: const Color(0xFF141923),
-                                  alignment: Alignment.center,
-                                  child: Icon(
-                                    Icons.accessibility_new_rounded,
-                                    size: 24,
-                                    color: phase.phaseColor,
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                bottom: 0,
-                                left: 0,
-                                right: 0,
-                                child: Container(
-                                  color: Colors.black.withValues(alpha: 0.75),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 1.5,
-                                  ),
-                                  child: const Text(
-                                    'HD • AMPLIAR',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 7.5,
-                                      fontWeight: FontWeight.w900,
-                                      color: Color(0xFFD2FF00),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  // 4. Panel Izquierdo Flotante: Músculos iluminados + Goniómetro en vivo
+                  // Únicamente una barra inferior discreta de 1 línea en la base del canvas
                   Positioned(
-                    left: 10,
-                    top: 38,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
                     child: Container(
-                      width: 146,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
+                        horizontal: 12,
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0B0E14).withValues(alpha: 0.84),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF263042),
+                        color: const Color(0xFF0B0E14).withValues(alpha: 0.86),
+                        border: const Border(
+                          top: BorderSide(color: Color(0xFF222733)),
                         ),
                       ),
+                      child: Text(
+                        '${spec.canonicalName} • ${spec.jointFocusLabel}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFE2E8F0),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // 3. Banda Técnica de Telemetría Muscular (Debajo del Canvas, NO encima)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF14171E),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF222733)),
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    // Columna Izquierda (Activación)
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
-                          Row(
-                            children: <Widget>[
-                              Container(
-                                width: 7,
-                                height: 7,
-                                decoration: BoxDecoration(
-                                  color: phase.phaseColor,
-                                  shape: BoxShape.circle,
-                                  boxShadow: <BoxShadow>[
-                                    BoxShadow(
-                                      color: phase.phaseColor,
-                                      blurRadius: 6,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 5),
-                              const Expanded(
-                                child: Text(
-                                  'EMG • MÚSCULO PRIMARIO',
-                                  style: TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.w900,
-                                    color: Color(0xFF94A3B8),
-                                    letterSpacing: 0.3,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          const Text(
+                            'MÚSCULO PRIMARIO',
+                            style: TextStyle(
+                              color: Color(0xFF10B981),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                            ),
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 3),
                           Text(
                             spec.primaryMuscles,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w900,
                               color: Colors.white,
-                              height: 1.15,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
                             ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 3),
                           Text(
                             'Sinergistas: ${spec.secondaryMuscles}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 8.5,
-                              fontWeight: FontWeight.w600,
                               color: Color(0xFF94A3B8),
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: phase.phaseColor.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            child: Text(
-                              'ÁNGULO: ${phase.jointAngleDeg.round()}° • TEMPO $tempoCode',
-                              style: TextStyle(
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w900,
-                                color: phase.phaseColor,
-                              ),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
-
-                  // 5. HUD Superior: Selector 3D/HD + Fase Cinemática en Vivo
-                  Positioned(
-                    top: 8,
-                    left: 10,
-                    right: 10,
-                    child: Row(
-                      children: <Widget>[
-                        InkWell(
-                          onTap: () {
-                            setState(() {
-                              _showHdOverlayExpanded = !_showHdOverlayExpanded;
-                            });
-                          },
-                          borderRadius: BorderRadius.circular(6),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF0B0E14)
-                                  .withValues(alpha: 0.88),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: const Color(0xFFD2FF00)
-                                    .withValues(alpha: 0.65),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                const Icon(
-                                  Icons.view_in_ar_rounded,
-                                  size: 12,
-                                  color: Color(0xFFD2FF00),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _showHdOverlayExpanded
-                                      ? 'VISOR HD REAL (TOCA PARA 3D)'
-                                      : 'VISOR 3D BIOMECÁNICO HD',
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w900,
-                                    color: Color(0xFFD2FF00),
-                                    letterSpacing: 0.3,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const Spacer(),
-                        Flexible(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: phase.phaseColor.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: phase.phaseColor.withValues(alpha: 0.75),
-                              ),
-                            ),
-                            child: Text(
-                              phase.phaseLabel,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                                color: phase.phaseColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                    Container(
+                      width: 1,
+                      margin: const EdgeInsets.symmetric(horizontal: 10),
+                      color: const Color(0xFF222733),
                     ),
-                  ),
-
-                  // 6. HUD Inferior: Ejercicio Activo + Foco Articular Objetivo
-                  Positioned(
-                    bottom: 8,
-                    left: 10,
-                    right: 10,
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            spec.canonicalName.toUpperCase(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                    // Columna Derecha (Dinámica)
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          const Text(
+                            'ÁNGULO ARTICULAR',
+                            style: TextStyle(
+                              color: Color(0xFFF59E0B),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '${phase.jointAngleDeg.round()}° ${phase.movementWord} • $jointShortCue',
                             style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            phase.phaseSubtitle,
+                            style: const TextStyle(
+                              color: Color(0xFF94A3B8),
                               fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFFE2E8F0),
-                              letterSpacing: 0.3,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 2.5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF0B0E14)
-                                  .withValues(alpha: 0.88),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: const Color(0xFF00E5FF)
-                                    .withValues(alpha: 0.5),
-                              ),
-                            ),
-                            child: Text(
-                              spec.jointFocusLabel,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF00E5FF),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
-        // 3 Píldoras Técnicas sincronizadas al instante con el ejercicio seleccionado
-        _TechnicalCuePill(
-          icon: Icons.timer_outlined,
-          accentColor: const Color(0xFFD2FF00),
-          label: 'TEMPO PRESCRITO',
-          value: '$tempoCode (${spec.prescribedTempoDetail})',
-        ),
-        const SizedBox(height: 5),
-        _TechnicalCuePill(
-          icon: Icons.psychology_alt_outlined,
-          accentColor: const Color(0xFF00E5FF),
-          label: 'CUE DE ACTIVACIÓN',
-          value: '"$cueText"',
-        ),
-        const SizedBox(height: 5),
-        _TechnicalCuePill(
-          icon: Icons.track_changes_rounded,
-          accentColor: const Color(0xFF10B981),
-          label: 'RANGO OBJETIVO',
-          value: targetRangeText,
-        ),
-      ],
-    );
-  }
-}
-
-class _TechnicalCuePill extends StatelessWidget {
-  final IconData icon;
-  final Color accentColor;
-  final String label;
-  final String value;
-
-  const _TechnicalCuePill({
-    required this.icon,
-    required this.accentColor,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0xFF14171E),
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(
-          color: const Color(0xFF232834),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          Icon(icon, size: 15, color: accentColor),
-          const SizedBox(width: 7),
-          Text(
-            '$label: ',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              color: accentColor,
-              letterSpacing: 0.3,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFFF1F5F9),
-                height: 1.2,
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+            const SizedBox(height: 10),
+
+            // 4. Tarjetas Modulares de Cues y Parámetros Técnicos
+            _buildTelemetryRow(
+              icon: Icons.timer_outlined,
+              accentColor: const Color(0xFFD2FF00),
+              label: 'TEMPO PRESCRITO',
+              primaryValue: 'TEMPO: $tempoCode',
+              secondaryDescription: spec.prescribedTempoDetail,
+            ),
+            _buildTelemetryRow(
+              icon: Icons.psychology_alt_outlined,
+              accentColor: const Color(0xFF00E5FF),
+              label: 'ACTIVACIÓN BIOMECÁNICA',
+              primaryValue: activationHeadline,
+              secondaryDescription: cueText,
+            ),
+            _buildTelemetryRow(
+              icon: Icons.track_changes_rounded,
+              accentColor: const Color(0xFF10B981),
+              label: 'PRESCRIPCIÓN IA',
+              primaryValue: targetPrimary,
+              secondaryDescription: targetSecondary,
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1192,8 +1185,8 @@ class _Biomechanical3DVisualizerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double cx = size.width * 0.56;
-    final double floorY = size.height - 34.0;
+    final double cx = size.width * 0.50;
+    final double floorY = size.height - 46.0;
 
     // 1. Escenario 3D: Spotlight radial + plataforma de perspectiva isométrica
     final Rect stageGlowRect = Rect.fromCenter(

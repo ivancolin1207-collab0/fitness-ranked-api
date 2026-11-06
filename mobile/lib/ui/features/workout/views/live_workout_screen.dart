@@ -452,11 +452,16 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                   spacing: 6,
                   children: routines.map((RoutineTemplateModel r) {
                     final bool isSelected = selected?.id == r.id;
+                    final String chipTitle = r.name
+                            .toLowerCase()
+                            .startsWith(r.dayLabel.toLowerCase())
+                        ? r.name
+                        : '${r.dayLabel}: ${r.name}';
                     return ChoiceChip(
                       visualDensity: VisualDensity.compact,
                       selected: isSelected,
                       selectedColor: ApexTheme.voltAccent,
-                      label: Text('${r.dayLabel}: ${r.name}'),
+                      label: Text(chipTitle),
                       labelStyle: TextStyle(
                         color:
                             isSelected ? Colors.black : ApexTheme.textPrimary,
@@ -545,7 +550,11 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
               children: <Widget>[
                 Expanded(
                   child: Text(
-                    '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
+                    routine.name
+                            .toLowerCase()
+                            .startsWith(routine.dayLabel.toLowerCase())
+                        ? routine.name.toUpperCase()
+                        : '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1076,7 +1085,11 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                     children: <Widget>[
                       if (routine != null)
                         Text(
-                          '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
+                          routine.name
+                                  .toLowerCase()
+                                  .startsWith(routine.dayLabel.toLowerCase())
+                              ? routine.name.toUpperCase()
+                              : '${routine.dayLabel.toUpperCase()} • ${routine.name.toUpperCase()}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -1219,41 +1232,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
               ),
               const SizedBox(height: 10),
             ],
-            // Píldora táctica con RPE, Tempo y Coaching Cue generados por Gemini
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: const Color(0xFF14171E),
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(
-                  color: ApexTheme.cyanElectric.withValues(alpha: 0.55),
-                ),
-              ),
-              child: Row(
-                children: <Widget>[
-                  const Icon(
-                    Icons.bolt_rounded,
-                    size: 15,
-                    color: ApexTheme.cyanElectric,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'RPE ${activeSet.prescribedRpe.toStringAsFixed(1)} • Tempo ${activeSet.tempo} • ${activeSet.coachingCue}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: ApexTheme.textPrimary,
-                        height: 1.2,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: <Widget>[
