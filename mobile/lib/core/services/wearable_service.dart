@@ -7,6 +7,7 @@ import 'package:http_parser/http_parser.dart';
 
 import '../../data/services/secure_storage_service.dart';
 import '../constants/api_constants.dart';
+import '../network/api_client.dart';
 
 class WearableScanException implements Exception {
   final int? statusCode;
@@ -38,14 +39,7 @@ class WearableService {
         _httpClient = httpClient ?? http.Client();
 
   String _extractDetail(http.Response response) {
-    try {
-      final dynamic decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic> && decoded['detail'] != null) {
-        return decoded['detail'].toString();
-      }
-    } catch (_) {}
-    final String body = response.body.trim();
-    return body.isNotEmpty ? body : 'Respuesta sin detalle del servidor';
+    return ApiErrorSanitizer.sanitizeResponseError(response);
   }
 
   MediaType _detectMediaType(Uint8List bytes) {

@@ -372,13 +372,6 @@ async def list_user_routines(
         .order_by(RoutineTemplate.day_of_week.asc())
     )
     routines = (await db.execute(stmt)).scalars().all()
-    if len(routines) < 5:
-        try:
-            await generate_and_persist_ai_routine(db, current_user)
-            routines = (await db.execute(stmt)).scalars().all()
-        except Exception:
-            await db.rollback()
-            routines = (await db.execute(stmt)).scalars().all()
     out: list[RoutineTemplateResponse] = []
     for r in routines:
         out.append(await _build_routine_response(db, r, current_user.id))

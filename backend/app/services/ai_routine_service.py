@@ -7,6 +7,7 @@ Elimina cualquier plantilla estática y diseña una periodización semanal de 5 
 composición corporal y telemetría de recuperación del wearable.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -32,10 +33,14 @@ from app.models.routine import UserRoutine, WorkoutDay, WorkoutExercise
 from app.services.gemini_service import _resolve_gemini_api_key, round_to_plate_increment
 
 logger = logging.getLogger("apexmetrix_ai_routine")
+_AI_ROUTINE_TABLES_READY = False
 
 
 async def ensure_ai_routine_tables(db: AsyncSession) -> None:
     """Garantiza que las tablas relacionales `user_routines`, `workout_days` y `workout_exercises` existan en PostgreSQL."""
+    global _AI_ROUTINE_TABLES_READY
+    if _AI_ROUTINE_TABLES_READY:
+        return
     await db.execute(
         text(
             """
@@ -84,6 +89,7 @@ async def ensure_ai_routine_tables(db: AsyncSession) -> None:
             """
         )
     )
+    _AI_ROUTINE_TABLES_READY = True
 
 
 def _parse_first_int_from_reps(reps_str: Any, default_reps: int = 8) -> int:
@@ -820,7 +826,10 @@ Responde ÚNICAMENTE un JSON válido con este formato exacto:
             for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
                 try:
                     model = genai.GenerativeModel(model_name)
-                    response = model.generate_content(prompt)
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(model.generate_content, prompt),
+                        timeout=18.0,
+                    )
                     raw_text = (getattr(response, "text", None) or "").strip()
                     json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
                     if not json_match:

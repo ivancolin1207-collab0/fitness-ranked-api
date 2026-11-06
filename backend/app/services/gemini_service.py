@@ -7,6 +7,7 @@ Servicio de Inteligencia Artificial con Google GenAI SDK (`google-genai` / `goog
 3. Prescripción Adaptativa de Series en Vivo (`temperature=0.2` + `response_schema`).
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -381,11 +382,12 @@ async def scan_wearable_screen(
     normalized_source = (source_wearable or "WHOOP").upper().strip()
 
     if "HUAWEI" in normalized_source:
-        raw_json = _invoke_gemini_vision_json(
-            prompt=HUAWEI_OCR_SYSTEM_PROMPT,
-            image_bytes=image_bytes,
-            mime_type=mime_type,
-            fallback_api_key=fallback_api_key,
+        raw_json = await asyncio.to_thread(
+            _invoke_gemini_vision_json,
+            HUAWEI_OCR_SYSTEM_PROMPT,
+            image_bytes,
+            mime_type,
+            fallback_api_key,
         )
         try:
             trusleep = int(raw_json["trusleep_score"])
@@ -415,11 +417,12 @@ async def scan_wearable_screen(
         )
 
     if "SAMSUNG" in normalized_source:
-        raw_json = _invoke_gemini_vision_json(
-            prompt=SAMSUNG_OCR_SYSTEM_PROMPT,
-            image_bytes=image_bytes,
-            mime_type=mime_type,
-            fallback_api_key=fallback_api_key,
+        raw_json = await asyncio.to_thread(
+            _invoke_gemini_vision_json,
+            SAMSUNG_OCR_SYSTEM_PROMPT,
+            image_bytes,
+            mime_type,
+            fallback_api_key,
         )
         try:
             energy = int(raw_json["energy_score"])
@@ -449,10 +452,11 @@ async def scan_wearable_screen(
             bia_fat_pct=bia_f,
         )
 
-    parsed_whoop = parse_whoop_screen(
-        image_bytes=image_bytes,
-        mime_type=mime_type,
-        fallback_api_key=fallback_api_key,
+    parsed_whoop = await asyncio.to_thread(
+        parse_whoop_screen,
+        image_bytes,
+        mime_type,
+        fallback_api_key,
     )
     return WhoopScreenExtractedMetrics(**parsed_whoop)
 

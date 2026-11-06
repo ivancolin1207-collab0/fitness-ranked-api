@@ -6,18 +6,22 @@ enum BiomechanicalArchetype {
   benchPress,
   deadlift,
   overheadPress,
+  lateralRaise,
+  rearDeltFacePull,
+  shrug,
   latPulldown,
   barbellRow,
   bicepCurl,
-  lateralRaise,
   tricepExtension,
   lunge,
   hipThrust,
 }
 
 class ExerciseMediaSpec {
+  final String keyId;
   final String canonicalName;
   final String gifUrl;
+  final String frame1Url;
   final BiomechanicalArchetype archetype;
   final String prescribedTempoCode;
   final String prescribedTempoDetail;
@@ -28,11 +32,16 @@ class ExerciseMediaSpec {
   final String activationCue;
   final String defaultTargetRange;
   final String primaryMuscles;
+  final String secondaryMuscles;
   final String jointFocusLabel;
+  final double minAngleDeg;
+  final double maxAngleDeg;
 
   const ExerciseMediaSpec({
+    required this.keyId,
     required this.canonicalName,
     required this.gifUrl,
+    required this.frame1Url,
     required this.archetype,
     required this.prescribedTempoCode,
     required this.prescribedTempoDetail,
@@ -43,7 +52,10 @@ class ExerciseMediaSpec {
     required this.activationCue,
     required this.defaultTargetRange,
     required this.primaryMuscles,
+    required this.secondaryMuscles,
     required this.jointFocusLabel,
+    required this.minAngleDeg,
+    required this.maxAngleDeg,
   });
 }
 
@@ -51,10 +63,14 @@ class ExerciseMediaService {
   const ExerciseMediaService();
 
   static const List<ExerciseMediaSpec> _catalog = <ExerciseMediaSpec>[
+    // 0: Press de Banca
     ExerciseMediaSpec(
+      keyId: 'bench_press',
       canonicalName: 'Press de Banca con Barra',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Bench_Press_-_Medium_Grip/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Bench_Press_-_Medium_Grip/1.jpg',
       archetype: BiomechanicalArchetype.benchPress,
       prescribedTempoCode: '3-0-1-0',
       prescribedTempoDetail: '3 seg bajada, 0 pausa, 1 subida',
@@ -65,13 +81,20 @@ class ExerciseMediaService {
       activationCue:
           'Pecho erguido, retrae escápulas y mantén codos a 45° durante el descenso',
       defaultTargetRange: 'RPE 8.0 | 8-10 reps según tu recuperación de hoy',
-      primaryMuscles: 'Pectoral Mayor • Deltoides Anterior • Tríceps',
+      primaryMuscles: 'Pectoral Mayor • Deltoides Anterior',
+      secondaryMuscles: 'Tríceps Braquial • Serrato Anterior',
       jointFocusLabel: 'Hombro 45° • Arco Torácico Estable',
+      minAngleDeg: 78,
+      maxAngleDeg: 175,
     ),
+    // 1: Sentadilla Libre
     ExerciseMediaSpec(
+      keyId: 'squat',
       canonicalName: 'Sentadilla Libre con Barra (Back Squat)',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Full_Squat/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Full_Squat/1.jpg',
       archetype: BiomechanicalArchetype.squat,
       prescribedTempoCode: '3-1-1-0',
       prescribedTempoDetail: '3 seg bajada, 1 pausa abajo, 1 subida',
@@ -82,50 +105,71 @@ class ExerciseMediaService {
       activationCue:
           'Bracing abdominal 360°, rodillas alineadas con punteras y torso firme',
       defaultTargetRange: 'RPE 8.0 | 6-8 reps según tu recuperación de hoy',
-      primaryMuscles: 'Cuádriceps • Glúteo Mayor • Core',
+      primaryMuscles: 'Cuádriceps • Glúteo Mayor',
+      secondaryMuscles: 'Core 360° • Erectores Espinales',
       jointFocusLabel: 'Flexión Cadera/Rodilla >95° • Columna Neutra',
+      minAngleDeg: 82,
+      maxAngleDeg: 176,
     ),
+    // 2: Peso Muerto / RDL
     ExerciseMediaSpec(
-      canonicalName: 'Peso Muerto Convencional / Rumano',
+      keyId: 'deadlift_barbell',
+      canonicalName: 'Peso Muerto Rumano (RDL) / Convencional',
       gifUrl:
-          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Deadlift/0.jpg',
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Romanian_Deadlift/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Romanian_Deadlift/1.jpg',
       archetype: BiomechanicalArchetype.deadlift,
-      prescribedTempoCode: '3-0-1-0',
-      prescribedTempoDetail: '3 seg bisagra excéntrica, 0 pausa, 1 empuje',
+      prescribedTempoCode: '3-1-1-0',
+      prescribedTempoDetail: '3 seg bisagra excéntrica, 1 pausa en estiramiento, 1 subida',
       eccentricSec: 3,
-      pauseBottomSec: 0,
+      pauseBottomSec: 1,
       concentricSec: 1,
       pauseTopSec: 0,
       activationCue:
-          'Barra pegada a las tibias, activa dorsales y empuja el piso con los talones',
-      defaultTargetRange: 'RPE 8.0 | 6-8 reps según tu recuperación de hoy',
-      primaryMuscles: 'Isquiosurales • Glúteo Mayor • Erectores Espinales',
-      jointFocusLabel: 'Bisagra de Cadera • Dorsal Compacto',
+          'Barra pegada a las tibias, cadera atrás con columna neutra y empuja el piso',
+      defaultTargetRange: 'RPE 8.0 | 8-10 reps según tu recuperación de hoy',
+      primaryMuscles: 'Isquiosurales • Glúteo Mayor',
+      secondaryMuscles: 'Erectores Espinales • Dorsal Ancho',
+      jointFocusLabel: 'Bisagra de Cadera • Tibia Vertical',
+      minAngleDeg: 75,
+      maxAngleDeg: 178,
     ),
+    // 3: Press Militar (military_press / overhead_press_barbell)
     ExerciseMediaSpec(
-      canonicalName: 'Press Militar Overhead (OHP)',
+      keyId: 'military_press',
+      canonicalName: 'Press Militar con Barra / Mancuernas',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Standing_Military_Press/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Standing_Military_Press/1.jpg',
       archetype: BiomechanicalArchetype.overheadPress,
       prescribedTempoCode: '2-0-1-1',
-      prescribedTempoDetail: '2 seg bajada, 0 pausa, 1 subida explosiva',
+      prescribedTempoDetail: '2 seg bajada, 0 pausa, 1 subida explosiva, 1 bloqueo',
       eccentricSec: 2,
       pauseBottomSec: 0,
       concentricSec: 1,
       pauseTopSec: 1,
       activationCue:
-          'Glúteos y abdomen contraídos, antebrazos verticales y bloqueo sobre corona',
+          'Abdomen y glúteos firmes, antebrazos verticales y trayectoria recta sobre corona',
       defaultTargetRange: 'RPE 8.0 | 8-10 reps según tu recuperación de hoy',
-      primaryMuscles: 'Deltoides Anterior/Lateral • Tríceps • Trapecio Sup.',
-      jointFocusLabel: 'Escápula en Rotación Superior • Core Fijo',
+      primaryMuscles: 'Deltoides Anterior/Medio • Tríceps',
+      secondaryMuscles: 'Trapecio Superior • Core Estabilizador',
+      jointFocusLabel: 'Trayectoria Vertical • Escápula Rot. Superior',
+      minAngleDeg: 72,
+      maxAngleDeg: 178,
     ),
+    // 4: Jalón al Pecho / Dominadas (lat_pulldown)
     ExerciseMediaSpec(
-      canonicalName: 'Dominadas / Jalón al Pecho Prono',
+      keyId: 'lat_pulldown',
+      canonicalName: 'Jalón al Pecho / Dominadas Pronas',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Wide-Grip_Lat_Pulldown/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Wide-Grip_Lat_Pulldown/1.jpg',
       archetype: BiomechanicalArchetype.latPulldown,
       prescribedTempoCode: '3-0-1-1',
-      prescribedTempoDetail: '3 seg retorno controlado, 1 tracción, 1 iso',
+      prescribedTempoDetail: '3 seg retorno controlado, 1 tracción, 1 iso abajo',
       eccentricSec: 3,
       pauseBottomSec: 0,
       concentricSec: 1,
@@ -133,16 +177,23 @@ class ExerciseMediaService {
       activationCue:
           'Inicia con depresión escapular y conduce los codos hacia tus bolsillos',
       defaultTargetRange: 'RPE 8.0 | 8-12 reps según tu recuperación de hoy',
-      primaryMuscles: 'Dorsal Ancho • Redondo Mayor • Bíceps Braquial',
-      jointFocusLabel: 'Depresión Escapular • Tracción Vertical',
+      primaryMuscles: 'Dorsal Ancho • Redondo Mayor',
+      secondaryMuscles: 'Bíceps Braquial • Romboides',
+      jointFocusLabel: 'Retracción/Depresión Escapular • Tracción Vertical',
+      minAngleDeg: 58,
+      maxAngleDeg: 172,
     ),
+    // 5: Remo con Barra / Polea (barbell_row)
     ExerciseMediaSpec(
-      canonicalName: 'Remo con Barra / Pendlay Row',
+      keyId: 'barbell_row',
+      canonicalName: 'Remo con Barra / Polea Baja',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Bent_Over_Barbell_Row/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Bent_Over_Barbell_Row/1.jpg',
       archetype: BiomechanicalArchetype.barbellRow,
       prescribedTempoCode: '2-0-1-1',
-      prescribedTempoDetail: '2 seg bajada, 0 pausa, 1 tracción, 1 pausa',
+      prescribedTempoDetail: '2 seg bajada, 0 pausa, 1 tracción, 1 contracción',
       eccentricSec: 2,
       pauseBottomSec: 0,
       concentricSec: 1,
@@ -150,13 +201,20 @@ class ExerciseMediaService {
       activationCue:
           'Torso a 45° estable, tracciona hacia el abdomen bajo apretando romboides',
       defaultTargetRange: 'RPE 8.0 | 8-10 reps según tu recuperación de hoy',
-      primaryMuscles: 'Dorsal Ancho • Romboides • Trapecio Medio',
-      jointFocusLabel: 'Retracción Escapular • Bisagra Isométrica',
+      primaryMuscles: 'Dorsal Ancho • Romboides',
+      secondaryMuscles: 'Trapecio Medio • Deltoides Posterior',
+      jointFocusLabel: 'Torso 45° • Retracción Escapular Completa',
+      minAngleDeg: 68,
+      maxAngleDeg: 166,
     ),
+    // 6: Curl de Bíceps (bicep_curl)
     ExerciseMediaSpec(
-      canonicalName: 'Curl de Bíceps con Barra / Mancuerna',
+      keyId: 'bicep_curl',
+      canonicalName: 'Curl de Bíceps con Barra EZ / Mancuernas',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Curl/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Curl/1.jpg',
       archetype: BiomechanicalArchetype.bicepCurl,
       prescribedTempoCode: '3-0-1-1',
       prescribedTempoDetail: '3 seg bajada excéntrica, 1 subida, 1 contracción',
@@ -167,13 +225,20 @@ class ExerciseMediaService {
       activationCue:
           'Codos fijos a los costados, supina la muñeca al subir sin balancear el torso',
       defaultTargetRange: 'RPE 8.5 | 10-12 reps según tu recuperación de hoy',
-      primaryMuscles: 'Bíceps Braquial • Braquial Anterior • Braquiorradial',
+      primaryMuscles: 'Bíceps Braquial • Braquial Anterior',
+      secondaryMuscles: 'Braquiorradial • Flexores de Antebrazo',
       jointFocusLabel: 'Húmero Fijo • Flexión de Codo Pura',
+      minAngleDeg: 45,
+      maxAngleDeg: 165,
     ),
+    // 7: Elevaciones Laterales (lateral_raise)
     ExerciseMediaSpec(
-      canonicalName: 'Elevaciones Laterales en Plano Escapular',
+      keyId: 'lateral_raise',
+      canonicalName: 'Elevaciones Laterales con Mancuernas',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Side_Lateral_Raise/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Side_Lateral_Raise/1.jpg',
       archetype: BiomechanicalArchetype.lateralRaise,
       prescribedTempoCode: '3-0-1-1',
       prescribedTempoDetail: '3 seg bajada controlada, 1 subida, 1 iso arriba',
@@ -182,49 +247,70 @@ class ExerciseMediaService {
       concentricSec: 1,
       pauseTopSec: 1,
       activationCue:
-          'Eleva a 30° en plano escapular guiando con los codos, sin encoger trapecios',
+          'Eleva en plano escapular (30°) guiando con los codos sin encoger trapecios',
       defaultTargetRange: 'RPE 8.5 | 12-15 reps según tu recuperación de hoy',
       primaryMuscles: 'Deltoides Lateral • Supraespinoso',
-      jointFocusLabel: 'Abducción 30° Plano Escapular',
+      secondaryMuscles: 'Serrato Anterior • Trapecio Estabilizador',
+      jointFocusLabel: '30° Plano Escapular • Abducción 90°',
+      minAngleDeg: 15,
+      maxAngleDeg: 92,
     ),
+    // 8: Extensión de Tríceps (tricep_extension)
     ExerciseMediaSpec(
+      keyId: 'tricep_extension',
       canonicalName: 'Extensión de Tríceps en Polea / Press Francés',
       gifUrl:
-          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Triceps_Pushdown/0.jpg',
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Triceps_Pushdown_-_Rope_Attachment/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Triceps_Pushdown_-_Rope_Attachment/1.jpg',
       archetype: BiomechanicalArchetype.tricepExtension,
-      prescribedTempoCode: '3-0-1-1',
-      prescribedTempoDetail: '3 seg fase excéntrica, 1 extensión completa',
-      eccentricSec: 3,
+      prescribedTempoCode: '2-0-1-1',
+      prescribedTempoDetail: '2 seg fase excéntrica, 1 extensión, 1 bloqueo',
+      eccentricSec: 2,
       pauseBottomSec: 0,
       concentricSec: 1,
       pauseTopSec: 1,
       activationCue:
-          'Bloquea los húmeros junto al torso y extiende el codo al 100% abajo',
+          'Bloquea los húmeros junto al torso y abre la cuerda al final de la extensión',
       defaultTargetRange: 'RPE 8.5 | 10-12 reps según tu recuperación de hoy',
-      primaryMuscles: 'Tríceps Braquial (Cabeza Lateral, Larga y Medial)',
-      jointFocusLabel: 'Extensión Aislada de Codo',
+      primaryMuscles: 'Tríceps Braquial (Cabeza Lateral y Larga)',
+      secondaryMuscles: 'Cabeza Medial del Tríceps • Ancóneo',
+      jointFocusLabel: 'Codo Fijo • Extensión Aislada 180°',
+      minAngleDeg: 65,
+      maxAngleDeg: 176,
     ),
+    // 9: Sentadilla Búlgara / Zancadas (lunge)
     ExerciseMediaSpec(
-      canonicalName: 'Zancadas Búlgaras / Prensa de Piernas',
+      keyId: 'bulgarian_split_squat',
+      canonicalName: 'Sentadilla Búlgara / Zancadas con Mancuernas',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Dumbbell_Lunges/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Dumbbell_Lunges/1.jpg',
       archetype: BiomechanicalArchetype.lunge,
       prescribedTempoCode: '3-1-1-0',
-      prescribedTempoDetail: '3 seg descenso, 1 pausa abajo, 1 subida',
+      prescribedTempoDetail: '3 seg descenso, 1 pausa abajo, 1 subida firme',
       eccentricSec: 3,
       pauseBottomSec: 1,
       concentricSec: 1,
       pauseTopSec: 0,
       activationCue:
-          'Inclina ligeramente el torso al frente y empuja con toda la planta delantera',
-      defaultTargetRange: 'RPE 8.0 | 8-10 reps según tu recuperación de hoy',
-      primaryMuscles: 'Cuádriceps • Glúteo Mayor • Aductores',
-      jointFocusLabel: 'Estabilidad Unilateral de Cadera y Rodilla',
+          'Inclina ligeramente el torso al frente y empuja con el talón delantero',
+      defaultTargetRange: 'RPE 8.5 | 8-10 reps según tu recuperación de hoy',
+      primaryMuscles: 'Cuádriceps Unilateral • Glúteo Mayor',
+      secondaryMuscles: 'Glúteo Medio • Aductores',
+      jointFocusLabel: 'Estabilidad Unilateral • Rodilla 90°',
+      minAngleDeg: 85,
+      maxAngleDeg: 172,
     ),
+    // 10: Hip Thrust (hip_thrust)
     ExerciseMediaSpec(
-      canonicalName: 'Hip Thrust con Barra',
+      keyId: 'hip_thrust',
+      canonicalName: 'Hip Thrust con Barra Olímpica',
       gifUrl:
           'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Glute_Bridge/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Barbell_Glute_Bridge/1.jpg',
       archetype: BiomechanicalArchetype.hipThrust,
       prescribedTempoCode: '2-0-1-2',
       prescribedTempoDetail: '2 seg bajada, 1 subida, 2 seg iso en extensión',
@@ -235,8 +321,59 @@ class ExerciseMediaService {
       activationCue:
           'Mentón recogido, tibias a 90° arriba y retroversión pélvica en el bloqueo',
       defaultTargetRange: 'RPE 8.5 | 8-12 reps según tu recuperación de hoy',
-      primaryMuscles: 'Glúteo Mayor • Isquiosurales',
-      jointFocusLabel: 'Extensión de Cadera 180° • Tibia Vertical',
+      primaryMuscles: 'Glúteo Mayor • Glúteo Medio',
+      secondaryMuscles: 'Isquiosurales • Core Pélvico',
+      jointFocusLabel: 'Extensión Cadera 180° • Tibia Vertical 90°',
+      minAngleDeg: 95,
+      maxAngleDeg: 180,
+    ),
+    // 11: Face Pulls / Pájaros en Polea (rear_delt_fly / face_pull)
+    ExerciseMediaSpec(
+      keyId: 'face_pull',
+      canonicalName: 'Face Pulls / Pájaros en Polea Alta',
+      gifUrl:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Face_Pull/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Face_Pull/1.jpg',
+      archetype: BiomechanicalArchetype.rearDeltFacePull,
+      prescribedTempoCode: '2-0-1-2',
+      prescribedTempoDetail: '2 seg retorno, 1 tracción externa, 2 seg iso atrás',
+      eccentricSec: 2,
+      pauseBottomSec: 0,
+      concentricSec: 1,
+      pauseTopSec: 2,
+      activationCue:
+          'Tracciona hacia la frente separando las manos en rotación externa de hombro',
+      defaultTargetRange: 'RPE 8.5 | 12-15 reps según tu recuperación de hoy',
+      primaryMuscles: 'Deltoides Posterior • Infraespinoso',
+      secondaryMuscles: 'Romboides • Trapecio Medio/Inferior',
+      jointFocusLabel: 'Rotación Externa 90° • Escápula Retraída',
+      minAngleDeg: 40,
+      maxAngleDeg: 95,
+    ),
+    // 12: Encogimientos de Trapecio (dumbbell_shrug)
+    ExerciseMediaSpec(
+      keyId: 'dumbbell_shrug',
+      canonicalName: 'Encogimientos de Trapecio con Mancuernas',
+      gifUrl:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Dumbbell_Shrug/0.jpg',
+      frame1Url:
+          'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/Dumbbell_Shrug/1.jpg',
+      archetype: BiomechanicalArchetype.shrug,
+      prescribedTempoCode: '2-0-1-2',
+      prescribedTempoDetail: '2 seg estiramiento, 1 elevación, 2 seg pausa arriba',
+      eccentricSec: 2,
+      pauseBottomSec: 0,
+      concentricSec: 1,
+      pauseTopSec: 2,
+      activationCue:
+          'Eleva los hombros verticalmente hacia las orejas y sostén 2 segundos arriba',
+      defaultTargetRange: 'RPE 8.5 | 10-12 reps según tu recuperación de hoy',
+      primaryMuscles: 'Trapecio Superior • Elevador Escapular',
+      secondaryMuscles: 'Romboides • Agarre Isométrico',
+      jointFocusLabel: 'Elevación Escapular Vertical • Pausa 2s',
+      minAngleDeg: 10,
+      maxAngleDeg: 45,
     ),
   ];
 
@@ -245,156 +382,157 @@ class ExerciseMediaService {
     String? exerciseKey,
   }) {
     final String key = (exerciseKey ?? '').toLowerCase().trim();
-    if (key.isNotEmpty) {
-      if (key.contains('bench') ||
-          key.contains('chest') ||
-          key.contains('incline_dumbbell_press') ||
-          key.contains('pec') ||
-          key.contains('dip')) {
-        return _catalog[0];
-      }
-      if (key.contains('squat') ||
-          key.contains('leg_extension') ||
-          key.contains('calf')) {
-        return _catalog[1];
-      }
-      if (key.contains('deadlift') ||
-          key.contains('rdl') ||
-          key.contains('leg_curl') ||
-          key.contains('hyperextension')) {
-        return _catalog[2];
-      }
-      if (key.contains('overhead_press') ||
-          key.contains('shoulder_press') ||
-          key.contains('shrug')) {
-        return _catalog[3];
-      }
-      if (key.contains('pulldown') || key.contains('pull_up')) {
-        return _catalog[4];
-      }
-      if (key.contains('row')) {
-        return _catalog[5];
-      }
-      if (key.contains('bicep') ||
-          key.contains('hammer_curl') ||
-          key.contains('dumbbell_curl') ||
-          key.contains('curl_barbell')) {
-        return _catalog[6];
-      }
-      if (key.contains('lateral_raise') || key.contains('rear_delt')) {
-        return _catalog[7];
-      }
-      if (key.contains('tricep') ||
-          key.contains('french_press') ||
-          key.contains('pushdown')) {
-        return _catalog[8];
-      }
-      if (key.contains('hip_thrust') || key.contains('glute')) {
-        return _catalog[10];
-      }
-      if (key.contains('leg_press') ||
-          key.contains('split_squat') ||
-          key.contains('lunge')) {
-        return _catalog[9];
-      }
+    final String q = rawName.toLowerCase().trim();
+
+    // 1. Face Pulls / Deltoides Posterior (prioridad alta antes que "polea" genérico)
+    if (key.contains('rear_delt') ||
+        key.contains('face_pull') ||
+        q.contains('face pull') ||
+        q.contains('pájaro') ||
+        q.contains('pajaro') ||
+        q.contains('posterior')) {
+      return _catalog[11];
     }
 
-    final String q = rawName.toLowerCase().trim();
-    if (q.contains('banca') ||
+    // 2. Encogimientos de Trapecio
+    if (key.contains('shrug') ||
+        q.contains('encogimiento') ||
+        q.contains('shrug') ||
+        (q.contains('trapecio') && !q.contains('remo'))) {
+      return _catalog[12];
+    }
+
+    // 3. Elevaciones Laterales
+    if (key.contains('lateral_raise') ||
+        q.contains('elevaciones laterales') ||
+        q.contains('elevación lateral') ||
+        q.contains('vuelos laterales') ||
+        q.contains('lateral')) {
+      return _catalog[7];
+    }
+
+    // 4. Press Militar / Overhead Press
+    if (key.contains('overhead_press') ||
+        key.contains('military_press') ||
+        key.contains('shoulder_press') ||
+        q.contains('militar') ||
+        q.contains('overhead') ||
+        q.contains('ohp') ||
+        q.contains('shoulder press') ||
+        q.contains('arnold') ||
+        (q.contains('press') && q.contains('hombro'))) {
+      return _catalog[3];
+    }
+
+    // 5. Jalón al Pecho / Dominadas
+    if (key.contains('lat_pulldown') ||
+        key.contains('pulldown') ||
+        key.contains('pull_up') ||
+        q.contains('jalón') ||
+        q.contains('jalon') ||
+        q.contains('dominada') ||
+        q.contains('lat pulldown')) {
+      return _catalog[4];
+    }
+
+    // 6. Remo con Barra / Polea
+    if (key.contains('row') ||
+        q.contains('remo') ||
+        q.contains('pendlay') ||
+        q.contains('row')) {
+      return _catalog[5];
+    }
+
+    // 7. Press de Banca / Inclinado / Fondos
+    if (key.contains('bench') ||
+        key.contains('chest') ||
+        key.contains('incline_dumbbell_press') ||
+        key.contains('pec') ||
+        key.contains('dip') ||
+        q.contains('banca') ||
         q.contains('bench') ||
-        q.contains('pecho') ||
         q.contains('inclinado') ||
-        q.contains('chest') ||
+        q.contains('pecho') ||
         q.contains('fondo') ||
-        q.contains('dip') ||
-        q.contains('apertura') ||
-        q.contains('fly')) {
+        q.contains('apertura')) {
       return _catalog[0];
     }
-    if (q.contains('sentadilla') ||
+
+    // 8. Hip Thrust / Puente de Glúteo
+    if (key.contains('hip_thrust') ||
+        key.contains('glute') ||
+        q.contains('hip thrust') ||
+        q.contains('puente') ||
+        (q.contains('glúteo') && !q.contains('sentadilla'))) {
+      return _catalog[10];
+    }
+
+    // 9. Sentadilla Búlgara / Zancadas
+    if (key.contains('split_squat') ||
+        key.contains('lunge') ||
+        q.contains('búlgara') ||
+        q.contains('bulgara') ||
+        q.contains('zancada') ||
+        q.contains('lunge')) {
+      return _catalog[9];
+    }
+
+    // 10. Sentadilla Libre / Prensa / Extensión Cuádriceps / Gemelos
+    if (key.contains('squat') ||
+        key.contains('leg_press') ||
+        key.contains('leg_extension') ||
+        key.contains('calf') ||
+        q.contains('sentadilla') ||
         q.contains('squat') ||
-        q.contains('hack') ||
+        q.contains('prensa') ||
         q.contains('cuádriceps') ||
         q.contains('cuadriceps') ||
+        q.contains('talones') ||
         q.contains('gemelo') ||
         q.contains('sóleo') ||
-        q.contains('soleo') ||
-        q.contains('calf')) {
+        q.contains('soleo')) {
       return _catalog[1];
     }
-    if (q.contains('peso muerto') ||
-        q.contains('deadlift') ||
+
+    // 11. Peso Muerto / RDL / Curl Femoral / Hiperextensiones
+    if (key.contains('deadlift') ||
+        key.contains('rdl') ||
+        key.contains('leg_curl') ||
+        key.contains('hyperextension') ||
+        q.contains('peso muerto') ||
         q.contains('rumano') ||
         q.contains('rdl') ||
-        q.contains('isquio') ||
         q.contains('femoral') ||
+        q.contains('isquio') ||
         q.contains('hiperext')) {
       return _catalog[2];
     }
-    if (q.contains('militar') ||
-        q.contains('overhead') ||
-        q.contains('ohp') ||
-        q.contains('hombro') ||
-        q.contains('shoulder press') ||
-        q.contains('arnold') ||
-        q.contains('encogimiento') ||
-        q.contains('trapecio')) {
-      return _catalog[3];
-    }
-    if (q.contains('dominada') ||
-        q.contains('pull') ||
-        q.contains('jalón') ||
-        q.contains('jalon') ||
-        q.contains('lat') ||
-        q.contains('dorsal')) {
-      return _catalog[4];
-    }
-    if (q.contains('remo') ||
-        q.contains('row') ||
-        q.contains('pendlay') ||
-        q.contains('espalda') ||
-        q.contains('seal') ||
-        q.contains('giron')) {
-      return _catalog[5];
-    }
-    if (q.contains('curl') ||
+
+    // 12. Curl de Bíceps / Martillo
+    if (key.contains('bicep') ||
+        key.contains('hammer_curl') ||
+        key.contains('dumbbell_curl') ||
+        key.contains('curl_barbell') ||
+        q.contains('curl') ||
         q.contains('bíceps') ||
         q.contains('biceps') ||
-        q.contains('martillo') ||
-        q.contains('predicador')) {
+        q.contains('martillo')) {
       return _catalog[6];
     }
-    if (q.contains('lateral') ||
-        q.contains('vuelo') ||
-        q.contains('pájaro') ||
-        q.contains('pajaro') ||
-        q.contains('deltoide')) {
-      return _catalog[7];
-    }
-    if (q.contains('tríceps') ||
+
+    // 13. Extensión de Tríceps / Press Francés
+    if (key.contains('tricep') ||
+        key.contains('french_press') ||
+        key.contains('pushdown') ||
+        q.contains('tríceps') ||
         q.contains('triceps') ||
         q.contains('francés') ||
         q.contains('frances') ||
-        q.contains('polea') ||
-        q.contains('extensión') ||
-        q.contains('extension')) {
+        q.contains('cuerda')) {
       return _catalog[8];
     }
-    if (q.contains('hip thrust') ||
-        q.contains('glúteo') ||
-        q.contains('gluteo') ||
-        q.contains('puente')) {
-      return _catalog[10];
-    }
-    if (q.contains('zancada') ||
-        q.contains('búlgara') ||
-        q.contains('bulgara') ||
-        q.contains('prensa') ||
-        q.contains('lunge') ||
-        q.contains('leg press')) {
-      return _catalog[9];
-    }
-    return _catalog[0];
+
+    return _catalog[3];
   }
 
   static String formatTargetRange({
@@ -427,8 +565,9 @@ class ExerciseMediaService {
   }
 }
 
-/// Módulo de Demostración Visual Biomecánica (180dp, #14171E, borde #232834)
-/// + 3 Píldoras Técnicas (Tempo Prescrito, Cue de Activación, Rango Objetivo).
+/// Visor Biomecánico 3D / HD por Ejercicio (210dp, #0D1017 -> #14171E)
+/// Renderizado anatómico volumétrico 3D con iluminación muscular específica,
+/// goniómetro articular en tiempo real, PiP HD y 3 píldoras técnicas sincronizadas.
 class BiomechanicalExerciseAvatarModule extends StatefulWidget {
   final String exerciseName;
   final String? exerciseKey;
@@ -460,6 +599,7 @@ class _BiomechanicalExerciseAvatarModuleState
     extends State<BiomechanicalExerciseAvatarModule>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  bool _showHdOverlayExpanded = false;
 
   @override
   void initState() {
@@ -471,17 +611,29 @@ class _BiomechanicalExerciseAvatarModuleState
   }
 
   @override
+  void didUpdateWidget(covariant BiomechanicalExerciseAvatarModule oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.exerciseName != widget.exerciseName ||
+        oldWidget.exerciseKey != widget.exerciseKey) {
+      // Reinicia el ciclo cinemático al cambiar de ejercicio para feedback inmediato
+      _controller
+        ..reset()
+        ..repeat();
+    }
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
-  /// Calcula la posición normalizada (0 = inicio/arriba, 1 = máxima flexión/abajo)
-  /// respetando el tempo biomecánico (p. ej. 3 seg excéntrica, 0-1 seg pausa, 1 seg concéntrica).
-  ({double depth, String phaseLabel, Color phaseColor}) _evaluatePhase(
-    double t,
-    ExerciseMediaSpec spec,
-  ) {
+  ({
+    double depth,
+    String phaseLabel,
+    Color phaseColor,
+    double jointAngleDeg,
+  }) _evaluatePhase(double t, ExerciseMediaSpec spec) {
     final double totalSec = (spec.eccentricSec +
             spec.pauseBottomSec +
             spec.concentricSec +
@@ -493,36 +645,40 @@ class _BiomechanicalExerciseAvatarModuleState
     final double bottomEnd = eccEnd + spec.pauseBottomSec.toDouble();
     final double concEnd = bottomEnd + spec.concentricSec.toDouble();
 
+    double depth;
+    String phaseLabel;
+    Color phaseColor;
+
     if (sec <= eccEnd) {
-      final double p = (sec / eccEnd).clamp(0.0, 1.0);
-      final double eased = Curves.easeInOutCubic.transform(p);
-      return (
-        depth: eased,
-        phaseLabel: 'FASE EXCÉNTRICA (${spec.eccentricSec}s CONTROL)',
-        phaseColor: const Color(0xFF00E5FF),
-      );
+      final double p = (sec / math.max(0.5, eccEnd)).clamp(0.0, 1.0);
+      depth = Curves.easeInOutCubic.transform(p);
+      phaseLabel = 'EXCÉNTRICA • ${spec.eccentricSec}s CONTROL';
+      phaseColor = const Color(0xFF00E5FF);
     } else if (sec <= bottomEnd) {
-      return (
-        depth: 1.0,
-        phaseLabel: 'PAUSA ISOMÉTRICA (${spec.pauseBottomSec}s)',
-        phaseColor: const Color(0xFFF59E0B),
-      );
+      depth = 1.0;
+      phaseLabel = 'ISOMETRÍA • ${spec.pauseBottomSec}s PAUSA';
+      phaseColor = const Color(0xFFF59E0B);
     } else if (sec <= concEnd) {
       final double p =
           ((sec - bottomEnd) / math.max(0.5, spec.concentricSec)).clamp(0.0, 1.0);
-      final double eased = 1.0 - Curves.easeOutBack.transform(p).clamp(0.0, 1.0);
-      return (
-        depth: eased,
-        phaseLabel: 'FASE CONCÉNTRICA (${spec.concentricSec}s EXPLOSIVA)',
-        phaseColor: const Color(0xFFD2FF00),
-      );
+      depth = 1.0 - Curves.easeOutCubic.transform(p).clamp(0.0, 1.0);
+      phaseLabel = 'CONCÉNTRICA • ${spec.concentricSec}s POTENCIA';
+      phaseColor = const Color(0xFFD2FF00);
     } else {
-      return (
-        depth: 0.0,
-        phaseLabel: 'ESTABILIZACIÓN / CONTRACCIÓN',
-        phaseColor: const Color(0xFF10B981),
-      );
+      depth = 0.0;
+      phaseLabel = 'CONTRACCIÓN MÁXIMA • ${spec.pauseTopSec}s';
+      phaseColor = const Color(0xFF10B981);
     }
+
+    final double angle = spec.maxAngleDeg -
+        ((spec.maxAngleDeg - spec.minAngleDeg) * depth);
+
+    return (
+      depth: depth,
+      phaseLabel: phaseLabel,
+      phaseColor: phaseColor,
+      jointAngleDeg: angle,
+    );
   }
 
   @override
@@ -550,71 +706,301 @@ class _BiomechanicalExerciseAvatarModuleState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        // Contenedor Visual de 180dp de altura, esquinas 12px, fondo #14171E y borde #232834
+        // Visor Biomecánico 3D / HD de 208dp con iluminación anatómica volumétrica
         Container(
-          height: 180,
+          height: 208,
           decoration: BoxDecoration(
-            color: const Color(0xFF14171E),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: const Color(0xFF232834),
-              width: 1.2,
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[
+                Color(0xFF0B0E15),
+                Color(0xFF141923),
+                Color(0xFF0E121A),
+              ],
             ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: const Color(0xFF283142),
+              width: 1.3,
+            ),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
           clipBehavior: Clip.antiAlias,
           child: AnimatedBuilder(
             animation: _controller,
             builder: (BuildContext context, _) {
               final phase = _evaluatePhase(_controller.value, spec);
+              final String activeFrameUrl =
+                  phase.depth > 0.48 ? spec.frame1Url : spec.gifUrl;
+
               return Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
-                  // Lienzo biomecánico animado en bucle continuo (60 FPS)
+                  // 1. Lienzo Anatómico Volumétrico 3D (60 FPS)
                   CustomPaint(
-                    painter: _BiomechanicalAvatarPainter(
+                    painter: _Biomechanical3DVisualizerPainter(
                       archetype: spec.archetype,
                       depth: phase.depth,
                       phaseColor: phase.phaseColor,
+                      jointAngleDeg: phase.jointAngleDeg,
+                      pulseValue: _controller.value,
                     ),
                   ),
-                  // HUD Superior: Nombre del ejercicio + Fase en vivo
+
+                  // 2. Vista HD Real expandida (si el atleta activa modo HD completo)
+                  if (_showHdOverlayExpanded)
+                    Positioned.fill(
+                      child: Container(
+                        color: const Color(0xFF0B0E14).withValues(alpha: 0.92),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 34,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.network(
+                            activeFrameUrl,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Center(
+                              child: Text(
+                                'Modo 3D Anatómico Activo (Sin conexión a CDN HD)',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // 3. Miniatura PiP HD Real en la esquina derecha (si estamos en modo 3D)
+                  if (!_showHdOverlayExpanded)
+                    Positioned(
+                      right: 10,
+                      top: 38,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _showHdOverlayExpanded = true;
+                          });
+                        },
+                        child: Container(
+                          width: 66,
+                          height: 66,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0B0E14),
+                            borderRadius: BorderRadius.circular(9),
+                            border: Border.all(
+                              color: phase.phaseColor.withValues(alpha: 0.65),
+                              width: 1.2,
+                            ),
+                            boxShadow: <BoxShadow>[
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: <Widget>[
+                              Image.network(
+                                activeFrameUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: const Color(0xFF141923),
+                                  alignment: Alignment.center,
+                                  child: Icon(
+                                    Icons.accessibility_new_rounded,
+                                    size: 24,
+                                    color: phase.phaseColor,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                                child: Container(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 1.5,
+                                  ),
+                                  child: const Text(
+                                    'HD • AMPLIAR',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 7.5,
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFFD2FF00),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // 4. Panel Izquierdo Flotante: Músculos iluminados + Goniómetro en vivo
+                  Positioned(
+                    left: 10,
+                    top: 38,
+                    child: Container(
+                      width: 146,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0B0E14).withValues(alpha: 0.84),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF263042),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Row(
+                            children: <Widget>[
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: phase.phaseColor,
+                                  shape: BoxShape.circle,
+                                  boxShadow: <BoxShadow>[
+                                    BoxShadow(
+                                      color: phase.phaseColor,
+                                      blurRadius: 6,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              const Expanded(
+                                child: Text(
+                                  'EMG • MÚSCULO PRIMARIO',
+                                  style: TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF94A3B8),
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            spec.primaryMuscles,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              height: 1.15,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Sinergistas: ${spec.secondaryMuscles}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF94A3B8),
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: phase.phaseColor.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              'ÁNGULO: ${phase.jointAngleDeg.round()}° • TEMPO $tempoCode',
+                              style: TextStyle(
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w900,
+                                color: phase.phaseColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // 5. HUD Superior: Selector 3D/HD + Fase Cinemática en Vivo
                   Positioned(
                     top: 8,
                     left: 10,
                     right: 10,
                     child: Row(
                       children: <Widget>[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0B0E14).withValues(alpha: 0.85),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: const Color(0xFF232834),
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              _showHdOverlayExpanded = !_showHdOverlayExpanded;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
                             ),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: <Widget>[
-                              Icon(
-                                Icons.motion_photos_on_rounded,
-                                size: 12,
-                                color: Color(0xFFD2FF00),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0B0E14)
+                                  .withValues(alpha: 0.88),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: const Color(0xFFD2FF00)
+                                    .withValues(alpha: 0.65),
                               ),
-                              SizedBox(width: 4),
-                              Text(
-                                'AVATAR BIOMECÁNICO IA',
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w900,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                const Icon(
+                                  Icons.view_in_ar_rounded,
+                                  size: 12,
                                   color: Color(0xFFD2FF00),
-                                  letterSpacing: 0.4,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Text(
+                                  _showHdOverlayExpanded
+                                      ? 'VISOR HD REAL (TOCA PARA 3D)'
+                                      : 'VISOR 3D BIOMECÁNICO HD',
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFD2FF00),
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                         const Spacer(),
@@ -628,7 +1014,7 @@ class _BiomechanicalExerciseAvatarModuleState
                               color: phase.phaseColor.withValues(alpha: 0.16),
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                color: phase.phaseColor.withValues(alpha: 0.7),
+                                color: phase.phaseColor.withValues(alpha: 0.75),
                               ),
                             ),
                             child: Text(
@@ -636,7 +1022,7 @@ class _BiomechanicalExerciseAvatarModuleState
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 9.5,
+                                fontSize: 9,
                                 fontWeight: FontWeight.w900,
                                 color: phase.phaseColor,
                               ),
@@ -646,7 +1032,8 @@ class _BiomechanicalExerciseAvatarModuleState
                       ],
                     ),
                   ),
-                  // HUD Inferior: Músculos implicados y foco articular
+
+                  // 6. HUD Inferior: Ejercicio Activo + Foco Articular Objetivo
                   Positioned(
                     bottom: 8,
                     left: 10,
@@ -655,35 +1042,42 @@ class _BiomechanicalExerciseAvatarModuleState
                       children: <Widget>[
                         Expanded(
                           child: Text(
-                            spec.primaryMuscles,
+                            spec.canonicalName.toUpperCase(),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFFE2E8F0),
+                              letterSpacing: 0.3,
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2.5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0B0E14).withValues(alpha: 0.85),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: const Color(0xFF232834),
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2.5,
                             ),
-                          ),
-                          child: Text(
-                            spec.jointFocusLabel,
-                            style: const TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFFE2E8F0),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0B0E14)
+                                  .withValues(alpha: 0.88),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: const Color(0xFF00E5FF)
+                                    .withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: Text(
+                              spec.jointFocusLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF00E5FF),
+                              ),
                             ),
                           ),
                         ),
@@ -696,7 +1090,7 @@ class _BiomechanicalExerciseAvatarModuleState
           ),
         ),
         const SizedBox(height: 8),
-        // 3 Píldoras Técnicas compactas debajo del avatar
+        // 3 Píldoras Técnicas sincronizadas al instante con el ejercicio seleccionado
         _TechnicalCuePill(
           icon: Icons.timer_outlined,
           accentColor: const Color(0xFFD2FF00),
@@ -779,126 +1173,831 @@ class _TechnicalCuePill extends StatelessWidget {
   }
 }
 
-class _BiomechanicalAvatarPainter extends CustomPainter {
+/// Motor de Renderizado Anatómico Volumétrico 3D con sombreado cilíndrico/radial,
+/// iluminación de fibras musculares activas, trayectoria de barra y goniómetro.
+class _Biomechanical3DVisualizerPainter extends CustomPainter {
   final BiomechanicalArchetype archetype;
   final double depth;
   final Color phaseColor;
+  final double jointAngleDeg;
+  final double pulseValue;
 
-  const _BiomechanicalAvatarPainter({
+  const _Biomechanical3DVisualizerPainter({
     required this.archetype,
     required this.depth,
     required this.phaseColor,
+    required this.jointAngleDeg,
+    required this.pulseValue,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. Cuadrícula técnica de laboratorio biomecánico
-    final Paint gridPaint = Paint()
-      ..color = const Color(0xFF232834).withValues(alpha: 0.45)
-      ..strokeWidth = 0.8;
-
-    const double step = 24.0;
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-
-    // Suelo de plataforma
+    final double cx = size.width * 0.56;
     final double floorY = size.height - 34.0;
-    final Paint floorPaint = Paint()
-      ..color = const Color(0xFF2E3646)
-      ..strokeWidth = 2.0;
-    canvas.drawLine(
-      Offset(size.width * 0.12, floorY),
-      Offset(size.width * 0.88, floorY),
-      floorPaint,
+
+    // 1. Escenario 3D: Spotlight radial + plataforma de perspectiva isométrica
+    final Rect stageGlowRect = Rect.fromCenter(
+      center: Offset(cx, floorY - 38),
+      width: 210,
+      height: 150,
+    );
+    canvas.drawOval(
+      stageGlowRect,
+      Paint()
+        ..shader = RadialGradient(
+          colors: <Color>[
+            phaseColor.withValues(alpha: 0.16),
+            const Color(0xFF00E5FF).withValues(alpha: 0.05),
+            Colors.transparent,
+          ],
+          stops: const <double>[0.0, 0.55, 1.0],
+        ).createShader(stageGlowRect),
     );
 
-    final double cx = size.width * 0.5;
+    // Plataforma 3D elíptica en el suelo
+    final Rect platformRect = Rect.fromCenter(
+      center: Offset(cx, floorY),
+      width: 156,
+      height: 22,
+    );
+    canvas.drawOval(
+      platformRect,
+      Paint()
+        ..shader = RadialGradient(
+          colors: <Color>[
+            const Color(0xFF1E293B).withValues(alpha: 0.9),
+            const Color(0xFF0F172A).withValues(alpha: 0.4),
+          ],
+        ).createShader(platformRect),
+    );
+    canvas.drawOval(
+      platformRect,
+      Paint()
+        ..color = phaseColor.withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4,
+    );
 
-    final Paint bonePaint = Paint()
-      ..color = const Color(0xFFE2E8F0)
-      ..strokeWidth = 5.0
-      ..strokeCap = StrokeCap.round;
+    // Líneas de perspectiva en la plataforma
+    final Paint gridPaint = Paint()
+      ..color = const Color(0xFF334155).withValues(alpha: 0.35)
+      ..strokeWidth = 0.8;
+    for (int i = -3; i <= 3; i++) {
+      canvas.drawLine(
+        Offset(cx + (i * 16), floorY - 9),
+        Offset(cx + (i * 24), floorY + 9),
+        gridPaint,
+      );
+    }
 
-    final Paint muscleGlowPaint = Paint()
-      ..color = phaseColor.withValues(alpha: 0.28)
-      ..strokeWidth = 13.0
-      ..strokeCap = StrokeCap.round;
+    final double pulse = 0.75 + 0.25 * math.sin(pulseValue * math.pi * 4);
 
-    final Paint jointPaint = Paint()
-      ..color = phaseColor
-      ..style = PaintingStyle.fill;
+    // Helper: Dibuja un segmento muscular volumétrico 3D (huso anatómico esculpido)
+    void drawLimb3D(
+      Offset start,
+      Offset end, {
+      double startRadius = 6.5,
+      double bellyRadius = 10.5,
+      double endRadius = 5.5,
+      bool isPrimaryMuscle = false,
+      bool isSecondaryMuscle = false,
+    }) {
+      final Offset delta = end - start;
+      final double len = delta.distance;
+      if (len < 1.0) return;
+      final Offset dir = delta / len;
+      final Offset normal = Offset(-dir.dy, dir.dx);
+      final Offset mid = start + dir * (len * 0.46);
 
-    final Paint barbellPaint = Paint()
-      ..color = const Color(0xFFD2FF00)
-      ..strokeWidth = 3.5
-      ..strokeCap = StrokeCap.round;
-
-    final Paint benchPaint = Paint()
-      ..color = const Color(0xFF334155)
-      ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round;
-
-    void drawSegment(Offset a, Offset b, {bool activeMuscle = false}) {
-      if (activeMuscle) {
-        canvas.drawLine(a, b, muscleGlowPaint);
+      // Halo bioluminiscente externo si el músculo está activo
+      if (isPrimaryMuscle || isSecondaryMuscle) {
+        final Color glowColor =
+            isPrimaryMuscle ? phaseColor : const Color(0xFF00E5FF);
+        final double glowAlpha =
+            (isPrimaryMuscle ? 0.36 : 0.20) * pulse;
+        canvas.drawLine(
+          start,
+          end,
+          Paint()
+            ..color = glowColor.withValues(alpha: glowAlpha)
+            ..strokeWidth = bellyRadius * 2.5
+            ..strokeCap = StrokeCap.round
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7),
+        );
       }
-      canvas.drawLine(a, b, bonePaint);
-      canvas.drawCircle(a, 4.0, jointPaint);
-      canvas.drawCircle(b, 4.0, jointPaint);
+
+      // Contorno anatómico fusiforme 3D (vientre muscular esculpido)
+      final Path musclePath = Path()
+        ..moveTo(
+          start.dx + normal.dx * startRadius,
+          start.dy + normal.dy * startRadius,
+        )
+        ..quadraticBezierTo(
+          mid.dx + normal.dx * bellyRadius,
+          mid.dy + normal.dy * bellyRadius,
+          end.dx + normal.dx * endRadius,
+          end.dy + normal.dy * endRadius,
+        )
+        ..lineTo(
+          end.dx - normal.dx * endRadius,
+          end.dy - normal.dy * endRadius,
+        )
+        ..quadraticBezierTo(
+          mid.dx - normal.dx * bellyRadius,
+          mid.dy - normal.dy * bellyRadius,
+          start.dx - normal.dx * startRadius,
+          start.dy - normal.dy * startRadius,
+        )
+        ..close();
+
+      final List<Color> gradientColors = isPrimaryMuscle
+          ? <Color>[
+              Colors.white.withValues(alpha: 0.92),
+              phaseColor,
+              phaseColor.withValues(alpha: 0.55),
+              const Color(0xFF0F172A),
+            ]
+          : isSecondaryMuscle
+              ? <Color>[
+                  const Color(0xFFE0F7FA),
+                  const Color(0xFF00E5FF).withValues(alpha: 0.85),
+                  const Color(0xFF1E293B),
+                ]
+              : <Color>[
+                  const Color(0xFF94A3B8),
+                  const Color(0xFF475569),
+                  const Color(0xFF1E293B),
+                ];
+
+      final Rect bounds = musclePath.getBounds().inflate(6);
+      canvas.drawPath(
+        musclePath,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment(normal.dx, normal.dy),
+            end: Alignment(-normal.dx, -normal.dy),
+            colors: gradientColors,
+          ).createShader(bounds),
+      );
+
+      // Estriaciones de fibras musculares e iluminación especular 3D
+      canvas.drawLine(
+        start + normal * (bellyRadius * 0.28),
+        end + normal * (endRadius * 0.28),
+        Paint()
+          ..color = Colors.white
+              .withValues(alpha: isPrimaryMuscle ? 0.55 : 0.22)
+          ..strokeWidth = 1.3
+          ..strokeCap = StrokeCap.round,
+      );
+
+      // Articulaciones esféricas 3D
+      for (final Offset j in <Offset>[start, end]) {
+        canvas.drawCircle(
+          j,
+          4.2,
+          Paint()
+            ..color = isPrimaryMuscle
+                ? phaseColor
+                : const Color(0xFF64748B),
+        );
+        canvas.drawCircle(
+          j - const Offset(1.0, 1.0),
+          1.6,
+          Paint()..color = Colors.white.withValues(alpha: 0.8),
+        );
+      }
     }
 
-    void drawHead(Offset center) {
-      canvas.drawCircle(
-        center,
-        9.5,
+    // Helper: Dibuja torso anatómico 3D esculpido (Pectoral, Dorsal, Core)
+    void drawSculptedTorso3D(
+      Offset hip,
+      Offset shoulder, {
+      bool highlightChest = false,
+      bool highlightLats = false,
+      bool highlightCore = false,
+      bool highlightTraps = false,
+      bool frontalView = false,
+    }) {
+      final double shWidth = frontalView ? 22.0 : 13.0;
+      final double waistWidth = frontalView ? 13.5 : 9.5;
+      final Offset delta = shoulder - hip;
+      final double len = delta.distance;
+      if (len < 1.0) return;
+      final Offset dir = delta / len;
+      final Offset normal = Offset(-dir.dy, dir.dx);
+
+      final Path torsoPath = Path()
+        ..moveTo(
+          hip.dx - normal.dx * waistWidth,
+          hip.dy - normal.dy * waistWidth,
+        )
+        ..quadraticBezierTo(
+          (hip.dx + shoulder.dx) * 0.5 - normal.dx * (shWidth * 1.05),
+          (hip.dy + shoulder.dy) * 0.5 - normal.dy * (shWidth * 1.05),
+          shoulder.dx - normal.dx * shWidth,
+          shoulder.dy - normal.dy * shWidth,
+        )
+        ..lineTo(
+          shoulder.dx + normal.dx * shWidth,
+          shoulder.dy + normal.dy * shWidth,
+        )
+        ..quadraticBezierTo(
+          (hip.dx + shoulder.dx) * 0.5 + normal.dx * (shWidth * 1.05),
+          (hip.dy + shoulder.dy) * 0.5 + normal.dy * (shWidth * 1.05),
+          hip.dx + normal.dx * waistWidth,
+          hip.dy + normal.dy * waistWidth,
+        )
+        ..close();
+
+      final Rect torsoBounds = torsoPath.getBounds().inflate(8);
+      canvas.drawPath(
+        torsoPath,
         Paint()
-          ..color = const Color(0xFF1E293B)
-          ..style = PaintingStyle.fill,
+          ..shader = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[
+              Color(0xFF64748B),
+              Color(0xFF334155),
+              Color(0xFF0F172A),
+            ],
+          ).createShader(torsoBounds),
       );
-      canvas.drawCircle(
-        center,
-        9.5,
+      canvas.drawPath(
+        torsoPath,
         Paint()
-          ..color = phaseColor
-          ..strokeWidth = 2.2
-          ..style = PaintingStyle.stroke,
+          ..color = const Color(0xFF94A3B8).withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.1,
       );
+
+      // Iluminación específica de Pectoral Mayor
+      if (highlightChest) {
+        final Offset chestCenter = shoulder + (hip - shoulder) * 0.28;
+        final Rect pecRect = Rect.fromCenter(
+          center: chestCenter,
+          width: frontalView ? 34 : 20,
+          height: 16,
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(pecRect, const Radius.circular(6)),
+          Paint()
+            ..shader = RadialGradient(
+              colors: <Color>[
+                Colors.white.withValues(alpha: 0.9),
+                phaseColor.withValues(alpha: 0.85 * pulse),
+                Colors.transparent,
+              ],
+            ).createShader(pecRect.inflate(6)),
+        );
+      }
+
+      // Iluminación específica de Dorsal Ancho / Romboides
+      if (highlightLats) {
+        final Offset latCenter = shoulder + (hip - shoulder) * 0.42;
+        final Rect latRect = Rect.fromCenter(
+          center: latCenter,
+          width: frontalView ? 42 : 24,
+          height: 28,
+        );
+        canvas.drawOval(
+          latRect,
+          Paint()
+            ..shader = RadialGradient(
+              colors: <Color>[
+                Colors.white.withValues(alpha: 0.85),
+                phaseColor.withValues(alpha: 0.85 * pulse),
+                const Color(0xFF00E5FF).withValues(alpha: 0.25),
+                Colors.transparent,
+              ],
+            ).createShader(latRect.inflate(8)),
+        );
+      }
+
+      // Iluminación específica de Trapecio Superior
+      if (highlightTraps) {
+        final Rect trapRect = Rect.fromCenter(
+          center: shoulder - const Offset(0, 5),
+          width: frontalView ? 34 : 20,
+          height: 12,
+        );
+        canvas.drawOval(
+          trapRect,
+          Paint()
+            ..shader = RadialGradient(
+              colors: <Color>[
+                Colors.white,
+                phaseColor.withValues(alpha: 0.9 * pulse),
+                Colors.transparent,
+              ],
+            ).createShader(trapRect.inflate(5)),
+        );
+      }
+
+      // Iluminación de Core / Erectores
+      if (highlightCore) {
+        final Offset coreCenter = shoulder + (hip - shoulder) * 0.68;
+        final Rect coreRect = Rect.fromCenter(
+          center: coreCenter,
+          width: frontalView ? 22 : 16,
+          height: 22,
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(coreRect, const Radius.circular(5)),
+          Paint()
+            ..color = const Color(0xFF00E5FF).withValues(alpha: 0.32 * pulse),
+        );
+      }
     }
 
-    void drawBarbellPlate(Offset center, {double radius = 11.0}) {
+    // Helper: Dibuja cápsula 3D de Deltoides (Hombro iluminado)
+    void drawDeltoidCap3D(Offset center, {bool active = false, double radius = 9.0}) {
+      if (active) {
+        canvas.drawCircle(
+          center,
+          radius * 1.65,
+          Paint()
+            ..color = phaseColor.withValues(alpha: 0.35 * pulse)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+        );
+      }
+      final Rect rect = Rect.fromCircle(center: center, radius: radius);
       canvas.drawCircle(
         center,
         radius,
         Paint()
-          ..color = const Color(0xFF0F172A)
-          ..style = PaintingStyle.fill,
+          ..shader = RadialGradient(
+            center: const Alignment(-0.3, -0.3),
+            colors: active
+                ? <Color>[
+                    Colors.white,
+                    phaseColor,
+                    const Color(0xFF0F172A),
+                  ]
+                : <Color>[
+                    const Color(0xFF94A3B8),
+                    const Color(0xFF334155),
+                    const Color(0xFF0F172A),
+                  ],
+          ).createShader(rect),
+      );
+    }
+
+    // Helper: Dibuja cabeza anatómica 3D con visor cibernético
+    void drawHead3D(Offset center) {
+      final Rect headRect = Rect.fromCenter(
+        center: center,
+        width: 19,
+        height: 22,
+      );
+      canvas.drawOval(
+        headRect,
+        Paint()
+          ..shader = const RadialGradient(
+            center: Alignment(-0.25, -0.35),
+            colors: <Color>[
+              Color(0xFF94A3B8),
+              Color(0xFF334155),
+              Color(0xFF0F172A),
+            ],
+          ).createShader(headRect),
+      );
+      canvas.drawOval(
+        headRect,
+        Paint()
+          ..color = phaseColor.withValues(alpha: 0.7)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4,
+      );
+      // Visor táctico luminoso
+      canvas.drawLine(
+        center + const Offset(-5, -2),
+        center + const Offset(5, -2),
+        Paint()
+          ..color = const Color(0xFF00E5FF)
+          ..strokeWidth = 2.4
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+
+    // Helper: Disco olímpico 3D o mancuerna cromada
+    void drawWeight3D(Offset center, {double radius = 12.0}) {
+      final Rect plateRect = Rect.fromCircle(center: center, radius: radius);
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..shader = const RadialGradient(
+            colors: <Color>[
+              Color(0xFF334155),
+              Color(0xFF0F172A),
+              Colors.black,
+            ],
+          ).createShader(plateRect),
       );
       canvas.drawCircle(
         center,
         radius,
         Paint()
           ..color = const Color(0xFFD2FF00)
-          ..strokeWidth = 2.6
-          ..style = PaintingStyle.stroke,
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.2,
+      );
+      canvas.drawCircle(
+        center,
+        radius * 0.32,
+        Paint()..color = const Color(0xFFE2E8F0),
       );
     }
 
+    // Helper: Arco goniométrico de ángulo articular en vivo
+    void drawJointGoniometer(Offset vertex, double radius) {
+      final Rect arcRect = Rect.fromCircle(center: vertex, radius: radius);
+      canvas.drawArc(
+        arcRect,
+        -math.pi * 0.75,
+        math.pi * 0.65,
+        false,
+        Paint()
+          ..color = phaseColor.withValues(alpha: 0.85)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.8,
+      );
+    }
+
+    // Helper: Vector de trayectoria cinemática punteada
+    void drawTrajectoryVector(Offset top, Offset bottom) {
+      final Paint dashPaint = Paint()
+        ..color = phaseColor.withValues(alpha: 0.45)
+        ..strokeWidth = 1.5;
+      const double dashLen = 4.0;
+      const double gapLen = 4.0;
+      final double total = (bottom - top).distance;
+      if (total < 4) return;
+      final Offset dir = (bottom - top) / total;
+      double d = 0;
+      while (d < total) {
+        final Offset p1 = top + dir * d;
+        final Offset p2 = top + dir * math.min(d + dashLen, total);
+        canvas.drawLine(p1, p2, dashPaint);
+        d += dashLen + gapLen;
+      }
+    }
+
     switch (archetype) {
-      case BiomechanicalArchetype.benchPress:
-        // Banco horizontal
-        final double benchY = floorY - 34;
+      case BiomechanicalArchetype.overheadPress:
+        // VISTA 3D FRONTAL-OBLICUA: Press Militar con Barra Olímpica
+        final Offset hip = Offset(cx, floorY - 68);
+        final Offset shoulder = Offset(cx, floorY - 110);
+        final Offset shL = Offset(cx - 21, shoulder.dy);
+        final Offset shR = Offset(cx + 21, shoulder.dy);
+        final Offset kneeL = Offset(cx - 11, floorY - 34);
+        final Offset kneeR = Offset(cx + 11, floorY - 34);
+        final Offset ankleL = Offset(cx - 13, floorY);
+        final Offset ankleR = Offset(cx + 13, floorY);
+
+        // Piernas y Torso 3D estable
+        drawLimb3D(ankleL, kneeL, startRadius: 4.5, bellyRadius: 7.0);
+        drawLimb3D(ankleR, kneeR, startRadius: 4.5, bellyRadius: 7.0);
+        drawLimb3D(kneeL, Offset(cx - 10, hip.dy), bellyRadius: 8.5);
+        drawLimb3D(kneeR, Offset(cx + 10, hip.dy), bellyRadius: 8.5);
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          frontalView: true,
+          highlightCore: true,
+          highlightTraps: true,
+        );
+        drawHead3D(Offset(cx, shoulder.dy - 18));
+
+        // Cinemática de Press Militar (depth 0 = bloqueo sobre corona, depth 1 = clavícula)
+        final double barY = (shoulder.dy - 46) + (depth * 44);
+        final Offset elbowL = Offset(
+          shL.dx - 11,
+          shoulder.dy - 12 + (depth * 26),
+        );
+        final Offset elbowR = Offset(
+          shR.dx + 11,
+          shoulder.dy - 12 + (depth * 26),
+        );
+        final Offset handL = Offset(shL.dx - 7, barY);
+        final Offset handR = Offset(shR.dx + 7, barY);
+
+        drawTrajectoryVector(
+          Offset(cx, shoulder.dy - 48),
+          Offset(cx, shoulder.dy),
+        );
+
+        // Brazos y Deltoides iluminados
+        drawLimb3D(
+          shL,
+          elbowL,
+          bellyRadius: 9.0,
+          isPrimaryMuscle: true,
+        );
+        drawLimb3D(
+          shR,
+          elbowR,
+          bellyRadius: 9.0,
+          isPrimaryMuscle: true,
+        );
+        drawLimb3D(
+          elbowL,
+          handL,
+          bellyRadius: 7.5,
+          isSecondaryMuscle: true,
+        );
+        drawLimb3D(
+          elbowR,
+          handR,
+          bellyRadius: 7.5,
+          isSecondaryMuscle: true,
+        );
+        drawDeltoidCap3D(shL, active: true, radius: 9.5);
+        drawDeltoidCap3D(shR, active: true, radius: 9.5);
+        drawJointGoniometer(elbowR, 14);
+
+        // Barra Olímpica 3D cromada con discos en ambos extremos
         canvas.drawLine(
-          Offset(cx - 58, benchY),
-          Offset(cx + 36, benchY),
+          Offset(handL.dx - 16, barY),
+          Offset(handR.dx + 16, barY),
+          Paint()
+            ..color = const Color(0xFFE2E8F0)
+            ..strokeWidth = 3.6
+            ..strokeCap = StrokeCap.round,
+        );
+        drawWeight3D(Offset(handL.dx - 12, barY), radius: 10.5);
+        drawWeight3D(Offset(handR.dx + 12, barY), radius: 10.5);
+        break;
+
+      case BiomechanicalArchetype.lateralRaise:
+        // VISTA 3D FRONTAL: Elevaciones Laterales en Plano Escapular (30°)
+        final Offset hip = Offset(cx, floorY - 68);
+        final Offset shoulder = Offset(cx, floorY - 110);
+        final Offset shL = Offset(cx - 20, shoulder.dy);
+        final Offset shR = Offset(cx + 20, shoulder.dy);
+
+        drawLimb3D(
+          Offset(cx - 12, floorY),
+          Offset(cx - 10, floorY - 34),
+          bellyRadius: 6.5,
+        );
+        drawLimb3D(
+          Offset(cx + 12, floorY),
+          Offset(cx + 10, floorY - 34),
+          bellyRadius: 6.5,
+        );
+        drawLimb3D(
+          Offset(cx - 10, floorY - 34),
+          Offset(cx - 9, hip.dy),
+          bellyRadius: 8.0,
+        );
+        drawLimb3D(
+          Offset(cx + 10, floorY - 34),
+          Offset(cx + 9, hip.dy),
+          bellyRadius: 8.0,
+        );
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          frontalView: true,
+          highlightCore: true,
+        );
+        drawHead3D(Offset(cx, shoulder.dy - 18));
+
+        // Abducción de hombro: depth 0 = 90° horizontal, depth 1 = 15° abajo
+        final double raiseFactor = 1.0 - depth;
+        final double armAngle = 0.25 + (raiseFactor * 1.28); // rad desde vertical
+        final Offset elbowL = Offset(
+          shL.dx - math.sin(armAngle) * 22,
+          shL.dy + math.cos(armAngle) * 22,
+        );
+        final Offset elbowR = Offset(
+          shR.dx + math.sin(armAngle) * 22,
+          shR.dy + math.cos(armAngle) * 22,
+        );
+        final Offset handL = Offset(
+          elbowL.dx - math.sin(armAngle + 0.12) * 20,
+          elbowL.dy + math.cos(armAngle + 0.12) * 20,
+        );
+        final Offset handR = Offset(
+          elbowR.dx + math.sin(armAngle + 0.12) * 20,
+          elbowR.dy + math.cos(armAngle + 0.12) * 20,
+        );
+
+        // Arcos de plano escapular 30°
+        drawJointGoniometer(shR, 18);
+        drawLimb3D(shL, elbowL, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(shR, elbowR, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(elbowL, handL, bellyRadius: 6.5, isSecondaryMuscle: true);
+        drawLimb3D(elbowR, handR, bellyRadius: 6.5, isSecondaryMuscle: true);
+        drawDeltoidCap3D(shL, active: true, radius: 10.5);
+        drawDeltoidCap3D(shR, active: true, radius: 10.5);
+        drawWeight3D(handL, radius: 7.5);
+        drawWeight3D(handR, radius: 7.5);
+        break;
+
+      case BiomechanicalArchetype.rearDeltFacePull:
+        // VISTA 3D POSTERIOR-SUPERIOR: Face Pulls / Deltoides Posterior y Romboides
+        final Offset hip = Offset(cx, floorY - 68);
+        final Offset shoulder = Offset(cx, floorY - 110);
+        final Offset shL = Offset(cx - 21, shoulder.dy);
+        final Offset shR = Offset(cx + 21, shoulder.dy);
+
+        drawLimb3D(
+          Offset(cx - 12, floorY),
+          Offset(cx - 9, hip.dy),
+          bellyRadius: 7.5,
+        );
+        drawLimb3D(
+          Offset(cx + 12, floorY),
+          Offset(cx + 9, hip.dy),
+          bellyRadius: 7.5,
+        );
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          frontalView: true,
+          highlightLats: true,
+          highlightTraps: true,
+        );
+        drawHead3D(Offset(cx, shoulder.dy - 18));
+
+        final double pullFactor = 1.0 - depth;
+        final Offset elbowL = Offset(
+          shL.dx - 14 - (pullFactor * 12),
+          shL.dy + 6 - (pullFactor * 8),
+        );
+        final Offset elbowR = Offset(
+          shR.dx + 14 + (pullFactor * 12),
+          shR.dy + 6 - (pullFactor * 8),
+        );
+        final Offset handL = Offset(
+          cx - 8 - (pullFactor * 14),
+          shoulder.dy - 14,
+        );
+        final Offset handR = Offset(
+          cx + 8 + (pullFactor * 14),
+          shoulder.dy - 14,
+        );
+
+        // Polea alta frontal y cuerda doble
+        final Offset pulleyAnchor = Offset(cx, shoulder.dy - 36);
+        canvas.drawCircle(
+          pulleyAnchor,
+          5,
+          Paint()..color = const Color(0xFF00E5FF),
+        );
+        canvas.drawLine(
+          pulleyAnchor,
+          handL,
+          Paint()
+            ..color = const Color(0xFFD2FF00)
+            ..strokeWidth = 2.0,
+        );
+        canvas.drawLine(
+          pulleyAnchor,
+          handR,
+          Paint()
+            ..color = const Color(0xFFD2FF00)
+            ..strokeWidth = 2.0,
+        );
+
+        drawLimb3D(shL, elbowL, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(shR, elbowR, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(elbowL, handL, bellyRadius: 6.5, isSecondaryMuscle: true);
+        drawLimb3D(elbowR, handR, bellyRadius: 6.5, isSecondaryMuscle: true);
+        drawDeltoidCap3D(shL, active: true, radius: 10.0);
+        drawDeltoidCap3D(shR, active: true, radius: 10.0);
+        drawJointGoniometer(elbowR, 14);
+        break;
+
+      case BiomechanicalArchetype.shrug:
+        // VISTA 3D FRONTAL: Encogimientos de Trapecio con Mancuernas
+        final Offset hip = Offset(cx, floorY - 68);
+        final double liftOffset = (1.0 - depth) * 11.0;
+        final Offset shoulder = Offset(cx, floorY - 108 - liftOffset);
+        final Offset shL = Offset(cx - 21, shoulder.dy);
+        final Offset shR = Offset(cx + 21, shoulder.dy);
+
+        drawLimb3D(
+          Offset(cx - 12, floorY),
+          Offset(cx - 9, hip.dy),
+          bellyRadius: 7.5,
+        );
+        drawLimb3D(
+          Offset(cx + 12, floorY),
+          Offset(cx + 9, hip.dy),
+          bellyRadius: 7.5,
+        );
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          frontalView: true,
+          highlightTraps: true,
+        );
+        drawHead3D(Offset(cx, floorY - 128));
+
+        final Offset handL = Offset(shL.dx - 4, shL.dy + 42);
+        final Offset handR = Offset(shR.dx + 4, shR.dy + 42);
+        drawLimb3D(shL, handL, bellyRadius: 7.5, isSecondaryMuscle: true);
+        drawLimb3D(shR, handR, bellyRadius: 7.5, isSecondaryMuscle: true);
+        drawDeltoidCap3D(shL, active: true, radius: 9.5);
+        drawDeltoidCap3D(shR, active: true, radius: 9.5);
+        drawWeight3D(handL, radius: 9.0);
+        drawWeight3D(handR, radius: 9.0);
+        break;
+
+      case BiomechanicalArchetype.latPulldown:
+        // VISTA 3D: Jalón al Pecho con Retracción Escapular e Iluminación Dorsal + Bíceps
+        const double topPulleyY = 30.0;
+        final Offset hip = Offset(cx, floorY - 34);
+        final Offset shoulder = Offset(cx, floorY - 82);
+        final Offset shL = Offset(cx - 20, shoulder.dy);
+        final Offset shR = Offset(cx + 20, shoulder.dy);
+
+        // Asiento y rodillos
+        canvas.drawLine(
+          Offset(cx - 28, hip.dy + 4),
+          Offset(cx + 28, hip.dy + 4),
+          Paint()
+            ..color = const Color(0xFF334155)
+            ..strokeWidth = 6
+            ..strokeCap = StrokeCap.round,
+        );
+        drawLimb3D(
+          Offset(cx - 14, floorY),
+          Offset(cx - 12, hip.dy),
+          bellyRadius: 7.5,
+        );
+        drawLimb3D(
+          Offset(cx + 14, floorY),
+          Offset(cx + 12, hip.dy),
+          bellyRadius: 7.5,
+        );
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          frontalView: true,
+          highlightLats: true,
+        );
+        drawHead3D(Offset(cx, shoulder.dy - 17));
+
+        // depth 0 = barra al pecho alto, depth 1 = brazos extendidos arriba
+        final double barY = (shoulder.dy - 4) - (depth * 42);
+        final Offset handL = Offset(cx - 34, barY);
+        final Offset handR = Offset(cx + 34, barY);
+        final Offset elbowL = Offset(
+          shL.dx - 16,
+          shoulder.dy + 14 - (depth * 28),
+        );
+        final Offset elbowR = Offset(
+          shR.dx + 16,
+          shoulder.dy + 14 - (depth * 28),
+        );
+
+        // Cable central y barra lat curva
+        canvas.drawLine(
+          Offset(cx, topPulleyY),
+          Offset(cx, barY),
+          Paint()
+            ..color = const Color(0xFF94A3B8)
+            ..strokeWidth = 2.0,
+        );
+        canvas.drawLine(
+          handL,
+          handR,
+          Paint()
+            ..color = const Color(0xFFD2FF00)
+            ..strokeWidth = 3.5
+            ..strokeCap = StrokeCap.round,
+        );
+
+        drawLimb3D(shL, elbowL, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(shR, elbowR, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(elbowL, handL, bellyRadius: 7.5, isSecondaryMuscle: true);
+        drawLimb3D(elbowR, handR, bellyRadius: 7.5, isSecondaryMuscle: true);
+        drawDeltoidCap3D(shL, active: false, radius: 8.5);
+        drawDeltoidCap3D(shR, active: false, radius: 8.5);
+        drawJointGoniometer(elbowR, 14);
+        break;
+
+      case BiomechanicalArchetype.benchPress:
+        // VISTA 3D ISOMÉTRICA: Press de Banca con Arco Torácico, Pectoral y Deltoides Anterior
+        final double benchY = floorY - 34;
+        final Paint benchPaint = Paint()
+          ..color = const Color(0xFF334155)
+          ..strokeWidth = 7.0
+          ..strokeCap = StrokeCap.round;
+        canvas.drawLine(
+          Offset(cx - 56, benchY),
+          Offset(cx + 38, benchY),
           benchPaint,
         );
         canvas.drawLine(
-          Offset(cx - 46, benchY),
-          Offset(cx - 46, floorY),
+          Offset(cx - 44, benchY),
+          Offset(cx - 44, floorY),
           benchPaint,
         );
         canvas.drawLine(
@@ -907,199 +2006,229 @@ class _BiomechanicalAvatarPainter extends CustomPainter {
           benchPaint,
         );
 
-        final Offset shoulder = Offset(cx - 28, benchY - 8);
-        final Offset hip = Offset(cx + 16, benchY - 7);
-        final Offset knee = Offset(cx + 42, benchY - 4);
+        final Offset shoulder = Offset(cx - 26, benchY - 11);
+        final Offset hip = Offset(cx + 16, benchY - 9);
+        final Offset knee = Offset(cx + 42, benchY - 5);
         final Offset ankle = Offset(cx + 46, floorY);
-        drawHead(Offset(cx - 46, benchY - 10));
-        drawSegment(shoulder, hip, activeMuscle: true);
-        drawSegment(hip, knee);
-        drawSegment(knee, ankle);
 
-        // Movimiento de press (depth 0 = bloqueo arriba, depth 1 = barra en pecho)
-        final double barY = (benchY - 56) + (depth * 36);
-        final Offset wrist = Offset(cx - 24, barY);
-        final Offset elbow = Offset(
-          cx - 12 + (depth * 8),
-          benchY - 22 + (depth * 16),
+        drawLimb3D(hip, knee, bellyRadius: 9.0);
+        drawLimb3D(knee, ankle, bellyRadius: 7.0);
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          highlightChest: true,
+          highlightCore: true,
         );
-        drawSegment(shoulder, elbow, activeMuscle: true);
-        drawSegment(elbow, wrist, activeMuscle: true);
-        drawBarbellPlate(wrist, radius: 12);
+        drawHead3D(Offset(cx - 45, benchY - 12));
+
+        final double barY = (benchY - 62) + (depth * 40);
+        final Offset wrist = Offset(cx - 22, barY);
+        final Offset elbow = Offset(
+          cx - 10 + (depth * 8),
+          benchY - 26 + (depth * 18),
+        );
+
+        drawTrajectoryVector(Offset(cx - 22, benchY - 64), Offset(cx - 22, benchY - 18));
+        drawLimb3D(shoulder, elbow, bellyRadius: 9.5, isPrimaryMuscle: true);
+        drawLimb3D(elbow, wrist, bellyRadius: 7.5, isSecondaryMuscle: true);
+        drawDeltoidCap3D(shoulder, active: true, radius: 9.5);
+        drawJointGoniometer(elbow, 14);
+        drawWeight3D(wrist, radius: 13.0);
         break;
 
       case BiomechanicalArchetype.squat:
       case BiomechanicalArchetype.lunge:
+        // VISTA 3D: Sentadilla Profunda con Iluminación en Cuádriceps y Glúteo Mayor
         final Offset ankle = Offset(cx + 4, floorY);
         final Offset knee = Offset(
-          cx - 12 - (depth * 16),
-          floorY - 36 + (depth * 10),
+          cx - 14 - (depth * 18),
+          floorY - 38 + (depth * 10),
         );
         final Offset hip = Offset(
-          cx + 10 + (depth * 18),
-          floorY - 72 + (depth * 36),
+          cx + 12 + (depth * 20),
+          floorY - 76 + (depth * 38),
         );
         final Offset shoulder = Offset(
           cx - 2 - (depth * 4),
-          hip.dy - 40 + (depth * 6),
+          hip.dy - 44 + (depth * 6),
         );
-        final Offset head = Offset(shoulder.dx - 2, shoulder.dy - 15);
 
-        drawSegment(ankle, knee, activeMuscle: true);
-        drawSegment(knee, hip, activeMuscle: true);
-        drawSegment(hip, shoulder, activeMuscle: true);
-        drawHead(head);
-        drawBarbellPlate(Offset(shoulder.dx + 2, shoulder.dy + 2), radius: 12);
+        drawTrajectoryVector(
+          Offset(cx - 4, floorY - 122),
+          Offset(cx - 4, floorY - 78),
+        );
+        drawLimb3D(
+          ankle,
+          knee,
+          startRadius: 5.5,
+          bellyRadius: 8.5,
+          isSecondaryMuscle: true,
+        );
+        drawLimb3D(
+          knee,
+          hip,
+          startRadius: 7.5,
+          bellyRadius: 12.5,
+          endRadius: 9.5,
+          isPrimaryMuscle: true,
+        );
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          highlightCore: true,
+        );
+        // Iluminación volumétrica de Glúteo Mayor en la cadera
+        drawDeltoidCap3D(hip, active: true, radius: 10.5);
+        drawHead3D(Offset(shoulder.dx - 2, shoulder.dy - 17));
+        drawJointGoniometer(knee, 15);
+        drawWeight3D(Offset(shoulder.dx + 3, shoulder.dy + 2), radius: 12.5);
         break;
 
       case BiomechanicalArchetype.deadlift:
+        // VISTA 3D: Peso Muerto Rumano (RDL) con Iluminación en Isquiosurales y Glúteos
         final Offset ankle = Offset(cx, floorY);
         final Offset knee = Offset(
-          cx - 6 - (depth * 10),
-          floorY - 36 + (depth * 6),
+          cx - 6 - (depth * 8),
+          floorY - 38 + (depth * 5),
         );
         final Offset hip = Offset(
-          cx + 6 + (depth * 26),
-          floorY - 72 + (depth * 24),
+          cx + 8 + (depth * 26),
+          floorY - 76 + (depth * 22),
         );
         final Offset shoulder = Offset(
-          cx - 2 - (depth * 14),
-          hip.dy - 42 + (depth * 24),
+          cx - 4 - (depth * 16),
+          hip.dy - 44 + (depth * 26),
         );
         final Offset hand = Offset(
-          cx - 8,
-          floorY - 58 + (depth * 36),
+          cx - 10,
+          floorY - 62 + (depth * 36),
         );
-        drawSegment(ankle, knee);
-        drawSegment(knee, hip, activeMuscle: true);
-        drawSegment(hip, shoulder, activeMuscle: true);
-        drawSegment(shoulder, hand);
-        drawHead(Offset(shoulder.dx - 6, shoulder.dy - 13));
-        drawBarbellPlate(hand, radius: 13);
-        break;
 
-      case BiomechanicalArchetype.overheadPress:
-        final Offset ankle = Offset(cx, floorY);
-        final Offset knee = Offset(cx, floorY - 35);
-        final Offset hip = Offset(cx, floorY - 70);
-        final Offset shoulder = Offset(cx, floorY - 108);
-        // depth 0 = bloqueo sobre cabeza, depth 1 = barra en clavícula
-        final double handY = (shoulder.dy - 36) + (depth * 34);
-        final Offset elbow = Offset(
-          cx + 14,
-          shoulder.dy - 10 + (depth * 22),
+        drawTrajectoryVector(Offset(cx - 10, floorY - 64), Offset(cx - 10, floorY - 22));
+        drawLimb3D(ankle, knee, bellyRadius: 7.5);
+        drawLimb3D(
+          knee,
+          hip,
+          bellyRadius: 11.5,
+          isPrimaryMuscle: true,
         );
-        final Offset hand = Offset(cx + 4, handY);
-        drawSegment(ankle, knee);
-        drawSegment(knee, hip);
-        drawSegment(hip, shoulder, activeMuscle: true);
-        drawHead(Offset(cx - 4, shoulder.dy - 14));
-        drawSegment(shoulder, elbow, activeMuscle: true);
-        drawSegment(elbow, hand, activeMuscle: true);
-        drawBarbellPlate(hand, radius: 10);
-        break;
-
-      case BiomechanicalArchetype.latPulldown:
-        // Máquina / Barra superior
-        const double topBarY = 38.0;
-        canvas.drawLine(
-          Offset(cx - 35, topBarY),
-          Offset(cx + 35, topBarY),
-          benchPaint,
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          highlightLats: true,
+          highlightCore: true,
         );
-        final Offset hip = Offset(cx, floorY - 34);
-        final Offset knee = Offset(cx + 22, floorY - 32);
-        final Offset ankle = Offset(cx + 22, floorY);
-        final Offset shoulder = Offset(cx - 2, floorY - 76);
-        // depth 0 = contracción abajo, depth 1 = estiramiento arriba
-        final Offset hand = Offset(
-          cx + 4,
-          (shoulder.dy + 4) - (depth * 34),
-        );
-        final Offset elbow = Offset(
-          cx + 16,
-          (shoulder.dy + 18) - (depth * 26),
-        );
-        drawSegment(ankle, knee);
-        drawSegment(knee, hip);
-        drawSegment(hip, shoulder, activeMuscle: true);
-        drawHead(Offset(shoulder.dx - 4, shoulder.dy - 14));
-        drawSegment(shoulder, elbow, activeMuscle: true);
-        drawSegment(elbow, hand, activeMuscle: true);
-        canvas.drawLine(Offset(cx + 4, topBarY), hand, barbellPaint);
+        drawDeltoidCap3D(hip, active: true, radius: 10.5);
+        drawLimb3D(shoulder, hand, bellyRadius: 7.0, isSecondaryMuscle: true);
+        drawHead3D(Offset(shoulder.dx - 8, shoulder.dy - 14));
+        drawJointGoniometer(hip, 16);
+        drawWeight3D(hand, radius: 13.5);
         break;
 
       case BiomechanicalArchetype.barbellRow:
+        // VISTA 3D: Remo con Barra 45° con Iluminación en Dorsal Ancho y Romboides
         final Offset ankle = Offset(cx, floorY);
-        final Offset knee = Offset(cx - 10, floorY - 34);
-        final Offset hip = Offset(cx + 20, floorY - 64);
-        final Offset shoulder = Offset(cx - 14, floorY - 90);
-        // depth 0 = barra en abdomen, depth 1 = brazos extendidos
+        final Offset knee = Offset(cx - 10, floorY - 36);
+        final Offset hip = Offset(cx + 22, floorY - 68);
+        final Offset shoulder = Offset(cx - 14, floorY - 94);
         final Offset hand = Offset(
           cx - 10,
-          (floorY - 66) + (depth * 26),
+          (floorY - 70) + (depth * 28),
         );
         final Offset elbow = Offset(
-          cx + 4 - (depth * 12),
-          (floorY - 82) + (depth * 22),
+          cx + 6 - (depth * 14),
+          (floorY - 86) + (depth * 24),
         );
-        drawSegment(ankle, knee);
-        drawSegment(knee, hip);
-        drawSegment(hip, shoulder, activeMuscle: true);
-        drawHead(Offset(shoulder.dx - 10, shoulder.dy - 10));
-        drawSegment(shoulder, elbow, activeMuscle: true);
-        drawSegment(elbow, hand, activeMuscle: true);
-        drawBarbellPlate(hand, radius: 11);
+
+        drawLimb3D(ankle, knee, bellyRadius: 7.5);
+        drawLimb3D(knee, hip, bellyRadius: 10.0, isSecondaryMuscle: true);
+        drawSculptedTorso3D(
+          hip,
+          shoulder,
+          highlightLats: true,
+          highlightCore: true,
+        );
+        drawHead3D(Offset(shoulder.dx - 11, shoulder.dy - 11));
+        drawLimb3D(shoulder, elbow, bellyRadius: 8.5, isPrimaryMuscle: true);
+        drawLimb3D(elbow, hand, bellyRadius: 7.0, isSecondaryMuscle: true);
+        drawJointGoniometer(elbow, 14);
+        drawWeight3D(hand, radius: 11.5);
         break;
 
       case BiomechanicalArchetype.bicepCurl:
-      case BiomechanicalArchetype.lateralRaise:
       case BiomechanicalArchetype.tricepExtension:
+        // VISTA 3D: Aislamiento de Brazo (Bíceps Braquial o Tríceps Braquial)
         final Offset ankle = Offset(cx, floorY);
-        final Offset knee = Offset(cx, floorY - 35);
-        final Offset hip = Offset(cx, floorY - 70);
-        final Offset shoulder = Offset(cx, floorY - 108);
-        final Offset elbow = Offset(cx + 4, floorY - 82);
+        final Offset knee = Offset(cx, floorY - 36);
+        final Offset hip = Offset(cx, floorY - 72);
+        final Offset shoulder = Offset(cx, floorY - 112);
+        final Offset elbow = Offset(cx + 5, floorY - 82);
         final double angle = archetype == BiomechanicalArchetype.tricepExtension
-            ? (-0.9 + (depth * 1.6))
-            : (0.9 - (depth * 1.6));
+            ? (-0.85 + (depth * 1.65))
+            : (0.88 - (depth * 1.65));
         final Offset hand = Offset(
-          elbow.dx - math.cos(angle) * 26,
-          elbow.dy - math.sin(angle) * 26,
+          elbow.dx - math.cos(angle) * 28,
+          elbow.dy - math.sin(angle) * 28,
         );
-        drawSegment(ankle, knee);
-        drawSegment(knee, hip);
-        drawSegment(hip, shoulder);
-        drawHead(Offset(cx, shoulder.dy - 15));
-        drawSegment(shoulder, elbow, activeMuscle: true);
-        drawSegment(elbow, hand, activeMuscle: true);
-        drawBarbellPlate(hand, radius: 8.5);
+
+        drawLimb3D(ankle, knee, bellyRadius: 7.5);
+        drawLimb3D(knee, hip, bellyRadius: 9.5);
+        drawSculptedTorso3D(hip, shoulder, highlightCore: true);
+        drawHead3D(Offset(cx - 2, shoulder.dy - 17));
+        drawLimb3D(
+          shoulder,
+          elbow,
+          bellyRadius: 10.5,
+          isPrimaryMuscle: true,
+        );
+        drawLimb3D(
+          elbow,
+          hand,
+          bellyRadius: 7.5,
+          isSecondaryMuscle: true,
+        );
+        drawDeltoidCap3D(shoulder, active: false, radius: 8.5);
+        drawJointGoniometer(elbow, 14);
+        drawWeight3D(hand, radius: 9.0);
         break;
 
       case BiomechanicalArchetype.hipThrust:
-        // Apoyo escapular en banco
-        final Offset benchSupport = Offset(cx - 32, floorY - 34);
-        canvas.drawCircle(benchSupport, 10, benchPaint);
-        final Offset shoulder = Offset(cx - 28, floorY - 40);
+        // VISTA 3D: Hip Thrust con Barra e Iluminación en Glúteo Mayor
+        final Offset benchSupport = Offset(cx - 34, floorY - 36);
+        canvas.drawCircle(
+          benchSupport,
+          12,
+          Paint()..color = const Color(0xFF334155),
+        );
+        final Offset shoulder = Offset(cx - 28, floorY - 42);
         final Offset hip = Offset(
           cx + 4,
-          (floorY - 38) + (depth * 24),
+          (floorY - 40) + (depth * 24),
         );
-        final Offset knee = Offset(cx + 36, floorY - 36);
-        final Offset ankle = Offset(cx + 36, floorY);
-        drawHead(Offset(shoulder.dx - 14, shoulder.dy - 6));
-        drawSegment(shoulder, hip, activeMuscle: true);
-        drawSegment(hip, knee, activeMuscle: true);
-        drawSegment(knee, ankle);
-        drawBarbellPlate(hip, radius: 11);
+        final Offset knee = Offset(cx + 38, floorY - 38);
+        final Offset ankle = Offset(cx + 38, floorY);
+
+        drawHead3D(Offset(shoulder.dx - 15, shoulder.dy - 7));
+        drawSculptedTorso3D(hip, shoulder, highlightCore: true);
+        drawLimb3D(
+          hip,
+          knee,
+          bellyRadius: 11.5,
+          isPrimaryMuscle: true,
+        );
+        drawLimb3D(knee, ankle, bellyRadius: 7.5, isSecondaryMuscle: true);
+        drawDeltoidCap3D(hip, active: true, radius: 11.5);
+        drawJointGoniometer(hip, 16);
+        drawWeight3D(hip - const Offset(0, 4), radius: 12.0);
         break;
     }
   }
 
   @override
-  bool shouldRepaint(covariant _BiomechanicalAvatarPainter oldDelegate) {
+  bool shouldRepaint(covariant _Biomechanical3DVisualizerPainter oldDelegate) {
     return oldDelegate.depth != depth ||
         oldDelegate.archetype != archetype ||
-        oldDelegate.phaseColor != phaseColor;
+        oldDelegate.phaseColor != phaseColor ||
+        oldDelegate.jointAngleDeg != jointAngleDeg;
   }
 }

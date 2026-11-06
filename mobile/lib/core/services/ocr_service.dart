@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../../data/models/biometric_models.dart';
+import '../network/api_client.dart';
 
 /// Servicio de OCR Biométrico Real con Gemini 2.5 Flash Vision (Fitdays & Wearables).
 /// PROHIBIDO el retorno de diccionarios de prueba o valores quemados: si el escaneo
@@ -28,13 +29,7 @@ class OcrService {
   }
 
   String _extractErrorMessage(http.Response response) {
-    try {
-      final dynamic decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic> && decoded['detail'] != null) {
-        return 'Error HTTP ${response.statusCode}: ${decoded['detail']}';
-      }
-    } catch (_) {}
-    return 'Error HTTP ${response.statusCode}: ${response.body}';
+    return ApiErrorSanitizer.sanitizeResponseError(response);
   }
 
   /// Despacha el reporte Fitdays (`POST /api/v1/biometrics/scan`) con `contentType: MediaType('image', 'jpeg')`.

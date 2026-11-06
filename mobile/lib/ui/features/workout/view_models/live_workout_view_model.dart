@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../../../../core/network/api_client.dart';
 import '../../../../core/services/ble_heart_rate_service.dart';
 import '../../../../data/models/workout_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
@@ -165,55 +166,59 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   }
 
   Future<void> initializeWorkoutPlan() async {
-    _isLoadingPlan = true;
     _errorMessage = null;
-    notifyListeners();
 
     try {
       _unitSystem = await _repository.getPreferredUnitSystem();
 
-      // 1. Consultar GET /api/v1/routines/current
-      AiGeneratedRoutinePlanModel aiPlan;
-      try {
-        aiPlan = await _repository.loadCurrentAiRoutine();
-      } catch (_) {
-        aiPlan = const AiGeneratedRoutinePlanModel(
-          hasRoutine: false,
-          routineName: '',
-          weeklyFocus: '',
-          days: <RoutineTemplateModel>[],
+      // 1. Carga instantánea (0ms) desde SharedPreferences para abrir Entreno Vivo sin espera
+      AiGeneratedRoutinePlanModel? cachedPlan =
+          await _repository.readCachedAiRoutinePlan();
+      if (cachedPlan == null || cachedPlan.days.length < 5) {
+        final cachedBio = await _repository.readCachedBiometrics();
+        cachedPlan = _buildInstantLocalLbmFiveDayPlan(
+          lbmKg: (cachedBio != null && cachedBio.leanBodyMassKg > 20)
+              ? cachedBio.leanBodyMassKg
+              : 62.74,
+          weightKg: cachedBio?.weightKg ?? 92.4,
         );
+        await _repository.saveCachedAiRoutinePlan(cachedPlan);
       }
 
-      // 2. Si no existe rutina IA de 5 días, disparar POST /api/v1/routines/generate-ai con overlay
-      if (!aiPlan.hasRoutine || aiPlan.days.length < 5) {
-        _isGeneratingAiRoutine = true;
-        notifyListeners();
-        try {
-          aiPlan = await _repository.generateAiRoutine();
-        } catch (_) {
-          aiPlan = await _buildAndPersistLbmFiveDayPlanFallback();
-        } finally {
-          _isGeneratingAiRoutine = false;
+      _weeklyRoutines = cachedPlan.days;
+      _aiRoutineTitle = cachedPlan.routineName;
+      _aiWeeklyFocus = cachedPlan.weeklyFocus;
+      _geminiRationale =
+          '${cachedPlan.routineName} • ${cachedPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
+
+      if (_weeklyRoutines.isNotEmpty && _selectedRoutine == null) {
+        final int todayIso = DateTime.now().weekday.clamp(1, 5);
+        RoutineTemplateModel? matchedDay;
+        for (final RoutineTemplateModel r in _weeklyRoutines) {
+          if (r.dayOfWeek == todayIso) {
+            matchedDay = r;
+            break;
+          }
         }
+        _selectedRoutine = matchedDay ?? _weeklyRoutines.first;
       }
 
-      if (aiPlan.days.isNotEmpty) {
-        _weeklyRoutines = aiPlan.days;
-        _aiRoutineTitle = aiPlan.routineName;
-        _aiWeeklyFocus = aiPlan.weeklyFocus;
-        _geminiRationale =
-            '${aiPlan.routineName} • ${aiPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
-      } else {
-        _weeklyRoutines = await _repository.loadWeeklyRoutines();
-        if (_weeklyRoutines.length < 5) {
-          final AiGeneratedRoutinePlanModel fallback =
-              await _buildAndPersistLbmFiveDayPlanFallback();
-          _weeklyRoutines = fallback.days;
-          _aiRoutineTitle = fallback.routineName;
-          _aiWeeklyFocus = fallback.weeklyFocus;
+      _isLoadingPlan = false;
+      notifyListeners();
+
+      // 2. Sincronización en segundo plano de GET /api/v1/routines/current (<100ms, solo PostgreSQL)
+      try {
+        final AiGeneratedRoutinePlanModel cloudPlan =
+            await _repository.loadCurrentAiRoutine();
+        if (cloudPlan.hasRoutine && cloudPlan.days.length >= 5) {
+          _weeklyRoutines = cloudPlan.days;
+          _aiRoutineTitle = cloudPlan.routineName;
+          _aiWeeklyFocus = cloudPlan.weeklyFocus;
+          _geminiRationale =
+              '${cloudPlan.routineName} • ${cloudPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
+          await _repository.saveCachedAiRoutinePlan(cloudPlan);
         }
-      }
+      } catch (_) {}
 
       TodayWorkoutPlanModel? plan;
       try {
@@ -226,10 +231,11 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       _rolloverBanner = plan?.coachRolloverBanner;
 
       if (_weeklyRoutines.isNotEmpty) {
-        final int todayIso = DateTime.now().weekday.clamp(1, 5);
+        final int currentDay =
+            _selectedRoutine?.dayOfWeek ?? DateTime.now().weekday.clamp(1, 5);
         RoutineTemplateModel? matchedDay;
         for (final RoutineTemplateModel r in _weeklyRoutines) {
-          if (r.dayOfWeek == todayIso) {
+          if (r.dayOfWeek == currentDay) {
             matchedDay = r;
             break;
           }
@@ -253,12 +259,12 @@ class LiveWorkoutViewModel extends ChangeNotifier {
             _readinessZone = 'GREEN_OVERLOAD';
           }
         }
-      } else {
-        _activeWorkoutId = null;
-        _sets = <WorkoutSetModel>[];
       }
     } catch (e) {
-      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+      final String clean = ApiErrorSanitizer.sanitizeRawErrorString(e);
+      if (clean != ApiErrorSanitizer.cloudReconnectingMessage) {
+        _errorMessage = clean;
+      }
     } finally {
       _isLoadingPlan = false;
       _isGeneratingAiRoutine = false;
@@ -266,7 +272,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     }
   }
 
-  /// Dispara `POST /api/v1/routines/generate-ai` mostrando el overlay de cálculo biomecánico.
+  /// Dispara `POST /api/v1/routines/generate-ai` únicamente cuando el usuario pulsa "REGENERAR RUTINA CON IA".
   Future<void> regenerateRoutineWithAi() async {
     _isGeneratingAiRoutine = true;
     _errorMessage = null;
@@ -280,6 +286,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         aiPlan = await _buildAndPersistLbmFiveDayPlanFallback();
       }
       if (aiPlan.days.isNotEmpty) {
+        await _repository.saveCachedAiRoutinePlan(aiPlan);
         _weeklyRoutines = aiPlan.days;
         _aiRoutineTitle = aiPlan.routineName;
         _aiWeeklyFocus = aiPlan.weeklyFocus;
@@ -290,7 +297,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
             '${aiPlan.routineName} • ${aiPlan.weeklyFocus}. Cargas recalculadas por Gemini 2.5 Flash.';
       }
     } catch (e) {
-      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+      _errorMessage = ApiErrorSanitizer.sanitizeRawErrorString(e);
     } finally {
       _isGeneratingAiRoutine = false;
       notifyListeners();
@@ -301,11 +308,74 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     return (rawKg / 2.5).round() * 2.5;
   }
 
+  AiGeneratedRoutinePlanModel _buildInstantLocalLbmFiveDayPlan({
+    required double lbmKg,
+    required double weightKg,
+  }) {
+    double scale(double coeff, double minKg) {
+      final double v = lbmKg * coeff * 0.96;
+      return _roundPlate(v < minKg ? minKg : v);
+    }
+
+    final List<Map<String, dynamic>> rawDaysSpec =
+        _rawFiveDaySpec(scale: scale);
+    final List<RoutineTemplateModel> localDays = <RoutineTemplateModel>[];
+    for (final Map<String, dynamic> d in rawDaysSpec) {
+      final int dayNum = d['day'] as int;
+      final String dayName = d['name'] as String;
+      final String focus = d['focus'] as String;
+      final List<Map<String, dynamic>> exList =
+          (d['exercises'] as List<Map<String, dynamic>>);
+      final List<RoutineExerciseItemModel> localItems =
+          <RoutineExerciseItemModel>[];
+      for (int i = 0; i < exList.length; i++) {
+        final Map<String, dynamic> spec = exList[i];
+        localItems.add(
+          RoutineExerciseItemModel(
+            id: 'day_${dayNum}_ex_${i + 1}',
+            exerciseId: 'day_${dayNum}_ex_${i + 1}',
+            exerciseName: spec['exercise_name'] as String,
+            exerciseKey: spec['exercise_key'] as String,
+            muscleGroup: spec['muscle_group'] as String,
+            displayOrder: i + 1,
+            targetSets: spec['target_sets'] as int,
+            targetReps: spec['target_reps'] as int,
+            targetRepsRange: spec['target_reps_range'] as String,
+            targetWeightKg: (spec['base_weight_kg'] as num).toDouble(),
+            targetRpe: (spec['target_rpe'] as num).toDouble(),
+            restSeconds: spec['rest_seconds'] as int,
+            tempo: spec['tempo'] as String,
+            coachingCue: spec['coaching_cue'] as String,
+          ),
+        );
+      }
+      localDays.add(
+        RoutineTemplateModel(
+          id: 'local_day_$dayNum',
+          dayOfWeek: dayNum,
+          name: dayName,
+          focusGroup: focus,
+          isActive: true,
+          exercises: localItems,
+        ),
+      );
+    }
+    return AiGeneratedRoutinePlanModel(
+      hasRoutine: true,
+      routineName: 'Hipertrofia 5 Días - ${lbmKg.toStringAsFixed(2)}kg LBM',
+      weeklyFocus:
+          'Periodización biomecánica adaptada a ${lbmKg.toStringAsFixed(2)} kg LBM (${weightKg.toStringAsFixed(1)} kg)',
+      days: localDays,
+    );
+  }
+
   Future<AiGeneratedRoutinePlanModel> _buildAndPersistLbmFiveDayPlanFallback() async {
     double lbmKg = 62.74;
     double weightKg = 92.4;
     try {
-      final bio = await _repository.loadLatestBiometrics();
+      final bio =
+          await _repository.readCachedBiometrics() ??
+          await _repository.loadLatestBiometrics();
       if (bio != null) {
         weightKg = bio.weightKg;
         lbmKg = bio.leanBodyMassKg > 20 ? bio.leanBodyMassKg : 62.74;
@@ -317,6 +387,51 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       return _roundPlate(v < minKg ? minKg : v);
     }
 
+    final List<Map<String, dynamic>> rawDaysSpec =
+        _rawFiveDaySpec(scale: scale);
+    final AiGeneratedRoutinePlanModel instantPlan =
+        _buildInstantLocalLbmFiveDayPlan(lbmKg: lbmKg, weightKg: weightKg);
+    await _repository.saveCachedAiRoutinePlan(instantPlan);
+
+    // Sincronizar plantillas al servidor en segundo plano sin bloquear la UI
+    unawaited(
+      Future<void>(() async {
+        for (final Map<String, dynamic> d in rawDaysSpec) {
+          try {
+            final int dayNum = d['day'] as int;
+            final String dayName = d['name'] as String;
+            final String focus = d['focus'] as String;
+            final List<Map<String, dynamic>> exList =
+                (d['exercises'] as List<Map<String, dynamic>>);
+            await _repository.saveRoutineForDay(
+              dayOfWeek: dayNum,
+              name: dayName,
+              focusGroup: focus,
+              exercises: exList
+                  .map(
+                    (Map<String, dynamic> ex) => <String, dynamic>{
+                      'exercise_name': ex['exercise_name'],
+                      'muscle_group': ex['muscle_group'],
+                      'category': 'hipertrofia',
+                      'target_sets': ex['target_sets'],
+                      'target_reps': ex['target_reps'],
+                      'base_weight_kg': ex['base_weight_kg'],
+                      'target_rpe': ex['target_rpe'],
+                    },
+                  )
+                  .toList(),
+            );
+          } catch (_) {}
+        }
+      }),
+    );
+
+    return instantPlan;
+  }
+
+  List<Map<String, dynamic>> _rawFiveDaySpec({
+    required double Function(double coeff, double minKg) scale,
+  }) {
     final List<Map<String, dynamic>> rawDaysSpec = <Map<String, dynamic>>[
       <String, dynamic>{
         'day': 1,
@@ -744,111 +859,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         ],
       },
     ];
-
-    final List<RoutineTemplateModel> savedDays = <RoutineTemplateModel>[];
-    for (final Map<String, dynamic> d in rawDaysSpec) {
-      final int dayNum = d['day'] as int;
-      final String dayName = d['name'] as String;
-      final String focus = d['focus'] as String;
-      final List<Map<String, dynamic>> exList =
-          (d['exercises'] as List<Map<String, dynamic>>);
-      try {
-        final RoutineTemplateModel saved = await _repository.saveRoutineForDay(
-          dayOfWeek: dayNum,
-          name: dayName,
-          focusGroup: focus,
-          exercises: exList
-              .map(
-                (Map<String, dynamic> ex) => <String, dynamic>{
-                  'exercise_name': ex['exercise_name'],
-                  'muscle_group': ex['muscle_group'],
-                  'category': 'hipertrofia',
-                  'target_sets': ex['target_sets'],
-                  'target_reps': ex['target_reps'],
-                  'base_weight_kg': ex['base_weight_kg'],
-                  'target_rpe': ex['target_rpe'],
-                },
-              )
-              .toList(),
-        );
-        // Enrich with exercise_key, tempo, coaching_cue, target_reps_range
-        final List<RoutineExerciseItemModel> enrichedItems = <RoutineExerciseItemModel>[];
-        for (int i = 0; i < saved.exercises.length; i++) {
-          final RoutineExerciseItemModel item = saved.exercises[i];
-          final Map<String, dynamic> spec =
-              i < exList.length ? exList[i] : exList.last;
-          enrichedItems.add(
-            RoutineExerciseItemModel(
-              id: item.id,
-              exerciseId: item.exerciseId,
-              exerciseName: item.exerciseName,
-              exerciseKey: spec['exercise_key'] as String,
-              muscleGroup: item.muscleGroup,
-              displayOrder: i + 1,
-              targetSets: item.targetSets,
-              targetReps: item.targetReps,
-              targetRepsRange: spec['target_reps_range'] as String,
-              targetWeightKg: item.targetWeightKg,
-              targetRpe: item.targetRpe,
-              restSeconds: spec['rest_seconds'] as int,
-              tempo: spec['tempo'] as String,
-              coachingCue: spec['coaching_cue'] as String,
-            ),
-          );
-        }
-        savedDays.add(
-          RoutineTemplateModel(
-            id: saved.id,
-            dayOfWeek: dayNum,
-            name: dayName,
-            focusGroup: focus,
-            isActive: true,
-            exercises: enrichedItems,
-          ),
-        );
-      } catch (_) {
-        final List<RoutineExerciseItemModel> localItems = <RoutineExerciseItemModel>[];
-        for (int i = 0; i < exList.length; i++) {
-          final Map<String, dynamic> spec = exList[i];
-          localItems.add(
-            RoutineExerciseItemModel(
-              id: 'day_${dayNum}_ex_${i + 1}',
-              exerciseId: 'day_${dayNum}_ex_${i + 1}',
-              exerciseName: spec['exercise_name'] as String,
-              exerciseKey: spec['exercise_key'] as String,
-              muscleGroup: spec['muscle_group'] as String,
-              displayOrder: i + 1,
-              targetSets: spec['target_sets'] as int,
-              targetReps: spec['target_reps'] as int,
-              targetRepsRange: spec['target_reps_range'] as String,
-              targetWeightKg: (spec['base_weight_kg'] as num).toDouble(),
-              targetRpe: (spec['target_rpe'] as num).toDouble(),
-              restSeconds: spec['rest_seconds'] as int,
-              tempo: spec['tempo'] as String,
-              coachingCue: spec['coaching_cue'] as String,
-            ),
-          );
-        }
-        savedDays.add(
-          RoutineTemplateModel(
-            id: 'local_day_$dayNum',
-            dayOfWeek: dayNum,
-            name: dayName,
-            focusGroup: focus,
-            isActive: true,
-            exercises: localItems,
-          ),
-        );
-      }
-    }
-
-    return AiGeneratedRoutinePlanModel(
-      hasRoutine: true,
-      routineName: 'Hipertrofia 5 Días - ${lbmKg.toStringAsFixed(2)}kg LBM',
-      weeklyFocus:
-          'Periodización biomecánica adaptada a ${lbmKg.toStringAsFixed(2)} kg LBM (${weightKg.toStringAsFixed(1)} kg)',
-      days: savedDays,
-    );
+    return rawDaysSpec;
   }
 
   void selectRoutineTemplate(RoutineTemplateModel routine) {

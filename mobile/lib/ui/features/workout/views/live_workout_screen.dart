@@ -587,6 +587,9 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
             ),
             const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
+              key: ValueKey<String>(
+                'preview_${safeIndex}_${previewEx?.exerciseKey ?? ""}_${previewEx?.exerciseName ?? ""}',
+              ),
               exerciseName: previewEx != null
                   ? previewEx.exerciseName
                   : routine.focusGroup,
@@ -600,7 +603,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'TOCA UN EJERCICIO PARA PREVISUALIZAR SU BIOMECÁNICA Y CARGA IA:',
+              'TOCA UN EJERCICIO PARA PREVISUALIZAR SU BIOMECÁNICA 3D/HD Y CARGA IA:',
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w900,

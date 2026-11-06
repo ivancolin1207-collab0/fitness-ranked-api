@@ -272,6 +272,33 @@ class RoutineExerciseItemModel {
       'coaching_cue': coachingCue,
     };
   }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'exercise_id': exerciseId,
+      'exercise_name': exerciseName,
+      'name': exerciseName,
+      'exercise_key': exerciseKey,
+      'muscle_group': muscleGroup,
+      'display_order': displayOrder,
+      'order': displayOrder,
+      'target_sets': targetSets,
+      'target_reps': targetRepsRange,
+      'target_reps_int': targetReps,
+      'target_reps_range': targetRepsRange,
+      'prescribed_weight_kg': targetWeightKg,
+      'recommended_weight_kg': targetWeightKg,
+      'base_weight_kg': targetWeightKg,
+      'target_weight_kg': targetWeightKg,
+      'target_rpe': targetRpe,
+      'rpe_target': targetRpe,
+      'rest_seconds': restSeconds,
+      'tempo': tempo,
+      'coaching_cue': coachingCue,
+      if (progressionNote != null) 'progression_note': progressionNote,
+    };
+  }
 }
 
 class RoutineTemplateModel {
@@ -325,6 +352,23 @@ class RoutineTemplateModel {
           .toList(),
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'routine_template_id': id,
+      'day_of_week': dayOfWeek,
+      'day_number': dayOfWeek,
+      'name': name,
+      'day_name': name,
+      'focus_group': focusGroup,
+      'target_muscles': focusGroup.split(' & '),
+      'is_active': isActive,
+      'exercises': exercises
+          .map((RoutineExerciseItemModel e) => e.toJson())
+          .toList(),
+    };
+  }
 }
 
 class AiGeneratedRoutinePlanModel {
@@ -360,6 +404,15 @@ class AiGeneratedRoutinePlanModel {
           'Enfoque biomecánico adaptado a LBM',
       days: parsedDays,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'has_routine': hasRoutine,
+      'routine_name': routineName,
+      'weekly_focus': weeklyFocus,
+      'days': days.map((RoutineTemplateModel d) => d.toJson()).toList(),
+    };
   }
 }
 

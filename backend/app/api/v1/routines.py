@@ -27,14 +27,11 @@ async def get_current_routine(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     """
-    Devuelve la planificación dinámica actual de 5 días x 6 ejercicios del atleta (`user_routines`).
-    Si aún no existe una rutina de 5 días generada para el usuario, la genera automáticamente.
+    Consulta ÚNICAMENTE la tabla de PostgreSQL (`user_routines`) y retorna la última
+    rutina guardada en menos de 100 ms sin disparar llamadas a Gemini.
     """
     try:
         current = await fetch_current_ai_routine_dict(db, current_user)
-        days = current.get("days")
-        if not current.get("has_routine") or not isinstance(days, list) or len(days) < 5:
-            return await generate_and_persist_ai_routine(db, current_user)
         return {
             "status": "success",
             "routine": current,

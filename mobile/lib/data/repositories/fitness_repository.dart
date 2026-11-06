@@ -254,6 +254,44 @@ class FitnessRepository {
     await _authService.logoutExplicitly();
   }
 
+  Future<WearableMetricRecord> readCachedWearableTelemetry({
+    String defaultSource = 'WHOOP',
+  }) {
+    return _storageService.readCachedWearableTelemetry(
+      defaultSource: defaultSource,
+    );
+  }
+
+  Future<void> saveCachedWearableTelemetry(WearableMetricRecord record) {
+    return _storageService.saveCachedWearableTelemetry(record);
+  }
+
+  Future<BiometricRecord?> readCachedBiometrics() {
+    return _storageService.readCachedBiometrics();
+  }
+
+  Future<void> saveCachedBiometrics(BiometricRecord record) {
+    return _storageService.saveCachedBiometrics(record);
+  }
+
+  Future<AiGeneratedRoutinePlanModel?> readCachedAiRoutinePlan() {
+    return _storageService.readCachedAiRoutinePlan();
+  }
+
+  Future<void> saveCachedAiRoutinePlan(AiGeneratedRoutinePlanModel plan) {
+    return _storageService.saveCachedAiRoutinePlan(plan);
+  }
+
+  Future<List<RoutineTemplateModel>> readCachedRoutineTemplates() {
+    return _storageService.readCachedRoutineTemplates();
+  }
+
+  Future<void> saveCachedRoutineTemplates(
+    List<RoutineTemplateModel> routines,
+  ) {
+    return _storageService.saveCachedRoutineTemplates(routines);
+  }
+
   // =========================================================================
   // 2. BIOMETRÍA Y WEARABLE REAL (WHOOP / HEALTH CONNECT)
   // =========================================================================
@@ -405,7 +443,12 @@ class FitnessRepository {
 
   Future<BiometricRecord?> loadLatestBiometrics() async {
     final String token = await _requireToken();
-    return _apiClient.fetchLatestBiometrics(jwtToken: token);
+    final BiometricRecord? record =
+        await _apiClient.fetchLatestBiometrics(jwtToken: token);
+    if (record != null) {
+      await _storageService.saveCachedBiometrics(record);
+    }
+    return record;
   }
 
   Future<List<BiometricRecord>> loadBiometricsHistory() async {
@@ -548,17 +591,32 @@ class FitnessRepository {
 
   Future<AiGeneratedRoutinePlanModel> loadCurrentAiRoutine() async {
     final String token = await _requireToken();
-    return _apiClient.fetchCurrentAiRoutine(jwtToken: token);
+    final AiGeneratedRoutinePlanModel plan =
+        await _apiClient.fetchCurrentAiRoutine(jwtToken: token);
+    if (plan.hasRoutine && plan.days.isNotEmpty) {
+      await _storageService.saveCachedAiRoutinePlan(plan);
+    }
+    return plan;
   }
 
   Future<AiGeneratedRoutinePlanModel> generateAiRoutine() async {
     final String token = await _requireToken();
-    return _apiClient.generateAiRoutine(jwtToken: token);
+    final AiGeneratedRoutinePlanModel plan =
+        await _apiClient.generateAiRoutine(jwtToken: token);
+    if (plan.hasRoutine && plan.days.isNotEmpty) {
+      await _storageService.saveCachedAiRoutinePlan(plan);
+    }
+    return plan;
   }
 
   Future<List<RoutineTemplateModel>> loadWeeklyRoutines() async {
     final String token = await _requireToken();
-    return _apiClient.fetchRoutines(jwtToken: token);
+    final List<RoutineTemplateModel> list =
+        await _apiClient.fetchRoutines(jwtToken: token);
+    if (list.isNotEmpty) {
+      await _storageService.saveCachedRoutineTemplates(list);
+    }
+    return list;
   }
 
   Future<RoutineTemplateModel> saveRoutineForDay({

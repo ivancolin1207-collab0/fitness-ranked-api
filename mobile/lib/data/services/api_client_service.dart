@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../core/constants/api_constants.dart';
+import '../../core/network/api_client.dart';
 import '../../core/services/ocr_service.dart';
 import '../models/auth_models.dart';
 import '../models/biometric_models.dart';
@@ -89,40 +90,48 @@ class ApiClientService {
 
   String _extractErrorDetail(http.Response response) {
     if (_isUnprovisionedServerResponse(response)) {
-      return 'El Web Service ($_baseUrl) respondió 404 (aún no desplegado en Render) y no se detectó servidor local en ${ApiConstants.fallbackLocalLanUrl}.';
+      return ApiErrorSanitizer.cloudReconnectingMessage;
     }
-    try {
-      final dynamic decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic> && decoded['detail'] != null) {
-        return decoded['detail'].toString();
-      }
-    } catch (_) {}
-    return 'Error HTTP ${response.statusCode}: ${response.body}';
+    if (ApiErrorSanitizer.isHtmlOrGatewayError(
+      response.statusCode,
+      response.body,
+    )) {
+      return ApiErrorSanitizer.cloudReconnectingMessage;
+    }
+    return ApiErrorSanitizer.sanitizeResponseError(response);
   }
 
   Future<http.Response> _sendWithFallback(
     Future<http.Response> Function(String candidateBase) requestFn,
   ) async {
-    Object? lastError;
     http.Response? unprovisionedResponse;
 
     for (final String candidate in _candidateBaseUrls()) {
       try {
-        final http.Response response = await requestFn(candidate).timeout(
+        http.Response response = await requestFn(candidate).timeout(
           _timeoutForCandidate(candidate),
         );
+        // Si Render está despertando (502/503/504), reintentar automáticamente tras breve pausa
+        if (response.statusCode == 502 ||
+            response.statusCode == 503 ||
+            response.statusCode == 504) {
+          await Future<void>.delayed(const Duration(milliseconds: 900));
+          response = await requestFn(candidate).timeout(
+            _timeoutForCandidate(candidate),
+          );
+        }
         if (_isUnprovisionedServerResponse(response)) {
           unprovisionedResponse ??= response;
           continue;
         }
         _baseUrl = candidate;
         return response;
-      } on SocketException catch (e) {
-        lastError = e;
-      } on TimeoutException catch (e) {
-        lastError = e;
-      } on http.ClientException catch (e) {
-        lastError = e;
+      } on SocketException {
+        continue;
+      } on TimeoutException {
+        continue;
+      } on http.ClientException {
+        continue;
       }
     }
 
@@ -130,8 +139,8 @@ class ApiClientService {
       return unprovisionedResponse;
     }
 
-    throw HttpException(
-      'No se pudo conectar a $_baseUrl ni al servidor local (${ApiConstants.fallbackLocalLanUrl}). Verifica que el Web Service esté activo en Render o que uvicorn corra con --host 0.0.0.0. Detalle: $lastError',
+    throw const HttpException(
+      ApiErrorSanitizer.cloudReconnectingMessage,
     );
   }
 
