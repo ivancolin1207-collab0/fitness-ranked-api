@@ -35,13 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final WearableService _wearableService = WearableService();
   final BleHeartRateService bleService = BleHeartRateService();
 
-  bool hasWhoopData = true;
-  double? recoveryScore = 47.0;
-  double? strainScore = 7.4;
-  double? sleepPct = 80.0;
-  double? stressLevel = 1.8;
-  String? stressCategory = 'MEDIO';
-  double? sleepHours = 7.7;
+  // La telemetría de Whoop (recuperación, esfuerzo, sueño, estrés) vive EXCLUSIVAMENTE en
+  // `HomeViewModel` (fuente única de verdad). No se duplican valores locales congelados aquí.
 
   String _normalizedWearableSource(String raw) {
     if (raw == 'SAMSUNG_HEALTH' || raw == 'SAMSUNG_WATCH') {
@@ -118,16 +113,16 @@ class _HomeScreenState extends State<HomeScreen> {
         final WearableMetricRecord effectiveWearable = wearable != null
             ? WearableMetricRecord(
                 date: wearable.date,
-                strainScore: strainScore ?? viewModel.whoopStrain ?? wearable.strainScore,
-                recoveryScore: recoveryScore ?? viewModel.whoopRecovery ?? wearable.recoveryScore,
+                strainScore: viewModel.whoopStrain ?? wearable.strainScore,
+                recoveryScore: viewModel.whoopRecovery ?? wearable.recoveryScore,
                 hrvMs: wearable.hrvMs,
                 restingHr: wearable.restingHr,
                 avgHr: wearable.avgHr,
                 maxHr: wearable.maxHr,
-                sleepHours: sleepHours ?? viewModel.whoopSleepHours ?? wearable.sleepHours,
-                sleepEfficiencyPct: sleepPct ?? viewModel.whoopSleep ?? wearable.sleepEfficiencyPct,
+                sleepHours: viewModel.whoopSleepHours ?? wearable.sleepHours,
+                sleepEfficiencyPct: viewModel.whoopSleep ?? wearable.sleepEfficiencyPct,
                 sourceDevice: wearable.sourceDevice,
-                whoopStressLevel: stressLevel ?? viewModel.whoopStress ?? wearable.whoopStressLevel,
+                whoopStressLevel: viewModel.whoopStress ?? wearable.whoopStressLevel,
                 whoopHealthMetricsInRange: wearable.whoopHealthMetricsInRange,
                 huaweiStressScore: wearable.huaweiStressScore,
                 huaweiTruSleepScore: wearable.huaweiTruSleepScore,
@@ -141,16 +136,16 @@ class _HomeScreenState extends State<HomeScreen> {
               )
             : WearableMetricRecord(
                 date: DateTime.now(),
-                strainScore: strainScore ?? viewModel.whoopStrain ?? viewModel.strainScore,
-                recoveryScore: recoveryScore ?? viewModel.whoopRecovery ?? viewModel.recoveryScore,
+                strainScore: viewModel.whoopStrain ?? viewModel.strainScore,
+                recoveryScore: viewModel.whoopRecovery ?? viewModel.recoveryScore,
                 hrvMs: 56.0,
                 restingHr: 58,
                 avgHr: 68,
                 maxHr: 155,
-                sleepHours: sleepHours ?? viewModel.whoopSleepHours ?? viewModel.sleepHours,
-                sleepEfficiencyPct: sleepPct ?? viewModel.whoopSleep ?? viewModel.sleepPct,
+                sleepHours: viewModel.whoopSleepHours ?? viewModel.sleepHours,
+                sleepEfficiencyPct: viewModel.whoopSleep ?? viewModel.sleepPct,
                 sourceDevice: viewModel.preferredWearable,
-                whoopStressLevel: stressLevel ?? viewModel.whoopStress ?? viewModel.stressScore,
+                whoopStressLevel: viewModel.whoopStress ?? viewModel.stressScore,
                 whoopHealthMetricsInRange: 5,
               );
         final BiometricRecord? bio = viewModel.biometrics;
@@ -817,42 +812,23 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     WearableMetricRecord wearable,
   ) {
-    final double activeSleepPct = (sleepPct ??
-            (viewModel.hasWhoopData
-                ? viewModel.sleepPct
-                : (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct)))
-        .clamp(0.0, 100.0);
-    final double recovery = (recoveryScore ??
-            (viewModel.hasWhoopData
-                ? viewModel.recoveryScore
-                : (viewModel.whoopRecovery ?? wearable.recoveryScore)))
-        .clamp(0.0, 100.0);
-    final double strain = (strainScore ??
-            (viewModel.hasWhoopData
-                ? viewModel.strainScore
-                : (viewModel.whoopStrain ?? wearable.strainScore)))
-        .clamp(0.0, 21.0);
-    final double stress = (stressLevel ??
-            (viewModel.hasWhoopData
-                ? viewModel.stressScore
-                : (viewModel.whoopStress ?? wearable.whoopStressLevel)))
-        .clamp(0.0, 3.0);
+    final double activeSleepPct =
+        (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0);
+    final double recovery =
+        (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0);
+    final double strain =
+        (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0);
+    final double stress =
+        (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0);
+    final double activeSleepHours =
+        viewModel.whoopSleepHours ?? wearable.sleepHours;
 
     final bool isCompromised = recovery < 34.0;
-    final Color recColor = recovery < 34.0
-        ? ApexTheme.deloadCrimson
-        : (recovery < 67.0 ? ApexTheme.warningAmber : ApexTheme.readinessGreen);
-    final String zoneLabel = recovery < 34.0
-        ? 'ZONA ROJA • DELOAD (-20%)'
-        : (recovery >= 67.0
-            ? 'ZONA VERDE • SOBRECARGA'
-            : 'ZONA AMARILLA • MANTENIMIENTO');
+    final Color recColor = viewModel.recoveryColor;
+    final String zoneLabel = viewModel.recoveryStatusText;
 
-    final String activeStressCategory = stressCategory ??
-        (viewModel.hasWhoopData
-            ? viewModel.stressCategory
-            : (viewModel.whoopStressCategory ??
-                (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'))));
+    final String activeStressCategory = viewModel.whoopStressCategory ??
+        (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'));
     final Color stressColor = activeStressCategory == 'ALTO' || stress >= 2.0
         ? ApexTheme.warningAmber
         : (activeStressCategory == 'MEDIO' || stress >= 1.0
@@ -862,8 +838,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final String geminiRationale = isCompromised
         ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos el volumen prescrito (-20%) para evitar fatiga del SNC.'
         : (recovery >= 67.0
-            ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%). Gemini Coach activa sobrecarga progresiva (+2.5 kg).'
-            : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño ${(sleepHours ?? viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach mantiene volumen objetivo.');
+            ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%) • Esfuerzo ${strain.toStringAsFixed(1)} • Sueño ${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach activa sobrecarga progresiva (+2.5 kg).'
+            : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño ${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach mantiene volumen objetivo.');
 
     return Card(
       child: Padding(
@@ -1608,52 +1584,27 @@ class _HomeScreenState extends State<HomeScreen> {
         dialogOpen = false;
       }
 
-      hasWhoopData = true;
-      recoveryScore =
-          ((response['recovery_score'] ?? 47.0) as num).toDouble();
-      strainScore =
-          ((response['strain_score'] ?? 7.4) as num).toDouble();
-      sleepPct = ((response['sleep_pct'] ??
-                  response['sleep_performance_pct'] ??
-                  80.0) as num)
-              .toDouble();
-      stressLevel = ((response['stress_level'] ??
-                  response['whoop_stress_level'] ??
-                  1.8) as num)
-              .toDouble();
-      stressCategory = (response['stress_category'] as String?) ?? 'MEDIO';
-      sleepHours = (response['sleep_hours'] as num?)?.toDouble() ?? 7.7;
+      // 1. Sobrescribir inmediatamente TODAS las variables del ViewModel (+ caché local) y notificar
+      viewModel.applyScanResponse(response, sourceDevice: activeSource);
 
-      // 1. Asignar directamente al ViewModel y notificar
-      viewModel.setWhoopData(
-        hasData: true,
-        recovery: recoveryScore!,
-        strain: strainScore!,
-        sleep: sleepPct!,
-        stressLevel: stressLevel!,
-        stressCategory: stressCategory!,
-        sleepHours: sleepHours!,
-        hrvMs: (response['hrv_ms'] as num?)?.toInt(),
-        restingHr:
-            ((response['rhr_bpm'] ?? response['resting_hr']) as num?)?.toInt(),
-        healthMetricsInRange: ((response['health_monitor_metrics_ok'] ??
-                response['whoop_health_metrics_in_range']) as num?)
-            ?.toInt(),
-        sourceDevice: activeSource,
-      );
-
-      // 2. Forzar reconstrucción inmediata del estado local
+      // 2. Forzar reconstrucción inmediata
       if (mounted) {
         setState(() {});
       }
 
       if (context.mounted) {
+        final double rec = viewModel.whoopRecovery ?? viewModel.recoveryScore;
+        final double str = viewModel.whoopStrain ?? viewModel.strainScore;
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: const Color(0xFF10B981),
+            backgroundColor: viewModel.recoveryColor,
             content: Text(
-              'Telemetría Whoop sincronizada: Recuperación ${recoveryScore!.round()}% | Strain ${strainScore!.toStringAsFixed(1)} | Sueño ${sleepPct!.round()}%',
+              'Whoop Sincronizado: Recuperación ${rec.toStringAsFixed(0)}% | Esfuerzo ${str.toStringAsFixed(1)}',
+              style: const TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         );

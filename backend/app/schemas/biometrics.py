@@ -3,7 +3,7 @@ from __future__ import annotations
 """Esquemas Pydantic v2 para Biometría Dual (Manual + OCR Fitdays) y Wearables (Whoop / Health Connect)."""
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -159,6 +159,8 @@ class WhoopScreenExtractedMetrics(BaseModel):
 
 
 class WhoopScreenScanResponse(BaseModel):
+    status: str = "success"
+    data: Optional[dict[str, Any]] = None
     id: UUID
     user_id: UUID
     date: date

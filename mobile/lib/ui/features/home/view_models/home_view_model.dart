@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart' show Color;
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../data/models/biometric_models.dart';
@@ -42,18 +43,25 @@ class HomeViewModel extends ChangeNotifier {
   String? whoopStressCategory = 'MEDIO';
   double? whoopSleepHours = 7.7;
 
-  String get whoopZoneLabel {
-    final double rec = hasWhoopData
-        ? recoveryScore
-        : (whoopRecovery ?? _wearable?.recoveryScore ?? 47.0);
-    if (rec >= 67.0) {
-      return 'ZONA VERDE • SOBRECARGA';
-    }
-    if (rec >= 34.0) {
-      return 'ZONA AMARILLA • MANTENIMIENTO';
-    }
-    return 'ZONA ROJA • DELOAD (-20%)';
+  /// Recuperación efectiva actual (fuente única de verdad para el semáforo de Whoop).
+  double get effectiveRecovery => whoopRecovery ?? recoveryScore;
+
+  /// Semáforo dinámico de Whoop recalculado en cada cambio de `whoopRecovery`.
+  Color get recoveryColor {
+    final double rec = effectiveRecovery;
+    if (rec >= 67.0) return const Color(0xFF10B981); // VERDE ÓPTIMO
+    if (rec >= 34.0) return const Color(0xFFF59E0B); // AMARILLO MANTENIMIENTO
+    return const Color(0xFFEF4444); // ROJO RECUPERACIÓN BAJA
   }
+
+  String get recoveryStatusText {
+    final double rec = effectiveRecovery;
+    if (rec >= 67.0) return 'ZONA VERDE • RENDIMIENTO ÓPTIMO';
+    if (rec >= 34.0) return 'ZONA AMARILLA • MANTENIMIENTO';
+    return 'ZONA ROJA • DESCANSO ACTIVO';
+  }
+
+  String get whoopZoneLabel => recoveryStatusText;
 
   BiometricRecord? _biometrics;
   BiometricRecord? get biometrics => _biometrics;
@@ -416,6 +424,64 @@ class HomeViewModel extends ChangeNotifier {
     );
   }
 
+  /// Sobrescribe de inmediato TODAS las variables en memoria (y la caché local por usuario)
+  /// con la respuesta del escáner (`{status, data:{...}}` o JSON plano) y notifica a la UI.
+  void applyScanResponse(
+    Map<String, dynamic> response, {
+    String? sourceDevice,
+  }) {
+    final Map<String, dynamic> data = (response['data'] is Map)
+        ? Map<String, dynamic>.from(response['data'] as Map)
+        : response;
+
+    double num0(List<String> keys, double fallback) {
+      for (final String k in keys) {
+        final Object? v = data[k] ?? response[k];
+        if (v is num) {
+          return v.toDouble();
+        }
+        if (v is String) {
+          final double? parsed = double.tryParse(v);
+          if (parsed != null) {
+            return parsed;
+          }
+        }
+      }
+      return fallback;
+    }
+
+    final double rec = num0(<String>['recovery_score'], whoopRecovery ?? recoveryScore);
+    final double str = num0(<String>['strain_score'], whoopStrain ?? strainScore);
+    final double slp = num0(
+      <String>['sleep_pct', 'sleep_performance_pct', 'sleep_efficiency_pct'],
+      whoopSleep ?? sleepPct,
+    );
+    final double stl = num0(
+      <String>['stress_level', 'whoop_stress_level'],
+      whoopStress ?? stressScore,
+    );
+    final double slh = num0(<String>['sleep_hours'], whoopSleepHours ?? sleepHours);
+    final String? cat = (data['stress_category'] ?? response['stress_category']) as String?;
+
+    updateFromWhoopScan(
+      recoveryScore: rec,
+      strainScore: str,
+      sleepScore: slp,
+      stressScore: stl,
+      stressCategory: (cat != null && cat.trim().isNotEmpty) ? cat : 'MEDIO',
+      sleepHours: slh,
+      hrvMs: (data['hrv_ms'] as num?)?.toInt(),
+      restingHr: ((data['rhr_bpm'] ?? data['resting_hr']) as num?)?.toInt(),
+      healthMetricsInRange: ((data['health_monitor_metrics_ok'] ??
+              data['whoop_health_metrics_in_range']) as num?)
+          ?.toInt(),
+      sourceDevice: sourceDevice,
+    );
+    _statusBanner =
+        'Whoop Sincronizado: Recuperación ${rec.toStringAsFixed(0)}% | Esfuerzo ${str.toStringAsFixed(1)}';
+    notifyListeners();
+  }
+
   /// Envía los bytes de la captura de pantalla de WHOOP a Gemini Vision (`POST /api/v1/wearables/scan-whoop`),
   /// actualiza el estado reactivo con `updateFromWhoopScan` y devuelve el mapa de resultados.
   Future<Map<String, dynamic>?> scanWhoopScreenshotBytes(
@@ -438,38 +504,11 @@ class HomeViewModel extends ChangeNotifier {
       _preferredWearable = targetSource;
       await _repository.setPreferredWearable(targetSource);
 
-      final double recScore =
-          ((result['recovery_score'] ?? 47.0) as num).toDouble();
-      final double strScore =
-          ((result['strain_score'] ?? 7.4) as num).toDouble();
-      final double slpScore =
-          ((result['sleep_pct'] ?? result['sleep_performance_pct'] ?? 80.0)
-                  as num)
-              .toDouble();
-      final double strLevel =
-          ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8)
-                  as num)
-              .toDouble();
-      final String? strCat = result['stress_category'] as String?;
-      final double? slpHours = (result['sleep_hours'] as num?)?.toDouble();
-
-      updateFromWhoopScan(
-        recoveryScore: recScore,
-        strainScore: strScore,
-        sleepScore: slpScore,
-        stressScore: strLevel,
-        stressCategory: strCat,
-        sleepHours: slpHours,
-        hrvMs: (result['hrv_ms'] as num?)?.toInt(),
-        restingHr: (result['rhr_bpm'] as num?)?.toInt(),
-        healthMetricsInRange:
-            (result['health_monitor_metrics_ok'] as num?)?.toInt(),
-        sourceDevice: targetSource,
-      );
+      applyScanResponse(result, sourceDevice: targetSource);
 
       _hydration = await _repository.loadTodayHydration(
         weightKg: _biometrics?.weightKg ?? 78.0,
-        strainScore: _wearable?.strainScore ?? strScore,
+        strainScore: _wearable?.strainScore ?? strainScore,
       );
       return result;
     } catch (e) {

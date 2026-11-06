@@ -10,7 +10,7 @@ from typing import Annotated, Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -193,7 +193,8 @@ async def get_today_wearable_metrics(
             await db.execute(
                 text(
                     """
-                    SELECT sleep_pct, stress_level, stress_category
+                    SELECT sleep_pct, stress_level, stress_category,
+                           recovery_score, strain_score, sleep_hours, synced_at
                     FROM daily_readiness
                     WHERE user_id = :user_id AND date = :date
                     ORDER BY synced_at DESC
@@ -211,6 +212,25 @@ async def get_today_wearable_metrics(
                 base_resp.whoop_stress_level = float(dr_row[1])
             if dr_row[2] is not None:
                 base_resp.stress_category = str(dr_row[2])
+
+            # Si el escaneo de readiness es más reciente (o igual) que la fila de wearable_metrics,
+            # su telemetría manda: evita devolver el registro viejo de la mañana (47% / 7.4).
+            dr_synced = dr_row[6]
+            wm_synced = record.synced_at
+            dr_is_newer = (
+                dr_synced is None
+                or wm_synced is None
+                or dr_synced >= wm_synced
+            )
+            if dr_is_newer:
+                if dr_row[3] is not None:
+                    base_resp.recovery_score = float(dr_row[3])
+                if dr_row[4] is not None:
+                    base_resp.strain_score = float(dr_row[4])
+                if dr_row[5] is not None:
+                    base_resp.sleep_hours = float(dr_row[5])
+                if dr_row[0] is not None:
+                    base_resp.sleep_efficiency_pct = float(dr_row[0])
     except Exception:
         await db.rollback()
     return base_resp
@@ -258,6 +278,7 @@ async def sync_wearable_metrics(
                 "max_hr": payload.max_hr,
                 "sleep_hours": payload.sleep_hours,
                 "sleep_efficiency_pct": payload.sleep_efficiency_pct,
+                "synced_at": func.now(),
             },
         )
         .returning(WearableMetric)
@@ -413,6 +434,8 @@ async def scan_whoop_screen_metrics(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    print(f">>> TELEMETRÍA {resolved_source.value} EXTRAÍDA: {extracted}")
+
     today = date.today()
     sleep_hours_calc = (
         extracted.sleep_duration_hours
@@ -459,6 +482,7 @@ async def scan_whoop_screen_metrics(
                     "max_hr": max_hr_calc,
                     "sleep_hours": sleep_hours_calc,
                     "sleep_efficiency_pct": extracted.sleep_performance_pct,
+                    "synced_at": func.now(),
                 },
             )
             .returning(WearableMetric)
@@ -476,6 +500,7 @@ async def scan_whoop_screen_metrics(
                     WearableMetric.user_id == current_user.id,
                     WearableMetric.date == today,
                 )
+                .order_by(WearableMetric.synced_at.desc())
                 .limit(1)
             )
             existing = (await db.execute(existing_stmt)).scalar_one_or_none()
@@ -488,6 +513,7 @@ async def scan_whoop_screen_metrics(
                 existing.max_hr = max_hr_calc
                 existing.sleep_hours = sleep_hours_calc
                 existing.sleep_efficiency_pct = extracted.sleep_performance_pct
+                existing.synced_at = datetime.now(timezone.utc)
                 record = existing
             else:
                 new_metric = WearableMetric(
@@ -539,6 +565,21 @@ async def scan_whoop_screen_metrics(
                 "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7"
             )
         )
+        # UPSERT estricto: una sola fila de readiness por usuario/día. Se eliminan filas residuales
+        # de otras fuentes del mismo día para que ninguna lectura devuelva el registro viejo de la mañana.
+        await db.execute(
+            text(
+                """
+                DELETE FROM daily_readiness
+                WHERE user_id = :user_id AND date = :date AND source_device <> :source_device
+                """
+            ),
+            {
+                "user_id": current_user.id,
+                "date": today,
+                "source_device": resolved_source.value,
+            },
+        )
         await db.execute(
             text(
                 """
@@ -573,18 +614,28 @@ async def scan_whoop_screen_metrics(
             },
         )
         await db.commit()
-    except Exception:
+    except Exception as exc:
+        print(f">>> ERROR UPSERT daily_readiness: {exc!r}")
         await db.rollback()
 
     now_utc = datetime.now(timezone.utc)
     return WhoopScreenScanResponse(
+        status="success",
+        data={
+            "recovery_score": float(extracted.recovery_score),
+            "strain_score": float(extracted.strain_score),
+            "sleep_pct": float(extracted.sleep_pct),
+            "stress_level": float(extracted.stress_level),
+            "stress_category": str(extracted.stress_category),
+            "sleep_hours": float(sleep_hours_calc),
+        },
         id=record.id if record is not None else uuid4(),
         user_id=record.user_id if record is not None else current_user.id,
         date=record.date if record is not None else today,
         sleep_pct=extracted.sleep_pct,
         sleep_performance_pct=extracted.sleep_performance_pct,
-        recovery_score=float(record.recovery_score) if record is not None else extracted.recovery_score,
-        strain_score=float(record.strain_score) if record is not None else extracted.strain_score,
+        recovery_score=extracted.recovery_score,
+        strain_score=extracted.strain_score,
         stress_level=extracted.stress_level,
         stress_category=extracted.stress_category,
         whoop_stress_level=extracted.stress_level,
