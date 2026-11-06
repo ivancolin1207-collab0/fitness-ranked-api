@@ -21,8 +21,6 @@ class LiveWorkoutScreen extends StatefulWidget {
 }
 
 class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
-  int _selectedPreviewExerciseIndex = 0;
-
   LiveWorkoutViewModel get viewModel => widget.viewModel;
 
   Future<void> _handleRegenerateAiRoutine(BuildContext context) async {
@@ -37,9 +35,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
     await viewModel.regenerateRoutineWithAi();
     final bool ok = viewModel.errorMessage == null;
     if (!context.mounted) return;
-    setState(() {
-      _selectedPreviewExerciseIndex = 0;
-    });
+    setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: ok ? ApexTheme.readinessGreen : ApexTheme.deloadCrimson,
@@ -469,9 +465,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                         fontSize: 11.5,
                       ),
                       onSelected: (_) {
-                        setState(() {
-                          _selectedPreviewExerciseIndex = 0;
-                        });
+                        setState(() {});
                         viewModel.selectRoutineTemplate(r);
                       },
                     );
@@ -532,8 +526,11 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
     final String unit = viewModel.unitSystem;
     final int safeIndex = routine.exercises.isEmpty
         ? 0
-        : _selectedPreviewExerciseIndex.clamp(0, routine.exercises.length - 1);
-    final RoutineExerciseItemModel? previewEx =
+        : viewModel.selectedExerciseIndex.clamp(
+            0,
+            routine.exercises.length - 1,
+          );
+    final RoutineExerciseItemModel? currentExercise =
         routine.exercises.isNotEmpty ? routine.exercises[safeIndex] : null;
 
     return Card(
@@ -599,18 +596,21 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
             const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
               key: ValueKey<String>(
-                'preview_${safeIndex}_${previewEx?.exerciseKey ?? ""}_${previewEx?.exerciseName ?? ""}',
+                'preview_${safeIndex}_${currentExercise?.exerciseKey ?? ""}_${currentExercise?.exerciseName ?? ""}_${viewModel.athleteGender}',
               ),
-              exerciseName: previewEx != null
-                  ? previewEx.exerciseName
+              exerciseName: currentExercise != null
+                  ? currentExercise.exerciseName
                   : routine.focusGroup,
-              exerciseKey: previewEx?.exerciseKey,
+              exerciseKey: currentExercise?.exerciseKey,
+              athleteGender: viewModel.athleteGender,
+              onGenderChanged: viewModel.setAthleteGender,
+              lbmKg: viewModel.lbmKg,
               recoveryScore: viewModel.recoveryScore,
-              targetReps: previewEx?.targetReps ?? 10,
-              targetRepsRange: previewEx?.targetRepsRange,
-              prescribedRpe: previewEx?.targetRpe ?? 8.0,
-              customTempo: previewEx?.tempo,
-              customCoachingCue: previewEx?.coachingCue,
+              targetReps: currentExercise?.targetReps ?? 10,
+              targetRepsRange: currentExercise?.targetRepsRange,
+              prescribedRpe: currentExercise?.targetRpe ?? 8.0,
+              customTempo: currentExercise?.tempo,
+              customCoachingCue: currentExercise?.coachingCue,
             ),
             const SizedBox(height: 12),
             const Text(
@@ -641,9 +641,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                 return InkWell(
                   borderRadius: BorderRadius.circular(10),
                   onTap: () {
-                    setState(() {
-                      _selectedPreviewExerciseIndex = idx;
-                    });
+                    setState(() {});
                     viewModel.selectExercise(idx);
                   },
                   child: Container(
@@ -1040,9 +1038,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
               ),
               onSelected: (_) {
-                setState(() {
-                  _selectedPreviewExerciseIndex = index;
-                });
+                setState(() {});
                 // Actualiza el visor biomecánico y cargas al ejercicio tocado sin bloqueo lineal
                 viewModel.selectExercise(index);
               },
@@ -1061,10 +1057,31 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
     final List<WorkoutSetModel> currentExSets =
         viewModel.setsForExercise(exIdx);
     final RoutineTemplateModel? routine = viewModel.selectedRoutine;
-    final RoutineExerciseItemModel? matchedExSpec =
-        (routine != null && exIdx >= 0 && exIdx < routine.exercises.length)
-            ? routine.exercises[exIdx]
+    final List<RoutineExerciseItemModel> dayExercises =
+        viewModel.activeDayExercises;
+    final RoutineExerciseItemModel? currentExercise =
+        (exIdx >= 0 && exIdx < dayExercises.length)
+            ? dayExercises[exIdx]
             : null;
+    final String boundExerciseName =
+        (currentExercise != null &&
+                currentExercise.exerciseName.trim().isNotEmpty)
+            ? currentExercise.exerciseName
+            : activeSet.exerciseName;
+    final String boundExerciseKey =
+        (currentExercise != null &&
+                currentExercise.exerciseKey.trim().isNotEmpty)
+            ? currentExercise.exerciseKey
+            : activeSet.exerciseKey;
+    final String boundTempo =
+        (currentExercise != null && currentExercise.tempo.trim().isNotEmpty)
+            ? currentExercise.tempo
+            : activeSet.tempo;
+    final String boundCoachingCue =
+        (currentExercise != null &&
+                currentExercise.coachingCue.trim().isNotEmpty)
+            ? currentExercise.coachingCue
+            : activeSet.coachingCue;
 
     return Card(
       shape: RoundedRectangleBorder(
@@ -1100,7 +1117,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                           ),
                         ),
                       Text(
-                        '#${exIdx + 1} ${activeSet.exerciseName.toUpperCase()}',
+                        '#${exIdx + 1} ${boundExerciseName.toUpperCase()}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -1143,16 +1160,19 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
             const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
               key: ValueKey<String>(
-                'active_${exIdx}_${activeSet.id}_${activeSet.exerciseKey}_${activeSet.exerciseName}',
+                'active_${exIdx}_${boundExerciseKey}_${boundExerciseName}_${viewModel.athleteGender}',
               ),
-              exerciseName: activeSet.exerciseName,
-              exerciseKey: activeSet.exerciseKey,
+              exerciseName: boundExerciseName,
+              exerciseKey: boundExerciseKey,
+              athleteGender: viewModel.athleteGender,
+              onGenderChanged: viewModel.setAthleteGender,
+              lbmKg: viewModel.lbmKg,
               recoveryScore: viewModel.recoveryScore,
               targetReps: activeSet.prescribedReps,
-              targetRepsRange: matchedExSpec?.targetRepsRange,
+              targetRepsRange: currentExercise?.targetRepsRange,
               prescribedRpe: activeSet.prescribedRpe,
-              customTempo: activeSet.tempo,
-              customCoachingCue: activeSet.coachingCue,
+              customTempo: boundTempo,
+              customCoachingCue: boundCoachingCue,
             ),
             const SizedBox(height: 10),
             // Selector rápido de series de este ejercicio (muestra ejecutadas y pendientes)

@@ -44,6 +44,18 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   String _unitSystem = 'KG';
   String get unitSystem => _unitSystem;
 
+  String _athleteGender = 'male';
+  String get athleteGender => _athleteGender;
+
+  double _lbmKg = 62.74;
+  double get lbmKg => _lbmKg;
+
+  Future<void> setAthleteGender(String gender) async {
+    _athleteGender = gender.toLowerCase().contains('fem') ? 'female' : 'male';
+    notifyListeners();
+    await _repository.setAthleteGender(_athleteGender);
+  }
+
   int _remainingRestSeconds = 0;
   int get remainingRestSeconds => _remainingRestSeconds;
 
@@ -381,16 +393,18 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
     try {
       _unitSystem = await _repository.getPreferredUnitSystem();
+      _athleteGender = await _repository.getAthleteGender();
+      final cachedBio = await _repository.readCachedBiometrics();
+      if (cachedBio != null && cachedBio.leanBodyMassKg > 20) {
+        _lbmKg = cachedBio.leanBodyMassKg;
+      }
 
       // 1. Carga instantánea (0ms) desde SharedPreferences para abrir Entreno Vivo sin espera
       AiGeneratedRoutinePlanModel? cachedPlan =
           await _repository.readCachedAiRoutinePlan();
       if (cachedPlan == null || cachedPlan.days.length < 5) {
-        final cachedBio = await _repository.readCachedBiometrics();
         cachedPlan = _buildInstantLocalLbmFiveDayPlan(
-          lbmKg: (cachedBio != null && cachedBio.leanBodyMassKg > 20)
-              ? cachedBio.leanBodyMassKg
-              : 62.74,
+          lbmKg: _lbmKg,
           weightKg: cachedBio?.weightKg ?? 92.4,
         );
         await _repository.saveCachedAiRoutinePlan(cachedPlan);

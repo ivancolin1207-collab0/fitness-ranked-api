@@ -68,6 +68,30 @@ class FitnessRepository {
     return _storageService.savePreferredWearable(source);
   }
 
+  /// Lee el género del atleta (`'male'` o `'female'`) desde el perfil autenticado en caché.
+  Future<String> getAthleteGender() async {
+    final UserProfileModel? cached =
+        await _storageService.readUserProfileCache();
+    final String rawSex = (cached?.biologicalSex ?? 'MALE').toLowerCase().trim();
+    if (rawSex.contains('fem') || rawSex == 'f' || rawSex.contains('mujer')) {
+      return 'female';
+    }
+    return 'male';
+  }
+
+  /// Actualiza el género del avatar en el perfil persistido localmente.
+  Future<void> setAthleteGender(String gender) async {
+    final String normalized =
+        gender.toLowerCase().contains('fem') ? 'FEMALE' : 'MALE';
+    final UserProfileModel? cached =
+        await _storageService.readUserProfileCache();
+    if (cached != null) {
+      await _storageService.saveUserProfileCache(
+        cached.copyWith(biologicalSex: normalized),
+      );
+    }
+  }
+
   Future<String?> getStoredJwtToken() {
     return _authService.readActiveJwtToken();
   }

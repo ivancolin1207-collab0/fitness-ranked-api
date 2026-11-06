@@ -76,6 +76,42 @@ class UserProfileModel {
       'created_at': createdAt.toIso8601String(),
     };
   }
+
+  UserProfileModel copyWith({
+    String? id,
+    String? username,
+    String? fullName,
+    String? maskedEmail,
+    DateTime? birthDate,
+    int? ageYears,
+    String? biologicalSex,
+    double? heightCm,
+    String? trainingGoal,
+    String? preferredWearable,
+    String? unitSystem,
+    bool? onboardingCompleted,
+    int? currentElo,
+    String? currentTier,
+    DateTime? createdAt,
+  }) {
+    return UserProfileModel(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      fullName: fullName ?? this.fullName,
+      maskedEmail: maskedEmail ?? this.maskedEmail,
+      birthDate: birthDate ?? this.birthDate,
+      ageYears: ageYears ?? this.ageYears,
+      biologicalSex: biologicalSex ?? this.biologicalSex,
+      heightCm: heightCm ?? this.heightCm,
+      trainingGoal: trainingGoal ?? this.trainingGoal,
+      preferredWearable: preferredWearable ?? this.preferredWearable,
+      unitSystem: unitSystem ?? this.unitSystem,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
+      currentElo: currentElo ?? this.currentElo,
+      currentTier: currentTier ?? this.currentTier,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 }
 
 class AuthTokenResponseModel {
