@@ -224,3 +224,52 @@ async def validate_uploaded_image(file: UploadFile) -> tuple[bytes, str]:
         ) from exc
 
     return sanitized_bytes, "image/jpeg"
+
+
+def validate_base64_image(image_base64: str) -> tuple[bytes, str]:
+    """
+    Decodifica y sanea una imagen enviada en Base64 (JSON), aplicando el mismo
+    filtro Pillow CDR (1080x1920 JPEG calidad 75, sin EXIF) que `validate_uploaded_image`.
+    """
+    import base64
+
+    cleaned = image_base64.strip()
+    if "," in cleaned and cleaned.lower().startswith("data:image"):
+        cleaned = cleaned.split(",", 1)[1].strip()
+
+    try:
+        raw_bytes = base64.b64decode(cleaned, validate=False)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cadena Base64 de la imagen no es válida.",
+        ) from exc
+
+    if len(raw_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El contenido de la imagen en Base64 está vacío.",
+        )
+
+    settings = get_settings()
+    max_bytes = max(settings.MAX_UPLOAD_SIZE_BYTES, 10 * 1024 * 1024)
+    if len(raw_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="La imagen supera el límite máximo permitido de 10 MB.",
+        )
+
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as clean_img:
+            rgb_img = clean_img.convert("RGB")
+            rgb_img.thumbnail((1080, 1920), Image.Resampling.LANCZOS)
+            out_buf = io.BytesIO()
+            rgb_img.save(out_buf, format="JPEG", quality=75, optimize=True)
+            sanitized_bytes = out_buf.getvalue()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Imagen Base64 corrupta o formato no soportado.",
+        ) from exc
+
+    return sanitized_bytes, "image/jpeg"

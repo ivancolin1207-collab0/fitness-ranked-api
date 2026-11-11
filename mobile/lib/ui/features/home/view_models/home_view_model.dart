@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/services/ble_heart_rate_service.dart';
+import '../../../../core/services/wearable_service.dart';
 import '../../../../data/models/auth_models.dart';
 import '../../../../data/models/biometric_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
@@ -31,6 +33,14 @@ class HomeViewModel extends ChangeNotifier {
   double? stressScore;
   String? stressCategory;
   double? sleepHours;
+  double? hrvMs;
+  int? restingHr;
+
+  bool whoopCloudLinked = false;
+  bool whoopOAuthConfigured = false;
+  String? whoopAuthorizeUrl;
+  bool _isSyncingWhoopCloud = false;
+  bool get isSyncingWhoopCloud => _isSyncingWhoopCloud;
 
   double? recovery;
   double? strain;
@@ -116,6 +126,8 @@ class HomeViewModel extends ChangeNotifier {
     stressScore = null;
     stressCategory = null;
     sleepHours = null;
+    hrvMs = null;
+    restingHr = null;
     recovery = null;
     strain = null;
     sleep = null;
@@ -136,6 +148,8 @@ class HomeViewModel extends ChangeNotifier {
     _hydration = null;
     _errorMessage = null;
     _statusBanner = null;
+    whoopCloudLinked = false;
+    whoopAuthorizeUrl = null;
     notifyListeners();
   }
 
@@ -192,6 +206,31 @@ class HomeViewModel extends ChangeNotifier {
       _biometricsHistory = historyList;
 
       final UserProfileModel? profile = results[3] as UserProfileModel?;
+      BleHeartRateService.instance.updateAthletePhysiology(
+        restingHr: (_wearable?.restingHr ?? 0) >= 25 ? _wearable!.restingHr : null,
+        isMale: (profile?.sex ?? 'male').toLowerCase() != 'female',
+      );
+
+      // 3. Verificar estado OAuth de WHOOP Cloud y auto-sincronizar si está vinculado
+      unawaited(_checkAndAutoSyncWhoopCloudIfLinked());
+
+      // 4. Si aún no hay telemetría hoy en PostgreSQL, realizar lectura automática de Android Health Connect
+      if (loadedWearable == null && !hasWhoopData) {
+        try {
+          final HealthConnectPollResult hcResult =
+              await _repository.forcePollHealthConnectAndSync(
+            sourceDevice: _preferredWearable,
+          );
+          if (hcResult.record != null) {
+            _wearable = hcResult.record;
+            setMetrics(hcResult.record!);
+            _statusBanner = hcResult.statusMessage;
+          }
+        } catch (_) {
+          // Falla silenciosa en el auto-poll inicial; el botón Forzar Sync sigue disponible.
+        }
+      }
+
       final double? realWeight = _biometrics?.weightKg ?? profile?.weightKg;
       final double? realStrain =
           hasWhoopData ? (_wearable?.strainScore ?? strainScore) : null;
@@ -207,6 +246,74 @@ class HomeViewModel extends ChangeNotifier {
       }
     } finally {
       _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _checkAndAutoSyncWhoopCloudIfLinked() async {
+    try {
+      final WearableService svc = WearableService();
+      final WhoopOAuthStatusModel? status = await svc.fetchWhoopOAuthStatus();
+      if (status == null) {
+        return;
+      }
+      whoopCloudLinked = status.linked;
+      whoopOAuthConfigured = status.oauthConfigured;
+      whoopAuthorizeUrl = status.authorizeUrl;
+      notifyListeners();
+
+      if (whoopCloudLinked) {
+        final Map<String, dynamic> synced = await svc.syncWhoopCloudNow();
+        applyScanResponse(synced, sourceDevice: 'WHOOP');
+      }
+    } catch (_) {
+      // No bloquea el arranque si el usuario aún no ha vinculado WHOOP Cloud.
+    }
+  }
+
+  /// Sincroniza directamente desde la API oficial de WHOOP Cloud (`developer.whoop.com`)
+  /// si el usuario ya vinculó su cuenta OAuth 2.0, o devuelve la URL de autorización OAuth.
+  Future<Map<String, dynamic>> syncOrLinkWhoopCloud() async {
+    _isSyncingWhoopCloud = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final WearableService svc = WearableService();
+      final WhoopOAuthStatusModel? status = await svc.fetchWhoopOAuthStatus();
+      whoopCloudLinked = status?.linked == true;
+      whoopOAuthConfigured = status?.oauthConfigured == true;
+      whoopAuthorizeUrl = status?.authorizeUrl;
+
+      if (whoopCloudLinked) {
+        final Map<String, dynamic> synced = await svc.syncWhoopCloudNow();
+        applyScanResponse(synced, sourceDevice: 'WHOOP');
+        _statusBanner =
+            'WHOOP Cloud API sincronizada automáticamente (developer.whoop.com)';
+        return <String, dynamic>{
+          'action': 'synced',
+          'response': synced,
+        };
+      }
+
+      if (whoopAuthorizeUrl != null && whoopAuthorizeUrl!.isNotEmpty) {
+        final bool opened =
+            await svc.openExternalBrowserUrl(whoopAuthorizeUrl!);
+        return <String, dynamic>{
+          'action': 'oauth_launched',
+          'opened': opened,
+          'authorize_url': whoopAuthorizeUrl,
+          'oauth_configured': whoopOAuthConfigured,
+        };
+      }
+
+      return <String, dynamic>{
+        'action': 'unconfigured',
+        'message':
+            'Configura WHOOP_CLIENT_ID y WHOOP_CLIENT_SECRET en Render (developer.whoop.com) para habilitar OAuth 2.0 directo en la nube.',
+      };
+    } finally {
+      _isSyncingWhoopCloud = false;
       notifyListeners();
     }
   }
@@ -310,6 +417,14 @@ class HomeViewModel extends ChangeNotifier {
     sleepPct = updated.sleepEfficiencyPct;
     stressScore = updated.whoopStressLevel;
     sleepHours = updated.sleepHours;
+    if (updated.hrvMs > 0) {
+      hrvMs = updated.hrvMs;
+    }
+    if (updated.restingHr > 0) {
+      restingHr = updated.restingHr;
+      BleHeartRateService.instance
+          .updateAthletePhysiology(restingHr: updated.restingHr);
+    }
     final String resolvedCategory = (updated.stressCategory != null &&
             updated.stressCategory!.trim().isNotEmpty)
         ? updated.stressCategory!.trim().toUpperCase()
@@ -345,7 +460,7 @@ class HomeViewModel extends ChangeNotifier {
     required double stressLevel,
     required String stressCategory,
     required double sleepHours,
-    int? hrvMs,
+    double? hrvMs,
     int? restingHr,
     int? healthMetricsInRange,
     String? sourceDevice,
@@ -356,6 +471,13 @@ class HomeViewModel extends ChangeNotifier {
             ? 'ALTO'
             : (stressLevel >= 1.0 ? 'MEDIO' : 'BAJO'));
 
+    final double resolvedHrv = (hrvMs != null && hrvMs > 0)
+        ? hrvMs
+        : (this.hrvMs ?? _wearable?.hrvMs ?? 0.0);
+    final int resolvedRhr = (restingHr != null && restingHr > 0)
+        ? restingHr
+        : (this.restingHr ?? _wearable?.restingHr ?? 0);
+
     hasWhoopData = hasData;
     recoveryScore = recovery;
     strainScore = strain;
@@ -363,6 +485,14 @@ class HomeViewModel extends ChangeNotifier {
     stressScore = stressLevel;
     this.stressCategory = cleanCat;
     this.sleepHours = sleepHours;
+    if (resolvedHrv > 0) {
+      this.hrvMs = resolvedHrv;
+    }
+    if (resolvedRhr > 0) {
+      this.restingHr = resolvedRhr;
+      BleHeartRateService.instance
+          .updateAthletePhysiology(restingHr: resolvedRhr);
+    }
 
     this.recovery = recovery;
     this.strain = strain;
@@ -381,8 +511,8 @@ class HomeViewModel extends ChangeNotifier {
         WearableMetricRecord(
           date: now,
           sourceDevice: sourceDevice ?? _preferredWearable,
-          hrvMs: (hrvMs ?? 0).toDouble(),
-          restingHr: restingHr ?? 0,
+          hrvMs: resolvedHrv,
+          restingHr: resolvedRhr,
           avgHr: 0,
           maxHr: 0,
           sleepHours: sleepHours,
@@ -396,8 +526,8 @@ class HomeViewModel extends ChangeNotifier {
 
     _wearable = base.copyWith(
       sourceDevice: sourceDevice ?? _preferredWearable,
-      hrvMs: hrvMs != null ? hrvMs.toDouble() : base.hrvMs,
-      restingHr: restingHr ?? base.restingHr,
+      hrvMs: resolvedHrv > 0 ? resolvedHrv : base.hrvMs,
+      restingHr: resolvedRhr > 0 ? resolvedRhr : base.restingHr,
       sleepEfficiencyPct: sleep,
       sleepHours: sleepHours,
       recoveryScore: recovery,
@@ -425,7 +555,7 @@ class HomeViewModel extends ChangeNotifier {
     double? stressScore,
     String? stressCategory,
     double? sleepHours,
-    int? hrvMs,
+    double? hrvMs,
     int? restingHr,
     int? healthMetricsInRange,
     String? sourceDevice,
@@ -499,6 +629,13 @@ class HomeViewModel extends ChangeNotifier {
             0.0;
     final double slh =
         tryNum(<String>['sleep_hours']) ?? whoopSleepHours ?? 0.0;
+    final double? scannedHrv = tryNum(<String>['hrv_ms']);
+    final int? scannedRhr =
+        tryNum(<String>['resting_hr', 'rhr_bpm'])?.round();
+    final int? scannedHealthOk = tryNum(<String>[
+      'health_monitor_metrics_ok',
+      'whoop_health_metrics_in_range',
+    ])?.round();
     final String? cat =
         (data['stress_category'] ?? response['stress_category']) as String?;
 
@@ -509,11 +646,9 @@ class HomeViewModel extends ChangeNotifier {
       stressScore: stl,
       stressCategory: (cat != null && cat.trim().isNotEmpty) ? cat : null,
       sleepHours: slh,
-      hrvMs: (data['hrv_ms'] as num?)?.toInt(),
-      restingHr: ((data['rhr_bpm'] ?? data['resting_hr']) as num?)?.toInt(),
-      healthMetricsInRange: ((data['health_monitor_metrics_ok'] ??
-              data['whoop_health_metrics_in_range']) as num?)
-          ?.toInt(),
+      hrvMs: (scannedHrv != null && scannedHrv > 0) ? scannedHrv : null,
+      restingHr: (scannedRhr != null && scannedRhr > 0) ? scannedRhr : null,
+      healthMetricsInRange: scannedHealthOk,
       sourceDevice: sourceDevice,
     );
     _statusBanner =

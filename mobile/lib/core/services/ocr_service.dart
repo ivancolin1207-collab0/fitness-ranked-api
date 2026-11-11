@@ -142,18 +142,21 @@ class OcrService {
     final String baseUrl =
         '${endpointUri.scheme}://${endpointUri.host}${endpointUri.hasPort ? ":${endpointUri.port}" : ""}';
 
-    final Map<String, dynamic> result = await scanWhoopScreenshotBytes(
+    final Map<String, dynamic> rawResult = await scanWhoopScreenshotBytes(
       jpegBytes: jpegBytes,
       baseUrl: baseUrl,
       accessToken: accessToken,
       httpClient: httpClient,
       sourceDevice: sourceDevice,
     );
+    final Map<String, dynamic> result = rawResult['data'] is Map<String, dynamic>
+        ? rawResult['data'] as Map<String, dynamic>
+        : rawResult;
 
-    final double recovery = (result['recovery_score'] as num).toDouble();
-    final double strain = (result['strain_score'] as num).toDouble();
+    final double recovery = ((result['recovery_score'] ?? 0.0) as num).toDouble();
+    final double strain = ((result['strain_score'] ?? 0.0) as num).toDouble();
     final double sleep =
-        ((result['sleep_pct'] ?? result['sleep_performance_pct']) as num)
+        ((result['sleep_pct'] ?? result['sleep_performance_pct'] ?? 0.0) as num)
             .toDouble();
     final double stress = ((result['stress_level'] ??
                 result['whoop_stress_level'] ??

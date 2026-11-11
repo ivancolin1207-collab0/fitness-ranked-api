@@ -12,13 +12,18 @@ from typing import Annotated, Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.elo_engine import WearableSource
-from app.core.security import get_current_user, validate_uploaded_image
+from app.core.security import (
+    get_current_user,
+    validate_base64_image,
+    validate_uploaded_image,
+)
 from app.models.entities import Biometric, RoutineTemplate, User, WearableMetric
 from app.models.routine import UserRoutine
 from app.schemas.biometrics import (
@@ -31,6 +36,8 @@ from app.schemas.biometrics import (
     HydrationTodayResponse,
     WearableSyncRequest,
     WearableSyncResponse,
+    WhoopScanBase64Request,
+    WhoopScreenExtractedMetrics,
     WhoopScreenScanResponse,
 )
 from app.services.biometrics_service import (
@@ -43,6 +50,13 @@ from app.services.gemini_service import (
     extract_fitdays_biometrics_from_image,
     generate_coach_chat_reply,
     scan_wearable_screen,
+)
+from app.services.whoop_cloud_service import (
+    build_whoop_authorization_url,
+    exchange_code_and_store_tokens,
+    fetch_whoop_cloud_metrics,
+    get_user_whoop_oauth_status,
+    verify_signed_oauth_state,
 )
 
 logger = logging.getLogger("apexmetrix_biometrics")
@@ -331,25 +345,47 @@ async def sync_wearable_metrics(
     Realiza un UPSERT transaccional de las métricas fisiológicas reales provenientes
     de Health Connect o ingreso manual y actualiza la fuente primaria del usuario.
     """
+    user_id: UUID = current_user.id
     current_user.preferred_wearable = payload.source_device
+
+    safe_hrv = (
+        float(payload.hrv_ms)
+        if (payload.hrv_ms is not None and 5.0 <= float(payload.hrv_ms) <= 300.0)
+        else None
+    )
+    safe_rhr = (
+        int(payload.resting_hr)
+        if (payload.resting_hr is not None and 25 <= int(payload.resting_hr) <= 140)
+        else None
+    )
+    safe_avg_hr = max(
+        30,
+        min(
+            220,
+            int(payload.avg_hr)
+            if payload.avg_hr >= 30
+            else (safe_rhr if (safe_rhr is not None and safe_rhr >= 30) else 60),
+        ),
+    )
+    safe_max_hr = max(40, safe_avg_hr, min(240, int(payload.max_hr)))
 
     await db.execute(
         delete(WearableMetric).where(
-            WearableMetric.user_id == current_user.id,
+            WearableMetric.user_id == user_id,
             WearableMetric.date == payload.date,
         )
     )
     stmt = (
         pg_insert(WearableMetric)
         .values(
-            user_id=current_user.id,
+            user_id=user_id,
             date=payload.date,
             strain_score=payload.strain_score,
             recovery_score=payload.recovery_score,
-            hrv_ms=payload.hrv_ms,
-            resting_hr=payload.resting_hr,
-            avg_hr=payload.avg_hr,
-            max_hr=payload.max_hr,
+            hrv_ms=safe_hrv,
+            resting_hr=safe_rhr,
+            avg_hr=safe_avg_hr,
+            max_hr=safe_max_hr,
             sleep_hours=payload.sleep_hours,
             sleep_efficiency_pct=payload.sleep_efficiency_pct,
             source_device=payload.source_device,
@@ -359,10 +395,10 @@ async def sync_wearable_metrics(
             set_={
                 "strain_score": payload.strain_score,
                 "recovery_score": payload.recovery_score,
-                "hrv_ms": payload.hrv_ms,
-                "resting_hr": payload.resting_hr,
-                "avg_hr": payload.avg_hr,
-                "max_hr": payload.max_hr,
+                "hrv_ms": safe_hrv,
+                "resting_hr": safe_rhr,
+                "avg_hr": safe_avg_hr,
+                "max_hr": safe_max_hr,
                 "sleep_hours": payload.sleep_hours,
                 "sleep_efficiency_pct": payload.sleep_efficiency_pct,
                 "synced_at": func.now(),
@@ -373,45 +409,77 @@ async def sync_wearable_metrics(
     result = await db.execute(stmt)
     record = result.scalar_one()
 
+    resolved_stress = (
+        float(payload.stress_level) if payload.stress_level is not None else 0.0
+    )
+    resolved_stress_cat = payload.stress_category or (
+        "ALTO"
+        if resolved_stress >= 2.0
+        else (
+            "MEDIO"
+            if resolved_stress >= 1.0
+            else ("BAJO" if resolved_stress > 0.0 else "SIN DATO")
+        )
+    )
+
     # Sincronizar también en `daily_readiness` para que toda consulta lea el último estado unificado
     try:
         async with db.begin_nested():
             await db.execute(
                 text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS hrv_ms NUMERIC(5,2)"
+                )
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS resting_hr SMALLINT"
+                )
+            )
+            await db.execute(
+                text(
                     "DELETE FROM daily_readiness WHERE user_id = :uid AND date = :dt"
                 ),
-                {"uid": current_user.id, "dt": payload.date},
+                {"uid": user_id, "dt": payload.date},
             )
             await db.execute(
                 text(
                     """
                     INSERT INTO daily_readiness (
                         user_id, date, sleep_pct, recovery_score, strain_score,
-                        stress_level, stress_category, sleep_hours, source_device, synced_at
+                        stress_level, stress_category, sleep_hours, hrv_ms, resting_hr,
+                        source_device, synced_at
                     )
                     VALUES (
                         :uid, :dt, :sleep_pct, :rec, :strain,
-                        0.0, 'SIN DATO', :sleep_h, :src, NOW()
+                        :stress_lvl, :stress_cat, :sleep_h, :hrv, :rhr,
+                        :src, NOW()
                     )
                     """
                 ),
                 {
-                    "uid": current_user.id,
+                    "uid": user_id,
                     "dt": payload.date,
                     "sleep_pct": float(payload.sleep_efficiency_pct or 0.0),
                     "rec": payload.recovery_score,
                     "strain": payload.strain_score,
+                    "stress_lvl": resolved_stress,
+                    "stress_cat": resolved_stress_cat,
                     "sleep_h": payload.sleep_hours,
+                    "hrv": safe_hrv,
+                    "rhr": safe_rhr,
                     "src": payload.source_device.value,
                 },
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Aviso actualizando daily_readiness en sync_wearable: %s", exc)
 
     await db.commit()
     await db.refresh(record)
     resp = WearableSyncResponse.model_validate(record)
     resp.sleep_pct = payload.sleep_efficiency_pct
+    resp.stress_level = resolved_stress
+    resp.whoop_stress_level = resolved_stress
+    resp.stress_category = resolved_stress_cat
     return resp
 
 
@@ -494,6 +562,264 @@ async def log_hydration_intake(
     )
 
 
+def _resolve_wearable_source_enum(raw_source: str) -> WearableSource:
+    upper = (raw_source or "WHOOP").upper().strip()
+    if "HUAWEI" in upper:
+        return WearableSource.HUAWEI_GT
+    if "SAMSUNG" in upper:
+        return WearableSource.SAMSUNG_WATCH
+    if "APPLE" in upper:
+        return WearableSource.APPLE_WATCH
+    if "HEALTH" in upper:
+        return WearableSource.HEALTH_CONNECT
+    return WearableSource.WHOOP
+
+
+async def _persist_and_build_whoop_scan_response(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    extracted: WhoopScreenExtractedMetrics,
+    resolved_source: WearableSource,
+) -> WhoopScreenScanResponse:
+    """
+    Persiste de forma atómica y segura (con SAVEPOINTs para evitar `MissingGreenlet` y
+    errores de columnas faltantes) las métricas extraídas del wearable en `daily_readiness`
+    y `wearable_metrics`, devolviendo la estructura JSON unificada (raíz + `"data"`).
+    """
+    today = date.today()
+    now_utc = datetime.now(timezone.utc)
+
+    # Si la captura es de la pestaña Overview de Whoop (donde no se imprimen HRV ni RHR),
+    # conservar el HRV y RHR reales registrados previamente hoy por Health Connect / pestaña Recovery.
+    existing_today = await get_today_athlete_readiness(db, user_id)
+    prev_hrv = float(existing_today.get("hrv_ms") or 0.0)
+    prev_rhr = int(existing_today.get("resting_hr") or 0)
+
+    effective_hrv = (
+        float(extracted.hrv_ms) if float(extracted.hrv_ms or 0.0) > 0 else prev_hrv
+    )
+    effective_rhr = (
+        int(extracted.resting_hr) if int(extracted.resting_hr or 0) > 0 else prev_rhr
+    )
+
+    sleep_hours_calc = (
+        extracted.sleep_duration_hours
+        if (
+            resolved_source == WearableSource.SAMSUNG_WATCH
+            and extracted.sleep_duration_hours > 0
+        )
+        else float(extracted.sleep_hours or 0.0)
+    )
+    if sleep_hours_calc <= 0.0 and extracted.sleep_pct > 0.0:
+        sleep_hours_calc = round((float(extracted.sleep_pct) / 100.0) * 8.0, 1)
+
+    db_hrv_ms = (
+        effective_hrv if (5.0 <= effective_hrv <= 300.0) else None
+    )
+    db_resting_hr = (
+        effective_rhr if (25 <= effective_rhr <= 140) else None
+    )
+    db_avg_hr = (
+        max(30, min(220, int(extracted.avg_heart_rate)))
+        if int(extracted.avg_heart_rate or 0) >= 30
+        else (
+            max(35, min(160, db_resting_hr + 10))
+            if db_resting_hr is not None
+            else 60
+        )
+    )
+    db_max_hr = max(40, db_avg_hr + 20)
+
+    record_id: UUID = uuid4()
+
+    # 1. Guardar en `wearable_metrics` dentro de SAVEPOINT para no invalidar la sesión si hay un enum antiguo
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                delete(WearableMetric).where(
+                    WearableMetric.user_id == user_id,
+                    WearableMetric.date == today,
+                )
+            )
+            new_metric = WearableMetric(
+                user_id=user_id,
+                date=today,
+                strain_score=max(0.0, min(21.0, float(extracted.strain_score))),
+                recovery_score=max(0.0, min(100.0, float(extracted.recovery_score))),
+                hrv_ms=db_hrv_ms,
+                resting_hr=db_resting_hr,
+                avg_hr=db_avg_hr,
+                max_hr=db_max_hr,
+                sleep_hours=max(0.0, min(24.0, float(sleep_hours_calc))),
+                sleep_efficiency_pct=max(
+                    0.0, min(100.0, float(extracted.sleep_performance_pct))
+                ),
+                source_device=resolved_source,
+                synced_at=now_utc,
+            )
+            db.add(new_metric)
+            await db.flush()
+            record_id = new_metric.id
+    except Exception as exc:
+        logger.warning(
+            "Aviso en SAVEPOINT de WearableMetric (continuando con daily_readiness): %s",
+            exc,
+        )
+
+    # 2. Garantizar esquema de `daily_readiness` y ejecutar UPSERT estricto por (user_id, today)
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS daily_readiness (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        date DATE NOT NULL DEFAULT CURRENT_DATE,
+                        sleep_pct NUMERIC(5,2) NOT NULL,
+                        recovery_score NUMERIC(5,2) NOT NULL,
+                        strain_score NUMERIC(4,1) NOT NULL,
+                        stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0,
+                        stress_category VARCHAR(20) NOT NULL DEFAULT 'SIN DATO',
+                        sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 0.0,
+                        hrv_ms NUMERIC(5,2),
+                        resting_hr SMALLINT,
+                        source_device VARCHAR(30) NOT NULL DEFAULT 'WHOOP',
+                        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE (user_id, date, source_device)
+                    )
+                    """
+                )
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0"
+                )
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS stress_category VARCHAR(20) NOT NULL DEFAULT 'SIN DATO'"
+                )
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 0.0"
+                )
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS hrv_ms NUMERIC(5,2)"
+                )
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS resting_hr SMALLINT"
+                )
+            )
+    except Exception as exc:
+        logger.warning("Aviso verificando columnas de daily_readiness: %s", exc)
+
+    try:
+        await db.execute(
+            text(
+                "DELETE FROM daily_readiness WHERE user_id = :user_id AND date = :date"
+            ),
+            {"user_id": user_id, "date": today},
+        )
+        await db.execute(
+            text(
+                """
+                INSERT INTO daily_readiness (
+                    user_id, date, sleep_pct, recovery_score, strain_score,
+                    stress_level, stress_category, sleep_hours, hrv_ms, resting_hr,
+                    source_device, synced_at
+                )
+                VALUES (
+                    :user_id, :date, :sleep_pct, :recovery_score, :strain_score,
+                    :stress_level, :stress_category, :sleep_hours, :hrv_ms, :resting_hr,
+                    :source_device, NOW()
+                )
+                """
+            ),
+            {
+                "user_id": user_id,
+                "date": today,
+                "sleep_pct": float(extracted.sleep_pct),
+                "recovery_score": float(extracted.recovery_score),
+                "strain_score": float(extracted.strain_score),
+                "stress_level": float(extracted.stress_level),
+                "stress_category": str(extracted.stress_category),
+                "sleep_hours": float(sleep_hours_calc),
+                "hrv_ms": db_hrv_ms,
+                "resting_hr": db_resting_hr,
+                "source_device": resolved_source.value,
+            },
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.error("Error en UPSERT de daily_readiness: %s", exc)
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error al guardar telemetría diaria en PostgreSQL: {exc}",
+        ) from exc
+
+    unified_data = {
+        "status": "success",
+        "recovery_score": float(extracted.recovery_score),
+        "strain_score": float(extracted.strain_score),
+        "sleep_pct": float(extracted.sleep_pct),
+        "sleep_performance_pct": float(extracted.sleep_performance_pct),
+        "sleep_efficiency_pct": float(extracted.sleep_performance_pct),
+        "stress_level": float(extracted.stress_level),
+        "whoop_stress_level": float(extracted.stress_level),
+        "stress_category": str(extracted.stress_category),
+        "sleep_hours": float(sleep_hours_calc),
+        "hrv_ms": float(effective_hrv),
+        "resting_hr": int(effective_rhr),
+        "avg_hr": int(extracted.avg_heart_rate) if extracted.avg_heart_rate > 0 else 0,
+        "whoop_health_metrics_in_range": 5 if extracted.recovery_score > 0 else 0,
+        "huawei_trusleep_score": int(extracted.trusleep_score),
+        "huawei_stress_score": int(extracted.stress_score),
+        "huawei_vo2_max": float(extracted.vo2max),
+        "samsung_energy_score": int(extracted.energy_score),
+        "samsung_bia_muscle_pct": float(extracted.bia_muscle_pct),
+        "samsung_bia_fat_pct": float(extracted.bia_fat_pct),
+        "source_device": resolved_source.value,
+    }
+
+    return WhoopScreenScanResponse(
+        status="success",
+        data=unified_data,
+        id=record_id,
+        user_id=user_id,
+        date=today,
+        sleep_pct=float(extracted.sleep_pct),
+        sleep_performance_pct=float(extracted.sleep_performance_pct),
+        recovery_score=float(extracted.recovery_score),
+        strain_score=float(extracted.strain_score),
+        stress_level=float(extracted.stress_level),
+        stress_category=str(extracted.stress_category),
+        whoop_stress_level=float(extracted.stress_level),
+        whoop_health_metrics_in_range=5 if extracted.recovery_score > 0 else 0,
+        resting_hr=int(effective_rhr),
+        hrv_ms=float(effective_hrv),
+        avg_hr=int(extracted.avg_heart_rate) if extracted.avg_heart_rate > 0 else 0,
+        max_hr=0,
+        sleep_hours=float(sleep_hours_calc),
+        sleep_efficiency_pct=float(extracted.sleep_performance_pct),
+        huawei_trusleep_score=int(extracted.trusleep_score),
+        huawei_stress_score=int(extracted.stress_score),
+        huawei_vo2_max=float(extracted.vo2max),
+        samsung_energy_score=int(extracted.energy_score),
+        samsung_bia_muscle_pct=float(extracted.bia_muscle_pct),
+        samsung_bia_fat_pct=float(extracted.bia_fat_pct),
+        source_device=resolved_source,
+        synced_at=now_utc,
+    )
+
+
 @router.post(
     "/wearables/scan-whoop",
     response_model=WhoopScreenScanResponse,
@@ -505,35 +831,46 @@ async def log_hydration_intake(
     status_code=status.HTTP_200_OK,
 )
 async def scan_whoop_screen_metrics(
-    file: Annotated[UploadFile, File(description="Captura comprimida del wearable (WHOOP, HUAWEI, SAMSUNG, APPLE)")],
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[
+        Optional[UploadFile],
+        File(description="Captura comprimida del wearable (campo 'file')"),
+    ] = None,
+    image: Annotated[
+        Optional[UploadFile],
+        File(description="Captura comprimida del wearable (alias campo 'image')"),
+    ] = None,
     source_device: Annotated[Optional[str], Form()] = None,
     source_wearable: Annotated[Optional[str], Form()] = None,
     x_gemini_api_key: Annotated[Optional[str], Header()] = None,
 ) -> WhoopScreenScanResponse:
     """
     Procesa una captura de pantalla de wearable mediante Gemini 2.5 Flash Vision
-    (idéntico a Fitdays) y realiza un UPSERT real en PostgreSQL filtrando por `user_id` y `today`
-    (`db.commit()` + `db.refresh()`), sobrescribiendo cualquier lectura previa del mismo día.
+    (aceptando tanto el campo `'file'` como `'image'` en Multipart) y realiza un UPSERT real
+    en PostgreSQL filtrando por `user_id` y `today`.
     """
+    user_id: UUID = current_user.id
+    upload_target = file or image
+    if upload_target is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debes adjuntar la captura del wearable en el campo 'file' o 'image'.",
+        )
+
     raw_source = (
         source_device
         or source_wearable
-        or (current_user.preferred_wearable.value if current_user.preferred_wearable else "WHOOP")
-    ).upper().strip()
-
-    if "HUAWEI" in raw_source:
-        resolved_source = WearableSource.HUAWEI_GT
-    elif "SAMSUNG" in raw_source:
-        resolved_source = WearableSource.SAMSUNG_WATCH
-    elif "APPLE" in raw_source:
-        resolved_source = WearableSource.APPLE_WATCH
-    else:
-        resolved_source = WearableSource.WHOOP
+        or (
+            current_user.preferred_wearable.value
+            if current_user.preferred_wearable
+            else "WHOOP"
+        )
+    )
+    resolved_source = _resolve_wearable_source_enum(raw_source)
 
     try:
-        clean_bytes, clean_mime = await validate_uploaded_image(file)
+        clean_bytes, clean_mime = await validate_uploaded_image(upload_target)
         extracted = await scan_wearable_screen(
             image_bytes=clean_bytes,
             source_wearable=resolved_source.value,
@@ -545,156 +882,229 @@ async def scan_whoop_screen_metrics(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    today = date.today()
-    sleep_hours_calc = (
-        extracted.sleep_duration_hours
-        if (resolved_source == WearableSource.SAMSUNG_WATCH and extracted.sleep_duration_hours > 0)
-        else float(extracted.sleep_hours or 0.0)
+    return await _persist_and_build_whoop_scan_response(
+        db,
+        user_id=user_id,
+        extracted=extracted,
+        resolved_source=resolved_source,
     )
-    db_resting_hr = int(extracted.resting_hr) if extracted.resting_hr > 0 else None
-    db_hrv_ms = float(extracted.hrv_ms) if extracted.hrv_ms > 0 else None
-    db_avg_hr = (
-        int(extracted.avg_heart_rate)
-        if extracted.avg_heart_rate >= 30
-        else (max(45, min(160, int(extracted.resting_hr) + 10)) if extracted.resting_hr > 0 else 60)
+
+
+@router.post(
+    "/wearables/scan-whoop-base64",
+    response_model=WhoopScreenScanResponse,
+    status_code=status.HTTP_200_OK,
+)
+@router.post(
+    "/wearables/scan-screen-base64",
+    response_model=WhoopScreenScanResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def scan_whoop_screen_base64(
+    payload: WhoopScanBase64Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_gemini_api_key: Annotated[Optional[str], Header()] = None,
+) -> WhoopScreenScanResponse:
+    """
+    Alternativa JSON en Base64 para el escaneo OCR de WHOOP / Wearables que evita
+    por completo cualquier error `422 Unprocessable Entity` de Multipart Form-Data.
+    """
+    user_id: UUID = current_user.id
+    raw_source = (
+        payload.source_device
+        or payload.source_wearable
+        or (
+            current_user.preferred_wearable.value
+            if current_user.preferred_wearable
+            else "WHOOP"
+        )
     )
-    db_max_hr = max(db_avg_hr + 20, 120)
+    resolved_source = _resolve_wearable_source_enum(raw_source)
 
-    record: Optional[WearableMetric] = None
     try:
-        current_user.preferred_wearable = resolved_source
-
-        # Eliminar cualquier fila previa del mismo usuario y fecha en `wearable_metrics`
-        await db.execute(
-            delete(WearableMetric).where(
-                WearableMetric.user_id == current_user.id,
-                WearableMetric.date == today,
-            )
+        clean_bytes, clean_mime = validate_base64_image(payload.image_base64)
+        extracted = await scan_wearable_screen(
+            image_bytes=clean_bytes,
+            source_wearable=resolved_source.value,
+            mime_type=clean_mime,
+            fallback_api_key=x_gemini_api_key,
         )
-        new_metric = WearableMetric(
-            user_id=current_user.id,
-            date=today,
-            strain_score=extracted.strain_score,
-            recovery_score=extracted.recovery_score,
-            hrv_ms=db_hrv_ms,
-            resting_hr=db_resting_hr,
-            avg_hr=db_avg_hr,
-            max_hr=db_max_hr,
-            sleep_hours=sleep_hours_calc,
-            sleep_efficiency_pct=extracted.sleep_performance_pct,
-            source_device=resolved_source,
-            synced_at=datetime.now(timezone.utc),
-        )
-        db.add(new_metric)
-        await db.flush()
-        record = new_metric
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.warning("Aviso guardando WearableMetric, aplicando rollback parcial: %s", exc)
-        await db.rollback()
-        record = None
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # UPSERT estricto en `daily_readiness` filtrando por `user_id` y `today`
+    return await _persist_and_build_whoop_scan_response(
+        db,
+        user_id=user_id,
+        extracted=extracted,
+        resolved_source=resolved_source,
+    )
+
+
+# ============================================================================
+# INTEGRACIÓN OFICIAL WHOOP CLOUD OAUTH 2.0 (`api.prod.whoop.com`)
+# ============================================================================
+
+
+@router.get("/wearables/whoop/oauth/status", status_code=status.HTTP_200_OK)
+async def whoop_oauth_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Consulta si el atleta tiene vinculada su cuenta de WHOOP Cloud OAuth 2.0."""
+    return await get_user_whoop_oauth_status(db, current_user.id)
+
+
+@router.get("/wearables/whoop/oauth/authorize", status_code=status.HTTP_200_OK)
+async def whoop_oauth_authorize(
+    current_user: Annotated[User, Depends(get_current_user)],
+    redirect_uri: Optional[str] = Query(default=None),
+) -> dict[str, str]:
+    """Genera la URL de autorización OAuth 2.0 oficial de WHOOP firmada para el atleta."""
+    auth_url = build_whoop_authorization_url(
+        current_user.id, redirect_uri=redirect_uri
+    )
+    return {"authorize_url": auth_url}
+
+
+@router.get(
+    "/wearables/whoop/oauth/callback",
+    response_class=HTMLResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def whoop_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+) -> HTMLResponse:
+    """
+    Callback oficial OAuth 2.0 de WHOOP (`developer.whoop.com`).
+    Intercambia `code` por `access_token` + `refresh_token`, descarga inmediatamente
+    Recovery, Strain, Sleep, HRV y RHR del día y redirige de vuelta a ApexMetrix.
+    """
+    user_id = verify_signed_oauth_state(state)
+    await exchange_code_and_store_tokens(db, user_id=user_id, code=code)
+
+    sync_summary = "Cuenta WHOOP Cloud vinculada correctamente."
     try:
-        await db.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS daily_readiness (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    date DATE NOT NULL DEFAULT CURRENT_DATE,
-                    sleep_pct NUMERIC(5,2) NOT NULL,
-                    recovery_score NUMERIC(5,2) NOT NULL,
-                    strain_score NUMERIC(4,1) NOT NULL,
-                    stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0,
-                    stress_category VARCHAR(20) NOT NULL DEFAULT 'SIN DATO',
-                    sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 0.0,
-                    source_device VARCHAR(30) NOT NULL DEFAULT 'WHOOP',
-                    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (user_id, date, source_device)
-                )
-                """
-            )
+        cloud_metrics = await fetch_whoop_cloud_metrics(db, user_id)
+        extracted = WhoopScreenExtractedMetrics(
+            sleep_pct=cloud_metrics["sleep_pct"],
+            sleep_performance_pct=cloud_metrics["sleep_performance_pct"],
+            recovery_score=cloud_metrics["recovery_score"],
+            strain_score=cloud_metrics["strain_score"],
+            stress_level=cloud_metrics["stress_level"],
+            stress_category=cloud_metrics["stress_category"],
+            sleep_hours=cloud_metrics["sleep_hours"],
+            resting_hr=cloud_metrics["resting_hr"],
+            hrv_ms=cloud_metrics["hrv_ms"],
+            avg_heart_rate=cloud_metrics["avg_hr"],
         )
-        await db.execute(
-            text(
-                "DELETE FROM daily_readiness WHERE user_id = :user_id AND date = :date"
-            ),
-            {"user_id": current_user.id, "date": today},
+        await _persist_and_build_whoop_scan_response(
+            db,
+            user_id=user_id,
+            extracted=extracted,
+            resolved_source=WearableSource.WHOOP,
         )
-        await db.execute(
-            text(
-                """
-                INSERT INTO daily_readiness (
-                    user_id, date, sleep_pct, recovery_score, strain_score,
-                    stress_level, stress_category, sleep_hours, source_device, synced_at
-                )
-                VALUES (
-                    :user_id, :date, :sleep_pct, :recovery_score, :strain_score,
-                    :stress_level, :stress_category, :sleep_hours, :source_device, NOW()
-                )
-                """
-            ),
-            {
-                "user_id": current_user.id,
-                "date": today,
-                "sleep_pct": extracted.sleep_pct,
-                "recovery_score": extracted.recovery_score,
-                "strain_score": extracted.strain_score,
-                "stress_level": extracted.stress_level,
-                "stress_category": extracted.stress_category,
-                "sleep_hours": sleep_hours_calc,
-                "source_device": resolved_source.value,
-            },
+        sync_summary = (
+            f"Recuperación {cloud_metrics['recovery_score']:.0f}% • "
+            f"Esfuerzo {cloud_metrics['strain_score']:.1f} • "
+            f"Sueño {cloud_metrics['sleep_pct']:.0f}%"
         )
-        await db.commit()
-        if record is not None:
-            await db.refresh(record)
     except Exception as exc:
-        logger.error("Error en UPSERT de daily_readiness: %s", exc)
-        await db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error al guardar telemetría diaria en PostgreSQL: {exc}",
-        ) from exc
+        logger.warning("Aviso en sync inicial tras callback WHOOP OAuth: %s", exc)
 
-    now_utc = datetime.now(timezone.utc)
-    return WhoopScreenScanResponse(
-        status="success",
-        data={
-            "recovery_score": float(extracted.recovery_score),
-            "strain_score": float(extracted.strain_score),
-            "sleep_pct": float(extracted.sleep_pct),
-            "stress_level": float(extracted.stress_level),
-            "stress_category": str(extracted.stress_category),
-            "sleep_hours": float(sleep_hours_calc),
-            "hrv_ms": float(extracted.hrv_ms),
-            "resting_hr": int(extracted.resting_hr),
-        },
-        id=record.id if record is not None else uuid4(),
-        user_id=current_user.id,
-        date=today,
-        sleep_pct=extracted.sleep_pct,
-        sleep_performance_pct=extracted.sleep_performance_pct,
-        recovery_score=extracted.recovery_score,
-        strain_score=extracted.strain_score,
-        stress_level=extracted.stress_level,
-        stress_category=extracted.stress_category,
-        whoop_stress_level=extracted.stress_level,
-        whoop_health_metrics_in_range=5 if extracted.recovery_score > 0 else 0,
-        resting_hr=int(extracted.resting_hr),
-        hrv_ms=float(extracted.hrv_ms),
-        avg_hr=int(extracted.avg_heart_rate) if extracted.avg_heart_rate > 0 else 0,
-        max_hr=0,
-        sleep_hours=float(sleep_hours_calc),
-        sleep_efficiency_pct=extracted.sleep_performance_pct,
-        huawei_trusleep_score=extracted.trusleep_score,
-        huawei_stress_score=extracted.stress_score,
-        huawei_vo2_max=extracted.vo2max,
-        samsung_energy_score=extracted.energy_score,
-        samsung_bia_muscle_pct=extracted.bia_muscle_pct,
-        samsung_bia_fat_pct=extracted.bia_fat_pct,
-        source_device=resolved_source,
-        synced_at=record.synced_at if record is not None else now_utc,
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="1;url=apexmetrix://oauth/whoop?status=success" />
+  <title>WHOOP Cloud Conectado • ApexMetrix</title>
+  <style>
+    body {{
+      background: #0B0E14;
+      color: #F3F4F6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }}
+    .card {{
+      background: #141821;
+      border: 1px solid #10B981;
+      border-radius: 16px;
+      padding: 28px 24px;
+      max-width: 420px;
+      text-align: center;
+    }}
+    h1 {{ color: #10B981; font-size: 20px; margin: 0 0 10px; }}
+    p {{ color: #9CA3AF; font-size: 14px; line-height: 1.5; }}
+    .btn {{
+      display: inline-block;
+      margin-top: 18px;
+      padding: 12px 22px;
+      background: #10B981;
+      color: #000;
+      font-weight: 800;
+      text-decoration: none;
+      border-radius: 10px;
+    }}
+  </style>
+  <script>
+    setTimeout(function() {{
+      window.location.href = "apexmetrix://oauth/whoop?status=success";
+    }}, 800);
+  </script>
+</head>
+<body>
+  <div class="card">
+    <h1>WHOOP 4.0 CLOUD CONECTADO</h1>
+    <p>{sync_summary}</p>
+    <a class="btn" href="apexmetrix://oauth/whoop?status=success">VOLVER A APEXMETRIX</a>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@router.post(
+    "/wearables/whoop/cloud-sync",
+    response_model=WhoopScreenScanResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def sync_whoop_cloud_now(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> WhoopScreenScanResponse:
+    """
+    Sincroniza directamente desde `api.prod.whoop.com` la Recuperación, Strain, Sueño,
+    HRV y FC en reposo del atleta autenticado usando su token OAuth 2.0 almacenado.
+    """
+    user_id: UUID = current_user.id
+    cloud_metrics = await fetch_whoop_cloud_metrics(db, user_id)
+    extracted = WhoopScreenExtractedMetrics(
+        sleep_pct=cloud_metrics["sleep_pct"],
+        sleep_performance_pct=cloud_metrics["sleep_performance_pct"],
+        recovery_score=cloud_metrics["recovery_score"],
+        strain_score=cloud_metrics["strain_score"],
+        stress_level=cloud_metrics["stress_level"],
+        stress_category=cloud_metrics["stress_category"],
+        sleep_hours=cloud_metrics["sleep_hours"],
+        resting_hr=cloud_metrics["resting_hr"],
+        hrv_ms=cloud_metrics["hrv_ms"],
+        avg_heart_rate=cloud_metrics["avg_hr"],
+    )
+    return await _persist_and_build_whoop_scan_response(
+        db,
+        user_id=user_id,
+        extracted=extracted,
+        resolved_source=WearableSource.WHOOP,
     )
 
 

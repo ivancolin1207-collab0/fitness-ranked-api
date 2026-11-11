@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../../data/services/secure_storage_service.dart';
@@ -114,6 +115,159 @@ class BleHeartRateService extends ChangeNotifier {
 
   int? _latestBpm;
   int? get latestBpm => _latestBpm;
+
+  // =========================================================================
+  // TELEMETRÍA FISIOLÓGICA EN VIVO DESDE BLE (0x180D / 0x2A37)
+  // =========================================================================
+  int _athleteAge = 28;
+  int? _configuredRestingHr;
+  bool _isMale = true;
+  DateTime? _lastPacketTimestamp;
+  final List<int> _sessionBpmWindow = <int>[];
+  double _accumulatedTrimp = 0.0;
+  double? _smoothedStressScore;
+
+  /// Configura los parámetros fisiológicos reales del atleta para el cálculo de
+  /// %HRR, Estrés Cardiovascular (0.0–3.0) y Strain en tiempo real (0.0–21.0).
+  void updateAthletePhysiology({
+    int? age,
+    int? restingHr,
+    bool? isMale,
+  }) {
+    bool changed = false;
+    if (age != null && age >= 14 && age <= 90 && age != _athleteAge) {
+      _athleteAge = age;
+      changed = true;
+    }
+    if (restingHr != null &&
+        restingHr >= 28 &&
+        restingHr <= 120 &&
+        restingHr != _configuredRestingHr) {
+      _configuredRestingHr = restingHr;
+      changed = true;
+    }
+    if (isMale != null && isMale != _isMale) {
+      _isMale = isMale;
+      changed = true;
+    }
+    if (changed && _latestBpm != null) {
+      _recomputeLivePhysiology(_latestBpm!, integrateTrimp: false);
+      notifyListeners();
+    }
+  }
+
+  /// FC Máxima estimada por fórmula de Tanaka (`208 - 0.7 * edad`).
+  int get athleteMaxHr =>
+      (208.0 - (0.7 * _athleteAge)).round().clamp(150, 210);
+
+  /// FC de reposo efectiva (configurada por wearable o percentil 10 inferior de sesión BLE).
+  int get effectiveRestingHr {
+    if (_configuredRestingHr != null && _configuredRestingHr! >= 28) {
+      return _configuredRestingHr!;
+    }
+    if (_sessionBpmWindow.isNotEmpty) {
+      final List<int> sorted = List<int>.from(_sessionBpmWindow)..sort();
+      final int idx = ((sorted.length - 1) * 0.10).floor().clamp(0, sorted.length - 1);
+      // En actividad ligera/reposo acotar RHR basal estimado entre 45 y 72 bpm
+      return sorted[idx].clamp(45, 72);
+    }
+    return 60;
+  }
+
+  /// Nivel de Estrés Cardiovascular en vivo (escala 0.0 a 3.0) calculado desde %HRR.
+  double? get liveStressScore =>
+      (isConnected && _smoothedStressScore != null)
+          ? double.parse(_smoothedStressScore!.clamp(0.1, 3.0).toStringAsFixed(1))
+          : null;
+
+  /// Categoría de Estrés Cardiovascular en vivo ('BAJO', 'MEDIO', 'ALTO').
+  String? get liveStressCategory {
+    final double? s = liveStressScore;
+    if (s == null) return null;
+    if (s >= 2.0) return 'ALTO';
+    if (s >= 1.0) return 'MEDIO';
+    return 'BAJO';
+  }
+
+  /// Zona de Frecuencia Cardíaca actual (1 a 5) según %HRmax.
+  int get currentHrZone {
+    final int? bpm = _latestBpm;
+    if (bpm == null || bpm <= 0) return 1;
+    final double pctMax = bpm / athleteMaxHr;
+    if (pctMax >= 0.90) return 5;
+    if (pctMax >= 0.80) return 4;
+    if (pctMax >= 0.70) return 3;
+    if (pctMax >= 0.60) return 2;
+    return 1;
+  }
+
+  /// Strain acumulado en vivo (0.0 a 21.0) por integración exponencial TRIMP de Banister.
+  double get liveAccumulatedStrain {
+    if (_accumulatedTrimp <= 0.0) {
+      return 0.0;
+    }
+    final double raw = 4.65 * math.log(1.0 + (_accumulatedTrimp / 14.0));
+    return double.parse(raw.clamp(0.0, 21.0).toStringAsFixed(1));
+  }
+
+  /// Combina logarítmicamente el Strain base del día con la carga cardiovascular BLE en vivo.
+  double? combineWithDailyStrain(double? baseDailyStrain) {
+    final double liveStrain = liveAccumulatedStrain;
+    if ((baseDailyStrain == null || baseDailyStrain <= 0.0) &&
+        liveStrain <= 0.0) {
+      return baseDailyStrain;
+    }
+    if (baseDailyStrain == null || baseDailyStrain <= 0.0) {
+      return liveStrain > 0.0 ? liveStrain : null;
+    }
+    if (liveStrain <= 0.0) {
+      return baseDailyStrain;
+    }
+    // Suma en dominio de carga TRIMP y proyección logarítmica en escala 0-21
+    final double baseLoad = 14.0 * (math.exp(baseDailyStrain / 4.65) - 1.0);
+    final double totalLoad = baseLoad + _accumulatedTrimp;
+    final double combined = 4.65 * math.log(1.0 + (totalLoad / 14.0));
+    return double.parse(combined.clamp(baseDailyStrain, 21.0).toStringAsFixed(1));
+  }
+
+  void _recomputeLivePhysiology(int bpm, {bool integrateTrimp = true}) {
+    final DateTime now = DateTime.now();
+    _sessionBpmWindow.add(bpm);
+    if (_sessionBpmWindow.length > 300) {
+      _sessionBpmWindow.removeAt(0);
+    }
+
+    final int rhr = effectiveRestingHr;
+    final int maxHr = math.max(rhr + 30, athleteMaxHr);
+    final double hrr = ((bpm - rhr) / (maxHr - rhr)).clamp(0.0, 1.0);
+
+    // 1. Estrés Cardiovascular en vivo (escala Whoop 0.0 a 3.0 basada en %HRR)
+    final double instantStress = (0.15 + (hrr * 3.85)).clamp(0.1, 3.0);
+    _smoothedStressScore = _smoothedStressScore == null
+        ? instantStress
+        : ((0.25 * instantStress) + (0.75 * _smoothedStressScore!));
+
+    // 2. Acumulación de Strain TRIMP en tiempo real por zonas de FC
+    if (integrateTrimp && _lastPacketTimestamp != null) {
+      final int elapsedMs =
+          now.difference(_lastPacketTimestamp!).inMilliseconds;
+      if (elapsedMs > 0 && elapsedMs <= 30000) {
+        final double dtMinutes = elapsedMs / 60000.0;
+        final double expFactor = _isMale ? 1.92 : 1.67;
+        final double zoneMultiplier = currentHrZone >= 4
+            ? 1.35
+            : (currentHrZone == 3 ? 1.15 : 1.0);
+        if (hrr > 0.05) {
+          _accumulatedTrimp += dtMinutes *
+              hrr *
+              0.64 *
+              math.exp(expFactor * hrr) *
+              zoneMultiplier;
+        }
+      }
+    }
+    _lastPacketTimestamp = now;
+  }
 
   String? _statusMessage;
   String? get statusMessage => _statusMessage;
@@ -321,6 +475,7 @@ class BleHeartRateService extends ChangeNotifier {
       final int bpm = parseHeartRate(payload);
       if (bpm >= 25 && bpm <= 240) {
         _latestBpm = bpm;
+        _recomputeLivePhysiology(bpm, integrateTrimp: true);
         _bpmStreamController.add(bpm);
         notifyListeners();
       }

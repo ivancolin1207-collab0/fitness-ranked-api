@@ -941,9 +941,11 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      '${viewModel.liveHeartRate ?? "--"} BPM',
+                      bleActive && (viewModel.liveHeartRate ?? 0) > 0
+                          ? '${viewModel.liveHeartRate} BPM • Z${viewModel.bleService.currentHrZone} (${viewModel.bleService.liveAccumulatedStrain.toStringAsFixed(1)})'
+                          : '${viewModel.liveHeartRate ?? "--"} BPM',
                       style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w900,
                       ),
                     ),

@@ -218,9 +218,11 @@ class WearableMetricRecord {
 
   factory WearableMetricRecord.fromJson(Map<String, dynamic> json) {
     final Map<String, dynamic> root =
-        json['saved_metric'] is Map<String, dynamic>
-            ? json['saved_metric'] as Map<String, dynamic>
-            : json;
+        json['data'] is Map<String, dynamic>
+            ? json['data'] as Map<String, dynamic>
+            : (json['saved_metric'] is Map<String, dynamic>
+                ? json['saved_metric'] as Map<String, dynamic>
+                : json);
     final Map<String, dynamic>? extracted =
         json['extracted'] is Map<String, dynamic>
             ? json['extracted'] as Map<String, dynamic>
@@ -357,21 +359,26 @@ class WearableMetricRecord {
   Map<String, dynamic> toSyncJson() {
     final String ymd =
         '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    // Si el dispositivo no está soportado por un backend antiguo, mapear de forma segura
     final String backendDevice =
         (sourceDevice == 'SAMSUNG_WATCH' || sourceDevice == 'APPLE_WATCH')
             ? 'HEALTH_CONNECT'
             : sourceDevice;
+    final int safeAvgHr =
+        (avgHr > 0 ? avgHr : (restingHr >= 30 ? restingHr : 60)).clamp(30, 220);
+    final int safeMaxHr =
+        (maxHr >= safeAvgHr ? maxHr : safeAvgHr + 20).clamp(40, 240);
     return <String, dynamic>{
       'date': ymd,
       'strain_score': strainScore.clamp(0.0, 21.0),
       'recovery_score': recoveryScore.clamp(0.0, 100.0),
-      'hrv_ms': hrvMs.clamp(5.0, 300.0),
-      'resting_hr': restingHr.clamp(25, 140),
-      'avg_hr': avgHr.clamp(30, 220),
-      'max_hr': (maxHr < avgHr ? avgHr + 25 : maxHr).clamp(40, 240),
+      'hrv_ms': hrvMs >= 5.0 ? hrvMs.clamp(5.0, 300.0) : null,
+      'resting_hr': restingHr >= 25 ? restingHr.clamp(25, 140) : null,
+      'avg_hr': safeAvgHr,
+      'max_hr': safeMaxHr,
       'sleep_hours': sleepHours.clamp(0.0, 24.0),
       'sleep_efficiency_pct': sleepEfficiencyPct.clamp(0.0, 100.0),
+      'stress_level': whoopStressLevel.clamp(0.0, 3.0),
+      if (stressCategory != null) 'stress_category': stressCategory,
       'source_device': backendDevice,
     };
   }

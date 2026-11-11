@@ -268,7 +268,7 @@ async def get_today_athlete_readiness(
                         """
                         SELECT sleep_pct, recovery_score, strain_score,
                                stress_level, stress_category, sleep_hours,
-                               source_device, synced_at
+                               source_device, synced_at, hrv_ms, resting_hr
                         FROM daily_readiness
                         WHERE user_id = :uid AND date = :today
                         ORDER BY synced_at DESC
@@ -306,6 +306,8 @@ async def get_today_athlete_readiness(
             use_dr_primary = True
 
     if use_dr_primary and dr_row is not None:
+        dr_hrv = float(dr_row[8]) if (len(dr_row) > 8 and dr_row[8] is not None and float(dr_row[8]) > 0) else None
+        dr_rhr = int(dr_row[9]) if (len(dr_row) > 9 and dr_row[9] is not None and int(dr_row[9]) > 0) else None
         return {
             "has_readiness_today": True,
             "sleep_pct": float(dr_row[0]) if dr_row[0] is not None else None,
@@ -314,12 +316,20 @@ async def get_today_athlete_readiness(
             "stress_level": float(dr_row[3]) if dr_row[3] is not None else None,
             "stress_category": str(dr_row[4]) if dr_row[4] is not None else None,
             "sleep_hours": float(dr_row[5]) if dr_row[5] is not None else None,
-            "hrv_ms": float(wm_row.hrv_ms)
-            if (wm_row is not None and wm_row.hrv_ms is not None)
-            else None,
-            "resting_hr": int(wm_row.resting_hr)
-            if (wm_row is not None and wm_row.resting_hr is not None)
-            else None,
+            "hrv_ms": dr_hrv
+            if dr_hrv is not None
+            else (
+                float(wm_row.hrv_ms)
+                if (wm_row is not None and wm_row.hrv_ms is not None)
+                else None
+            ),
+            "resting_hr": dr_rhr
+            if dr_rhr is not None
+            else (
+                int(wm_row.resting_hr)
+                if (wm_row is not None and wm_row.resting_hr is not None)
+                else None
+            ),
             "source_device": str(dr_row[6]) if dr_row[6] is not None else "WHOOP",
         }
 

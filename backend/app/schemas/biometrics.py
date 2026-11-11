@@ -88,17 +88,26 @@ class WearableSyncRequest(BaseModel):
     recovery_score: float = Field(..., ge=0.0, le=100.0)
     hrv_ms: Optional[float] = Field(default=None, ge=0.0, le=300.0)
     resting_hr: Optional[int] = Field(default=None, ge=0, le=200)
-    avg_hr: int = Field(..., ge=30, le=220)
-    max_hr: int = Field(..., ge=40, le=240)
+    avg_hr: int = Field(default=60, ge=0, le=220)
+    max_hr: int = Field(default=80, ge=0, le=240)
     sleep_hours: float = Field(..., ge=0.0, le=24.0)
     sleep_efficiency_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    stress_level: Optional[float] = Field(default=None, ge=0.0, le=3.0)
+    stress_category: Optional[str] = Field(default=None, max_length=25)
     source_device: WearableSource = WearableSource.WHOOP
 
     @model_validator(mode="after")
     def verify_heart_rate_bounds(self) -> "WearableSyncRequest":
         if self.max_hr < self.avg_hr:
-            raise ValueError("`max_hr` no puede ser menor que `avg_hr`.")
+            self.max_hr = max(self.avg_hr, 40)
         return self
+
+
+class WhoopScanBase64Request(BaseModel):
+    image_base64: str = Field(..., min_length=32)
+    mime_type: str = Field(default="image/jpeg")
+    source_device: str = Field(default="WHOOP")
+    source_wearable: Optional[str] = None
 
 
 class WearableSyncResponse(BaseModel):

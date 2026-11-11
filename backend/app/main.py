@@ -51,9 +51,14 @@ async def enforce_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-    )
+    if "/oauth/callback" in request.url.path:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        )
     response.headers["Permissions-Policy"] = (
         "camera=(), microphone=(), geolocation=(), payment=()"
     )
@@ -145,7 +150,41 @@ async def ensure_postgres_enums() -> None:
             )
             await conn.execute(
                 text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS stress_category VARCHAR(20) NOT NULL DEFAULT 'SIN DATO'"
+                )
+            )
+            await conn.execute(
+                text(
                     "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 0.0"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS hrv_ms NUMERIC(5,2)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS resting_hr SMALLINT"
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS whoop_oauth_tokens (
+                        user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                        access_token TEXT NOT NULL,
+                        refresh_token TEXT,
+                        expires_at TIMESTAMPTZ NOT NULL,
+                        whoop_user_id VARCHAR(64),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
                 )
             )
             await conn.execute(

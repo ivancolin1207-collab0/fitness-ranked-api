@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/services/ble_heart_rate_service.dart';
 import '../../../../core/services/wearable_service.dart';
@@ -95,12 +97,74 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  static const MethodChannel _systemChannel = MethodChannel('apexmetrix/system');
+
   @override
   void initState() {
     super.initState();
     bleService.autoReconnectSavedDevice(
       userId: authViewModel.currentUser?.id,
     );
+    _registerDeepLinkListener();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      bleService.updateAthletePhysiology(
+        restingHr: viewModel.restingHr ?? viewModel.wearable?.restingHr,
+        isMale: (authViewModel.currentUser?.sex ?? 'male').toLowerCase() !=
+            'female',
+      );
+      if (!viewModel.hasWhoopData && !viewModel.isSyncingWearable) {
+        unawaited(viewModel.forceSyncWearable());
+      }
+    });
+  }
+
+  void _registerDeepLinkListener() {
+    _systemChannel.setMethodCallHandler((MethodCall call) async {
+      if (call.method == 'onDeepLink') {
+        final String link = (call.arguments ?? '').toString();
+        if (link.startsWith('apexmetrix://oauth/whoop')) {
+          await _handleIncomingWhoopOAuthDeepLink(link);
+        }
+      }
+    });
+    unawaited(
+      _systemChannel
+          .invokeMethod<String>('consumeInitialDeepLink')
+          .then((String? initialLink) async {
+        if (initialLink != null &&
+            initialLink.startsWith('apexmetrix://oauth/whoop')) {
+          await _handleIncomingWhoopOAuthDeepLink(initialLink);
+        }
+      }).catchError((_) {}),
+    );
+  }
+
+  Future<void> _handleIncomingWhoopOAuthDeepLink(String link) async {
+    if (!mounted) {
+      return;
+    }
+    final Uri? uri = Uri.tryParse(link);
+    final String status = uri?.queryParameters['status'] ?? '';
+    if (status == 'linked') {
+      try {
+        await viewModel.syncOrLinkWhoopCloud();
+        widget.onProfileOrBiometricsUpdated?.call();
+        if (mounted) {
+          setState(() {});
+        }
+      } catch (e) {
+        if (mounted) {
+          _showErrorAlertDialog(
+            context,
+            title: 'Error en Auto-Sync WHOOP Cloud',
+            detail: e.toString(),
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -119,8 +183,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     strainScore: viewModel.whoopStrain ?? wearable.strainScore,
                     recoveryScore:
                         viewModel.whoopRecovery ?? wearable.recoveryScore,
-                    hrvMs: wearable.hrvMs,
-                    restingHr: wearable.restingHr,
+                    hrvMs: viewModel.hrvMs ?? wearable.hrvMs,
+                    restingHr: viewModel.restingHr ?? wearable.restingHr,
                     avgHr: wearable.avgHr,
                     maxHr: wearable.maxHr,
                     sleepHours: viewModel.whoopSleepHours ?? wearable.sleepHours,
@@ -830,18 +894,33 @@ class _HomeScreenState extends State<HomeScreen> {
     WearableMetricRecord? wearable,
   ) {
     final bool hasData = wearable != null && viewModel.hasWhoopData;
+    final bool hasBleLive =
+        bleService.isConnected && (bleService.latestBpm ?? 0) > 0;
     final double activeSleepPct = hasData
         ? (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0)
         : 0.0;
     final double recovery = hasData
         ? (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0)
         : 0.0;
-    final double strain = hasData
+    final double baseStrain = hasData
         ? (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0)
         : 0.0;
-    final double stress = hasData
+    final double? combinedStrain =
+        bleService.combineWithDailyStrain(hasData ? baseStrain : null);
+    final bool hasEffectiveStrain =
+        hasData || (hasBleLive && (combinedStrain ?? 0.0) > 0.0);
+    final double strain =
+        (combinedStrain ?? baseStrain).clamp(0.0, 21.0);
+
+    final double? bleStress = bleService.liveStressScore;
+    final bool hasEffectiveStress =
+        (hasData && (viewModel.whoopStress ?? wearable.whoopStressLevel) > 0) ||
+            (hasBleLive && bleStress != null) ||
+            hasData;
+    final double stress = (hasData &&
+            (viewModel.whoopStress ?? wearable.whoopStressLevel) > 0)
         ? (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0)
-        : 0.0;
+        : ((hasBleLive && bleStress != null) ? bleStress.clamp(0.0, 3.0) : 0.0);
     final double activeSleepHours = hasData
         ? (viewModel.whoopSleepHours ?? wearable.sleepHours)
         : 0.0;
@@ -850,11 +929,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final Color recColor = viewModel.recoveryColor;
     final String zoneLabel = viewModel.recoveryStatusText;
 
-    final String activeStressCategory = !hasData
+    final String activeStressCategory = !hasEffectiveStress
         ? 'SIN DATOS'
-        : (viewModel.whoopStressCategory ??
-            (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO')));
-    final Color stressColor = !hasData
+        : ((hasData &&
+                (viewModel.whoopStress ?? wearable.whoopStressLevel) > 0 &&
+                viewModel.whoopStressCategory != null)
+            ? viewModel.whoopStressCategory!
+            : (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO')));
+    final Color stressColor = !hasEffectiveStress
         ? const Color(0xFF6B7280)
         : (activeStressCategory == 'ALTO' || stress >= 2.0
             ? ApexTheme.warningAmber
@@ -867,7 +949,9 @@ class _HomeScreenState extends State<HomeScreen> {
         : '${activeSleepPct.toStringAsFixed(0)}%';
 
     final String geminiRationale = !hasData
-        ? 'Sin telemetría de WHOOP sincronizada hoy. Pulsa "ESCANEAR CAPTURA DE WHOOP" (compresión automática <200 KB) para extraer tus métricas reales del día.'
+        ? (hasBleLive
+            ? 'Pulso BLE en vivo (${bleService.latestBpm} BPM • Zona Z${bleService.currentHrZone} • Estrés ${stress.toStringAsFixed(1)} $activeStressCategory). Escanea tu captura de WHOOP o sincroniza Health Connect / WHOOP Cloud para cargar Sueño y Recuperación.'
+            : 'Sin telemetría de WHOOP sincronizada hoy. Pulsa "ESCANEAR CAPTURA DE WHOOP" (compresión automática <200 KB) o "Forzar Sync" para extraer tus métricas reales del día.')
         : (isCompromised
             ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos la carga prescrita (-15% • RPE 6.5-7.0) para proteger tu SNC.'
             : (recovery >= 67.0
@@ -945,9 +1029,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 _WhoopCircleGauge(
                   label: 'ESFUERZO >',
-                  valueText: hasData ? strain.toStringAsFixed(1) : '--',
-                  progress: hasData ? (strain / 21.0).clamp(0.0, 1.0) : 0.0,
-                  color: hasData ? const Color(0xFF0095FF) : const Color(0xFF4B5563),
+                  valueText: hasEffectiveStrain ? strain.toStringAsFixed(1) : '--',
+                  progress: hasEffectiveStrain ? (strain / 21.0).clamp(0.0, 1.0) : 0.0,
+                  color: hasEffectiveStrain ? const Color(0xFF0095FF) : const Color(0xFF4B5563),
                 ),
               ],
             ),
@@ -1071,7 +1155,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                hasData ? stress.toStringAsFixed(1) : '--',
+                                hasEffectiveStress ? stress.toStringAsFixed(1) : '--',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w900,
@@ -1092,9 +1176,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                       color: stressColor,
                                     ),
                                   ),
-                                  const Text(
-                                    'Escala 0.0–3.0',
-                                    style: TextStyle(
+                                  Text(
+                                    hasBleLive && !hasData
+                                        ? 'En vivo BLE (${bleService.latestBpm} BPM)'
+                                        : 'Escala 0.0–3.0',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
                                       fontSize: 10,
                                       color: ApexTheme.textMuted,
                                     ),
@@ -1560,16 +1648,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? null
                     : () async {
                         await viewModel.forceSyncWearable();
+                        widget.onProfileOrBiometricsUpdated?.call();
                         if (mounted) {
                           setState(() {});
                         }
                       },
-                icon: const Icon(Icons.sync_rounded, size: 14),
-                label: const Text(
-                  'Forzar Sync',
+                icon: viewModel.isSyncingWearable
+                    ? const SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: ApexTheme.voltAccent,
+                        ),
+                      )
+                    : const Icon(Icons.sync_rounded, size: 14),
+                label: Text(
+                  viewModel.isSyncingWearable ? 'Sincronizando...' : 'Forzar Sync',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -1601,7 +1699,185 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+        if (activeSource == 'WHOOP') ...<Widget>[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              backgroundColor: viewModel.whoopCloudLinked
+                  ? const Color(0xFF10B981).withValues(alpha: 0.12)
+                  : ApexTheme.obsidianBg,
+              foregroundColor: viewModel.whoopCloudLinked
+                  ? const Color(0xFF10B981)
+                  : ApexTheme.cyanElectric,
+              side: BorderSide(
+                color: viewModel.whoopCloudLinked
+                    ? const Color(0xFF10B981)
+                    : ApexTheme.cyanElectric.withValues(alpha: 0.65),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: viewModel.isSyncingWhoopCloud
+                ? null
+                : () => _handleWhoopCloudOAuthButton(context),
+            icon: viewModel.isSyncingWhoopCloud
+                ? const SizedBox(
+                    width: 13,
+                    height: 13,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: ApexTheme.cyanElectric,
+                    ),
+                  )
+                : Icon(
+                    viewModel.whoopCloudLinked
+                        ? Icons.cloud_done_rounded
+                        : Icons.cloud_sync_rounded,
+                    size: 15,
+                  ),
+            label: Text(
+              viewModel.whoopCloudLinked
+                  ? 'Sincronizar WHOOP Cloud API (OAuth Activo)'
+                  : 'Vincular WHOOP Cloud (Auto-Sync API)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
       ],
+    );
+  }
+
+  Future<void> _handleWhoopCloudOAuthButton(BuildContext context) async {
+    try {
+      final Map<String, dynamic> result =
+          await viewModel.syncOrLinkWhoopCloud();
+      if (!context.mounted) {
+        return;
+      }
+      final String action = (result['action'] ?? '').toString();
+      if (action == 'synced') {
+        widget.onProfileOrBiometricsUpdated?.call();
+        if (mounted) {
+          setState(() {});
+        }
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: viewModel.recoveryColor,
+            content: const Text(
+              'WHOOP Cloud API sincronizada automáticamente (developer.whoop.com)',
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (action == 'oauth_launched') {
+        final bool configured = result['oauth_configured'] == true;
+        if (!configured) {
+          _showErrorAlertDialog(
+            context,
+            title: 'WHOOP Cloud OAuth 2.0 (developer.whoop.com)',
+            detail:
+                'Se abrió el portal OAuth de WHOOP. Para sincronización automática directa en producción, verifica que WHOOP_CLIENT_ID y WHOOP_CLIENT_SECRET estén configurados en las variables de entorno de Render.\n\nMientras tanto, puedes usar "ESCANEAR CAPTURA DE WHOOP" o "Forzar Sync" (Health Connect) al instante.',
+          );
+        }
+        return;
+      }
+      _showErrorAlertDialog(
+        context,
+        title: 'WHOOP Cloud OAuth 2.0',
+        detail: (result['message'] ?? 'No se pudo iniciar OAuth 2.0 con WHOOP.')
+            .toString(),
+      );
+    } on WearableScanException catch (err) {
+      if (context.mounted) {
+        _showErrorAlertDialog(
+          context,
+          title: 'Error HTTP ${err.statusCode} en WHOOP Cloud',
+          detail: err.message,
+        );
+      }
+    } catch (err) {
+      if (context.mounted) {
+        _showErrorAlertDialog(
+          context,
+          title: 'Error al conectar con WHOOP Cloud API',
+          detail: err.toString(),
+        );
+      }
+    }
+  }
+
+  void _showErrorAlertDialog(
+    BuildContext context, {
+    required String title,
+    required String detail,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: ApexTheme.cardGraphite,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: ApexTheme.deloadCrimson),
+          ),
+          title: Row(
+            children: <Widget>[
+              const Icon(
+                Icons.error_outline_rounded,
+                color: ApexTheme.deloadCrimson,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: ApexTheme.deloadCrimson,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: SelectableText(
+              detail,
+              style: const TextStyle(
+                fontSize: 12,
+                color: ApexTheme.textPrimary,
+                height: 1.35,
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text(
+                'CERRAR',
+                style: TextStyle(
+                  color: ApexTheme.voltAccent,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1624,7 +1900,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final bytes = await pickedFile.readAsBytes();
+    final Uint8List bytes = await pickedFile.readAsBytes();
     if (!context.mounted) {
       return;
     }
@@ -1687,7 +1963,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       // 1. Sobrescribir inmediatamente TODAS las variables del ViewModel (+ caché local por usuario/día)
-      viewModel.applyScanResponse(response, sourceDevice: activeSource);
+      final Map<String, dynamic> payload = (response['data'] is Map)
+          ? Map<String, dynamic>.from(response['data'] as Map)
+          : response;
+      viewModel.applyScanResponse(payload, sourceDevice: activeSource);
       widget.onProfileOrBiometricsUpdated?.call();
 
       // 2. Forzar reconstrucción inmediata
@@ -1698,12 +1977,13 @@ class _HomeScreenState extends State<HomeScreen> {
       if (context.mounted) {
         final double? rec = viewModel.effectiveRecovery;
         final double? str = viewModel.whoopStrain ?? viewModel.strainScore;
+        final double? slp = viewModel.sleepPct ?? viewModel.whoopSleep;
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: viewModel.recoveryColor,
             content: Text(
-              'Sincronizado: Recuperación ${rec != null ? "${rec.toStringAsFixed(0)}%" : "--"} | Esfuerzo ${str != null ? str.toStringAsFixed(1) : "--"}',
+              'Sincronizado: Sueño ${slp != null ? "${slp.toStringAsFixed(0)}%" : "--"} | Recuperación ${rec != null ? "${rec.toStringAsFixed(0)}%" : "--"} | Esfuerzo ${str != null ? str.toStringAsFixed(1) : "--"}',
               style: const TextStyle(
                 color: Colors.black,
                 fontWeight: FontWeight.w800,
@@ -1718,15 +1998,10 @@ class _HomeScreenState extends State<HomeScreen> {
         dialogOpen = false;
       }
       if (context.mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 5),
-            content: Text(
-              'Error HTTP ${err.statusCode}: ${err.message}',
-            ),
-          ),
+        _showErrorAlertDialog(
+          context,
+          title: 'Error HTTP ${err.statusCode} al escanear captura',
+          detail: err.message,
         );
       }
     } catch (err) {
@@ -1735,13 +2010,10 @@ class _HomeScreenState extends State<HomeScreen> {
         dialogOpen = false;
       }
       if (context.mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 5),
-            content: Text('Error de escaneo wearable: $err'),
-          ),
+        _showErrorAlertDialog(
+          context,
+          title: 'Error al escanear captura de $activeSource',
+          detail: err.toString(),
         );
       }
     }
@@ -1752,14 +2024,28 @@ class _HomeScreenState extends State<HomeScreen> {
     String activeSource,
   ) {
     final bool hasData = wearable != null && viewModel.hasWhoopData;
+    final double effectiveHrv =
+        viewModel.hrvMs ?? (hasData ? wearable.hrvMs : 0.0);
+    final int syncedRhr =
+        viewModel.restingHr ?? (hasData ? wearable.restingHr : 0);
+    final int effectiveRhr = syncedRhr > 0
+        ? syncedRhr
+        : (bleService.isConnected && (bleService.latestBpm ?? 0) > 0
+            ? bleService.effectiveRestingHr
+            : 0);
+    final double effectiveSleepPct =
+        viewModel.sleepPct ?? viewModel.whoopSleep ?? (hasData ? wearable.sleepEfficiencyPct : 0.0);
+    final double effectiveSleepHours =
+        viewModel.sleepHours ?? viewModel.whoopSleepHours ?? (hasData ? wearable.sleepHours : 0.0);
+
     return Row(
       spacing: 8,
       children: <Widget>[
         Expanded(
           child: _MetricTile(
             label: 'HRV (RMSSD)',
-            value: hasData && wearable.hrvMs > 0
-                ? '${wearable.hrvMs.toStringAsFixed(0)} ms'
+            value: effectiveHrv > 0
+                ? '${effectiveHrv.toStringAsFixed(0)} ms'
                 : '--',
             accent: ApexTheme.voltAccent,
             icon: Icons.monitor_heart_outlined,
@@ -1768,8 +2054,8 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _MetricTile(
             label: 'FC REPOSO',
-            value: hasData && wearable.restingHr > 0
-                ? '${wearable.restingHr} bpm'
+            value: effectiveRhr > 0
+                ? '$effectiveRhr bpm'
                 : '--',
             accent: ApexTheme.cyanElectric,
             icon: Icons.favorite_border_rounded,
@@ -1781,8 +2067,8 @@ class _HomeScreenState extends State<HomeScreen> {
             value: !hasData
                 ? '--'
                 : (activeSource == 'WHOOP'
-                    ? '${(viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).toStringAsFixed(0)}%'
-                    : '${(viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h'),
+                    ? '${effectiveSleepPct.toStringAsFixed(0)}%'
+                    : '${effectiveSleepHours.toStringAsFixed(1)} h'),
             accent: ApexTheme.readinessGreen,
             icon: Icons.bedtime_outlined,
           ),

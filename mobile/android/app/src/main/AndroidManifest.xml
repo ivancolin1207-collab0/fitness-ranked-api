@@ -37,14 +37,26 @@
     <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
     <uses-permission android:name="android.permission.health.READ_STEPS" />
 
-    <!-- Visibilidad de paquete para Android 11+ (Health Connect APK e Image Picker) -->
+    <!-- Visibilidad de paquete para Android 11+ / 14+ (Health Connect Controller, Wearables e Image Picker) -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <package android:name="com.google.android.healthconnect.controller" />
         <package android:name="com.sec.android.app.shealth" />
         <package android:name="com.huawei.health" />
         <package android:name="com.whoop.android" />
         <intent>
             <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+            <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+        </intent>
+        <intent>
+            <action android:name="android.health.connect.action.MANAGE_HEALTH_PERMISSIONS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
         </intent>
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
@@ -80,12 +92,32 @@
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
             </intent-filter>
 
-            <!-- Alias para Android 14+ (API 34+) Health Connect Permissions -->
+            <!-- Intent Filter directo en MainActivity (Android 13 / 14+) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
+
+            <!-- Deep Link de retorno OAuth 2.0 WHOOP Cloud -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="apexmetrix" android:host="oauth" />
+            </intent-filter>
         </activity>
+
+        <!-- Activity Alias OBLIGATORIO en Android 14 / 15 / 16 con START_VIEW_PERMISSION_USAGE -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <meta-data
             android:name="flutterEmbedding"

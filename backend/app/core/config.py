@@ -59,6 +59,11 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = ""
     GEMINI_API_KEY: str = ""
+    WHOOP_CLIENT_ID: str = ""
+    WHOOP_CLIENT_SECRET: str = ""
+    WHOOP_REDIRECT_URI: str = (
+        "https://fitness-ranked-api.onrender.com/api/v1/wearables/whoop/oauth/callback"
+    )
     SECRET_KEY: str = _resolve_secret_key()
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 365

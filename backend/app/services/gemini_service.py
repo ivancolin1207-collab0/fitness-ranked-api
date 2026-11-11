@@ -347,13 +347,10 @@ def parse_whoop_screen(
             if raw_json.get("sleep_pct") is not None
             else raw_json.get("sleep_performance_pct")
         )
-        sleep_val = _coerce_required_float(raw_sleep, "sleep_pct")
-        rec_val = _coerce_required_float(
-            raw_json.get("recovery_score"), "recovery_score"
-        )
-        strain_val = _coerce_required_float(
-            raw_json.get("strain_score"), "strain_score"
-        )
+        sleep_opt = _coerce_optional_float(raw_sleep)
+        rec_opt = _coerce_optional_float(raw_json.get("recovery_score"))
+        strain_opt = _coerce_optional_float(raw_json.get("strain_score"))
+
         stress_opt = _coerce_optional_float(raw_json.get("stress_level"))
         stress_val = max(0.0, min(3.0, stress_opt)) if stress_opt is not None else 0.0
 
@@ -378,11 +375,31 @@ def parse_whoop_screen(
             max(0.0, min(24.0, sleep_hours_opt)) if sleep_hours_opt is not None else 0.0
         )
 
+        if sleep_opt is None and sleep_hours_val > 0:
+            sleep_opt = round(min(100.0, (sleep_hours_val / 8.0) * 100.0), 0)
+
         rhr_opt = _coerce_optional_float(raw_json.get("resting_hr"))
         rhr_val = max(0, min(220, int(round(rhr_opt)))) if rhr_opt is not None else 0
 
         hrv_opt = _coerce_optional_float(raw_json.get("hrv_ms"))
         hrv_val = max(0.0, min(300.0, round(hrv_opt, 1))) if hrv_opt is not None else 0.0
+
+        if (
+            sleep_opt is None
+            and rec_opt is None
+            and strain_opt is None
+            and hrv_val <= 0
+            and rhr_val <= 0
+        ):
+            raise ValueError(
+                "No se detectaron diales de Sueño %, Recuperación % ni Esfuerzo en la imagen."
+            )
+
+        sleep_val = sleep_opt if sleep_opt is not None else 0.0
+        rec_val = rec_opt if rec_opt is not None else 0.0
+        strain_val = strain_opt if strain_opt is not None else 0.0
+        if sleep_hours_val <= 0.0 and sleep_val > 0.0:
+            sleep_hours_val = round((sleep_val / 100.0) * 8.0, 1)
     except Exception as exc:
         raise HTTPException(
             status_code=400,
