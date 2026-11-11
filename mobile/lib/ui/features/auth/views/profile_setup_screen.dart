@@ -22,6 +22,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   late final TextEditingController _fullNameCtrl;
   late final TextEditingController _usernameCtrl;
   late final TextEditingController _heightCtrl;
+  late final TextEditingController _weightCtrl;
+  late final TextEditingController _bodyFatCtrl;
 
   DateTime _birthDate = DateTime(1998, 6, 15);
   String _biologicalSex = 'MALE';
@@ -36,12 +38,26 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     _fullNameCtrl = TextEditingController(text: user?.fullName ?? '');
     _usernameCtrl = TextEditingController(text: user?.username ?? '');
     _heightCtrl = TextEditingController(
-      text: (user?.heightCm ?? 175.0).toStringAsFixed(0),
+      text: (user?.heightCm != null && user!.heightCm! > 0)
+          ? user.heightCm!.toStringAsFixed(0)
+          : '',
+    );
+    _weightCtrl = TextEditingController(
+      text: (user?.weightKg != null && user!.weightKg! > 0)
+          ? user.weightKg!.toStringAsFixed(1)
+          : '',
+    );
+    _bodyFatCtrl = TextEditingController(
+      text: (user?.bodyFatPct != null && user!.bodyFatPct! > 0)
+          ? user.bodyFatPct!.toStringAsFixed(1)
+          : '',
     );
     if (user?.birthDate != null) {
       _birthDate = user!.birthDate!;
     }
-    _biologicalSex = user?.biologicalSex ?? 'MALE';
+    final String rawSex =
+        (user?.sex ?? user?.biologicalSex ?? 'MALE').toUpperCase();
+    _biologicalSex = rawSex.contains('FEM') ? 'FEMALE' : 'MALE';
     _trainingGoal = user?.trainingGoal ?? 'HIPERTROFIA';
     _preferredWearable = user?.preferredWearable ?? 'WHOOP';
     _unitSystem = user?.unitSystem ?? 'KG';
@@ -52,6 +68,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     _fullNameCtrl.dispose();
     _usernameCtrl.dispose();
     _heightCtrl.dispose();
+    _weightCtrl.dispose();
+    _bodyFatCtrl.dispose();
     super.dispose();
   }
 
@@ -87,7 +105,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     }
 
     final double heightCm =
-        double.tryParse(_heightCtrl.text.trim()) ?? 175.0;
+        double.parse(_heightCtrl.text.trim().replaceAll(',', '.'));
+    final double weightKg =
+        double.parse(_weightCtrl.text.trim().replaceAll(',', '.'));
+    final String rawFat = _bodyFatCtrl.text.trim().replaceAll(',', '.');
+    final double? bodyFatPct =
+        rawFat.isEmpty ? null : double.tryParse(rawFat);
 
     final ProfileSetupRequestModel payload = ProfileSetupRequestModel(
       username: _usernameCtrl.text.trim(),
@@ -95,6 +118,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       birthDate: _birthDate,
       biologicalSex: _biologicalSex,
       heightCm: heightCm.clamp(120.0, 240.0),
+      weightKg: weightKg.clamp(30.0, 280.0),
+      bodyFatPct: bodyFatPct?.clamp(2.5, 65.0),
       trainingGoal: _trainingGoal,
       preferredWearable: _preferredWearable,
       unitSystem: _unitSystem,
@@ -300,11 +325,11 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                                     items: const <DropdownMenuItem<String>>[
                                       DropdownMenuItem<String>(
                                         value: 'MALE',
-                                        child: Text('Masculino'),
+                                        child: Text('Hombre'),
                                       ),
                                       DropdownMenuItem<String>(
                                         value: 'FEMALE',
-                                        child: Text('Femenino'),
+                                        child: Text('Mujer'),
                                       ),
                                     ],
                                     onChanged: (String? v) {
@@ -323,7 +348,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                                       decimal: true,
                                     ),
                                     decoration: InputDecoration(
-                                      labelText: 'Altura (cm)',
+                                      labelText: 'Estatura (cm)',
                                       suffixText: 'cm',
                                       filled: true,
                                       fillColor: ApexTheme.obsidianBg,
@@ -332,12 +357,81 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                                       ),
                                     ),
                                     validator: (String? v) {
-                                      final double? parsed =
-                                          double.tryParse((v ?? '').trim());
+                                      final double? parsed = double.tryParse(
+                                        (v ?? '').trim().replaceAll(',', '.'),
+                                      );
                                       if (parsed == null ||
                                           parsed < 120 ||
                                           parsed > 240) {
                                         return '120 - 240 cm';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            Row(
+                              children: <Widget>[
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _weightCtrl,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    decoration: InputDecoration(
+                                      labelText: 'Peso actual (kg)',
+                                      suffixText: 'kg',
+                                      filled: true,
+                                      fillColor: ApexTheme.obsidianBg,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                    validator: (String? v) {
+                                      final double? parsed = double.tryParse(
+                                        (v ?? '').trim().replaceAll(',', '.'),
+                                      );
+                                      if (parsed == null ||
+                                          parsed < 30 ||
+                                          parsed > 280) {
+                                        return '30 - 280 kg';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _bodyFatCtrl,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    decoration: InputDecoration(
+                                      labelText: '% Grasa (opcional)',
+                                      suffixText: '%',
+                                      filled: true,
+                                      fillColor: ApexTheme.obsidianBg,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                    validator: (String? v) {
+                                      final String raw =
+                                          (v ?? '').trim().replaceAll(',', '.');
+                                      if (raw.isEmpty) {
+                                        return null;
+                                      }
+                                      final double? parsed =
+                                          double.tryParse(raw);
+                                      if (parsed == null ||
+                                          parsed < 2.5 ||
+                                          parsed > 65) {
+                                        return '2.5% - 65%';
                                       }
                                       return null;
                                     },

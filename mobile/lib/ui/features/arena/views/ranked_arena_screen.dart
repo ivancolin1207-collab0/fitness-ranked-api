@@ -127,6 +127,9 @@ class RankedArenaScreen extends StatelessWidget {
                                 viewModel.active2v2Duel!,
                               ),
                               const SizedBox(height: 14),
+                            ] else ...<Widget>[
+                              _buildNoActive2v2Card(context),
+                              const SizedBox(height: 14),
                             ],
                             // 3. Guerra de Escuadras / Grupal (3 a 5 atletas)
                             _buildSquadsSimultaneousSection(context),
@@ -422,9 +425,59 @@ class RankedArenaScreen extends StatelessWidget {
             ),
             SizedBox(height: 4),
             Text(
-              'Elige un rival con "Retar por Username" (ej. @Alan) o "Matchmaking (±100 ELO)". Tus entrenos sumarán en paralelo tanto al 1v1 como a tu Escuadra.',
+              'Elige un rival real registrado con "Retar por Username" o "Matchmaking (±100 ELO)". Tus entrenos sumarán en paralelo tanto al 1v1 como a tu Escuadra.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoActive2v2Card(BuildContext context) {
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: ApexTheme.cardBorder),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: <Widget>[
+            const Icon(
+              Icons.people_outline_rounded,
+              color: ApexTheme.cyanElectric,
+              size: 24,
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'SIN PAREJA 2v2 CONFIGURADA',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                  ),
+                  Text(
+                    'Vincula a un compañero registrado por username para activar el Duelo 2v2 real.',
+                    style: TextStyle(fontSize: 11, color: ApexTheme.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                foregroundColor: ApexTheme.cyanElectric,
+                side: const BorderSide(color: ApexTheme.cyanElectric),
+              ),
+              onPressed: () => _openDuo2v2Modal(context),
+              child: const Text(
+                'PAREJA 2v2',
+                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
+              ),
             ),
           ],
         ),
@@ -1088,7 +1141,17 @@ class RankedArenaScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            ...squads.map((SquadLeaderboardEntryModel squad) {
+            if (squads.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Aún no hay escuadras registradas en esta temporada. Pulsa "Mi Escuadra" para crear la primera.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+                ),
+              )
+            else
+              ...squads.map((SquadLeaderboardEntryModel squad) {
               final double displayTotal = isLbm
                   ? squad.totalLbmAllometricScore
                   : squad.totalDotsScore;
@@ -1298,10 +1361,10 @@ class RankedArenaScreen extends StatelessWidget {
   void _openDuo2v2Modal(BuildContext context) {
     final ActiveDuo2v2DuelModel? duo = viewModel.active2v2Duel;
     final TextEditingController partnerCtrl = TextEditingController(
-      text: duo?.allyMemberB.username ?? 'alan_gt_pro',
+      text: duo?.allyMemberB.username ?? '',
     );
     final TextEditingController duoNameCtrl = TextEditingController(
-      text: duo?.allyDuoName ?? 'Apex Twin Barbell',
+      text: duo?.allyDuoName ?? '',
     );
 
     showModalBottomSheet<void>(
@@ -1383,10 +1446,10 @@ class RankedArenaScreen extends StatelessWidget {
 
   void _openSquadModal(BuildContext context) {
     final TextEditingController nameCtrl = TextEditingController(
-      text: viewModel.myActiveSquad?.name ?? 'Apex Barbell Club',
+      text: viewModel.myActiveSquad?.name ?? '',
     );
     final TextEditingController tagCtrl = TextEditingController(
-      text: viewModel.myActiveSquad?.tag ?? 'APEX',
+      text: viewModel.myActiveSquad?.tag ?? '',
     );
 
     showModalBottomSheet<void>(

@@ -1,22 +1,22 @@
 class FitdaysExtractedMetricsModel {
   final double weightKg;
   final double fatPercentage;
-  final double muscleMassKg;
-  final double skeletalMusclePct;
-  final double visceralFat;
-  final double bodyWaterPct;
-  final int bmr;
+  final double? muscleMassKg;
+  final double? skeletalMusclePct;
+  final double? visceralFat;
+  final double? bodyWaterPct;
+  final int? bmr;
   final double ocrConfidence;
   final String sourceProvider;
 
   const FitdaysExtractedMetricsModel({
     required this.weightKg,
     required this.fatPercentage,
-    required this.muscleMassKg,
-    required this.skeletalMusclePct,
-    required this.visceralFat,
-    required this.bodyWaterPct,
-    required this.bmr,
+    this.muscleMassKg,
+    this.skeletalMusclePct,
+    this.visceralFat,
+    this.bodyWaterPct,
+    this.bmr,
     this.ocrConfidence = 1.0,
     this.sourceProvider = 'MANUAL_FORM',
   });
@@ -32,26 +32,20 @@ class FitdaysExtractedMetricsModel {
         (json['water_pct'] ?? json['body_water_pct']) as num?;
     final num? rawBmr = (json['bmr_kcal'] ?? json['bmr']) as num?;
 
-    if (rawWeight == null ||
-        rawFat == null ||
-        rawMuscle == null ||
-        rawSkeletal == null ||
-        rawVisceral == null ||
-        rawWater == null ||
-        rawBmr == null) {
+    if (rawWeight == null || rawFat == null) {
       throw const FormatException(
-        'Respuesta OCR Fitdays incompleta: faltan indicadores numéricos en el JSON.',
+        'Respuesta OCR Fitdays incompleta: faltan peso o porcentaje de grasa en el JSON.',
       );
     }
 
     return FitdaysExtractedMetricsModel(
       weightKg: rawWeight.toDouble(),
       fatPercentage: rawFat.toDouble(),
-      muscleMassKg: rawMuscle.toDouble(),
-      skeletalMusclePct: rawSkeletal.toDouble(),
-      visceralFat: rawVisceral.toDouble(),
-      bodyWaterPct: rawWater.toDouble(),
-      bmr: rawBmr.round(),
+      muscleMassKg: rawMuscle?.toDouble(),
+      skeletalMusclePct: rawSkeletal?.toDouble(),
+      visceralFat: rawVisceral?.toDouble(),
+      bodyWaterPct: rawWater?.toDouble(),
+      bmr: rawBmr?.round(),
       ocrConfidence: (json['ocr_confidence'] as num?)?.toDouble() ?? 1.0,
       sourceProvider: (json['source_provider'] as String?) ?? 'FITDAYS_OCR',
     );
@@ -62,13 +56,13 @@ class FitdaysExtractedMetricsModel {
       'weight_kg': weightKg,
       'body_fat_pct': fatPercentage,
       'fat_percentage': fatPercentage,
-      'muscle_mass_kg': muscleMassKg,
-      'skeletal_muscle_pct': skeletalMusclePct,
-      'visceral_fat': visceralFat,
-      'water_pct': bodyWaterPct,
-      'body_water_pct': bodyWaterPct,
-      'bmr_kcal': bmr,
-      'bmr': bmr,
+      if (muscleMassKg != null) 'muscle_mass_kg': muscleMassKg,
+      if (skeletalMusclePct != null) 'skeletal_muscle_pct': skeletalMusclePct,
+      if (visceralFat != null) 'visceral_fat': visceralFat,
+      if (bodyWaterPct != null) 'water_pct': bodyWaterPct,
+      if (bodyWaterPct != null) 'body_water_pct': bodyWaterPct,
+      if (bmr != null) 'bmr_kcal': bmr,
+      if (bmr != null) 'bmr': bmr,
       'ocr_confidence': ocrConfidence,
       'source_provider': sourceProvider,
     };
@@ -171,8 +165,9 @@ class WearableMetricRecord {
   // Métricas específicas polimórficas por ecosistema Wearable
   /// Nivel de Estrés Whoop (escala 0.0 a 3.0: Bajo / Medio / Alto)
   final double whoopStressLevel;
+  final String? stressCategory;
 
-  /// Monitor de Salud Whoop (ej. 5 de 5 métricas dentro del rango)
+  /// Monitor de Salud Whoop (ej. métricas dentro del rango)
   final int whoopHealthMetricsInRange;
 
   /// Nivel de Estrés Huawei GT (escala 0 a 100)
@@ -207,17 +202,18 @@ class WearableMetricRecord {
     required this.sleepHours,
     required this.sleepEfficiencyPct,
     required this.sourceDevice,
-    this.whoopStressLevel = 1.4,
-    this.whoopHealthMetricsInRange = 5,
-    this.huaweiStressScore = 42,
-    this.huaweiTruSleepScore = 84,
-    this.huaweiVo2Max = 51.0,
-    this.samsungEnergyScore = 78,
-    this.samsungBiaMusclePct = 43.5,
-    this.samsungBiaFatPct = 14.2,
-    this.appleMoveKcal = 680,
-    this.appleExerciseMinutes = 48,
-    this.appleStandHours = 12,
+    this.whoopStressLevel = 0.0,
+    this.stressCategory,
+    this.whoopHealthMetricsInRange = 0,
+    this.huaweiStressScore = 0,
+    this.huaweiTruSleepScore = 0,
+    this.huaweiVo2Max = 0.0,
+    this.samsungEnergyScore = 0,
+    this.samsungBiaMusclePct = 0.0,
+    this.samsungBiaFatPct = 0.0,
+    this.appleMoveKcal = 0,
+    this.appleExerciseMinutes = 0,
+    this.appleStandHours = 0,
   });
 
   factory WearableMetricRecord.fromJson(Map<String, dynamic> json) {
@@ -233,58 +229,77 @@ class WearableMetricRecord {
     final String rawDate = (root['date'] as String?) ?? '';
     final double rec = (root['recovery_score'] as num?)?.toDouble() ??
         (extracted?['recovery_score'] as num?)?.toDouble() ??
-        75.0;
+        0.0;
     final double sleepEff =
         (root['sleep_pct'] as num?)?.toDouble() ??
             (root['sleep_efficiency_pct'] as num?)?.toDouble() ??
             (root['sleep_performance_pct'] as num?)?.toDouble() ??
             (extracted?['sleep_pct'] as num?)?.toDouble() ??
             (extracted?['sleep_performance_pct'] as num?)?.toDouble() ??
-            85.0;
-    final double inferredWhoopStress =
+            0.0;
+    final double parsedWhoopStress =
         (root['whoop_stress_level'] as num?)?.toDouble() ??
             (root['stress_level'] as num?)?.toDouble() ??
             (extracted?['stress_level'] as num?)?.toDouble() ??
-            (rec < 40.0 ? 2.2 : (rec < 65.0 ? 1.5 : 0.9));
+            0.0;
 
     return WearableMetricRecord(
       date: DateTime.tryParse(rawDate) ?? DateTime.now(),
       strainScore: (root['strain_score'] as num?)?.toDouble() ??
           (extracted?['strain_score'] as num?)?.toDouble() ??
-          9.6,
+          0.0,
       recoveryScore: rec,
       hrvMs: (root['hrv_ms'] as num?)?.toDouble() ??
           (extracted?['hrv_ms'] as num?)?.toDouble() ??
-          65.0,
+          0.0,
       restingHr: (root['resting_hr'] as num?)?.toInt() ??
           (extracted?['resting_hr'] as num?)?.toInt() ??
-          56,
-      avgHr: (root['avg_hr'] as num?)?.toInt() ?? 68,
-      maxHr: (root['max_hr'] as num?)?.toInt() ?? 165,
+          0,
+      avgHr: (root['avg_hr'] as num?)?.toInt() ?? 0,
+      maxHr: (root['max_hr'] as num?)?.toInt() ?? 0,
       sleepHours: (root['sleep_hours'] as num?)?.toDouble() ??
-          double.parse(((sleepEff / 100.0) * 8.0).toStringAsFixed(1)),
+          (extracted?['sleep_hours'] as num?)?.toDouble() ??
+          (sleepEff > 0.0
+              ? double.parse(((sleepEff / 100.0) * 8.0).toStringAsFixed(1))
+              : 0.0),
       sleepEfficiencyPct: sleepEff,
       sourceDevice: (root['source_device'] as String?) ?? 'WHOOP',
-      whoopStressLevel: inferredWhoopStress,
+      whoopStressLevel: parsedWhoopStress,
+      stressCategory: (root['stress_category'] as String?) ??
+          (extracted?['stress_category'] as String?),
       whoopHealthMetricsInRange:
-          (root['whoop_health_metrics_in_range'] as num?)?.toInt() ?? 5,
-      huaweiStressScore:
-          (root['huawei_stress_score'] as num?)?.toInt() ??
-              (100 - rec.round()).clamp(15, 95),
-      huaweiTruSleepScore:
-          (root['huawei_trusleep_score'] as num?)?.toInt() ??
-              sleepEff.round().clamp(40, 100),
-      huaweiVo2Max: (root['huawei_vo2_max'] as num?)?.toDouble() ?? 52.0,
-      samsungEnergyScore:
-          (root['samsung_energy_score'] as num?)?.toInt() ?? rec.round(),
+          (root['whoop_health_metrics_in_range'] as num?)?.toInt() ??
+              (extracted?['health_metrics_in_range'] as num?)?.toInt() ??
+              0,
+      huaweiStressScore: (root['huawei_stress_score'] as num?)?.toInt() ??
+          (extracted?['huawei_stress_score'] as num?)?.toInt() ??
+          0,
+      huaweiTruSleepScore: (root['huawei_trusleep_score'] as num?)?.toInt() ??
+          (extracted?['huawei_trusleep_score'] as num?)?.toInt() ??
+          0,
+      huaweiVo2Max: (root['huawei_vo2_max'] as num?)?.toDouble() ??
+          (extracted?['huawei_vo2_max'] as num?)?.toDouble() ??
+          0.0,
+      samsungEnergyScore: (root['samsung_energy_score'] as num?)?.toInt() ??
+          (extracted?['samsung_energy_score'] as num?)?.toInt() ??
+          0,
       samsungBiaMusclePct:
-          (root['samsung_bia_muscle_pct'] as num?)?.toDouble() ?? 43.8,
-      samsungBiaFatPct:
-          (root['samsung_bia_fat_pct'] as num?)?.toDouble() ?? 13.8,
-      appleMoveKcal: (root['apple_move_kcal'] as num?)?.toInt() ?? 720,
+          (root['samsung_bia_muscle_pct'] as num?)?.toDouble() ??
+              (extracted?['samsung_bia_muscle_pct'] as num?)?.toDouble() ??
+              0.0,
+      samsungBiaFatPct: (root['samsung_bia_fat_pct'] as num?)?.toDouble() ??
+          (extracted?['samsung_bia_fat_pct'] as num?)?.toDouble() ??
+          0.0,
+      appleMoveKcal: (root['apple_move_kcal'] as num?)?.toInt() ??
+          (extracted?['apple_move_kcal'] as num?)?.toInt() ??
+          0,
       appleExerciseMinutes:
-          (root['apple_exercise_minutes'] as num?)?.toInt() ?? 52,
-      appleStandHours: (root['apple_stand_hours'] as num?)?.toInt() ?? 12,
+          (root['apple_exercise_minutes'] as num?)?.toInt() ??
+              (extracted?['apple_exercise_minutes'] as num?)?.toInt() ??
+              0,
+      appleStandHours: (root['apple_stand_hours'] as num?)?.toInt() ??
+          (extracted?['apple_stand_hours'] as num?)?.toInt() ??
+          0,
     );
   }
 
@@ -300,6 +315,7 @@ class WearableMetricRecord {
     double? sleepEfficiencyPct,
     String? sourceDevice,
     double? whoopStressLevel,
+    String? stressCategory,
     int? whoopHealthMetricsInRange,
     int? huaweiStressScore,
     int? huaweiTruSleepScore,
@@ -323,6 +339,7 @@ class WearableMetricRecord {
       sleepEfficiencyPct: sleepEfficiencyPct ?? this.sleepEfficiencyPct,
       sourceDevice: sourceDevice ?? this.sourceDevice,
       whoopStressLevel: whoopStressLevel ?? this.whoopStressLevel,
+      stressCategory: stressCategory ?? this.stressCategory,
       whoopHealthMetricsInRange:
           whoopHealthMetricsInRange ?? this.whoopHealthMetricsInRange,
       huaweiStressScore: huaweiStressScore ?? this.huaweiStressScore,

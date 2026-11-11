@@ -16,12 +16,14 @@ class HomeScreen extends StatefulWidget {
   final HomeViewModel viewModel;
   final AuthViewModel authViewModel;
   final VoidCallback? onOpenTacticalCenter;
+  final VoidCallback? onProfileOrBiometricsUpdated;
 
   const HomeScreen({
     super.key,
     required this.viewModel,
     required this.authViewModel,
     this.onOpenTacticalCenter,
+    this.onProfileOrBiometricsUpdated,
   });
 
   @override
@@ -110,44 +112,37 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (BuildContext context, _) {
         final UserProfileModel? user = authViewModel.currentUser;
         final WearableMetricRecord? wearable = viewModel.wearable;
-        final WearableMetricRecord effectiveWearable = wearable != null
-            ? WearableMetricRecord(
-                date: wearable.date,
-                strainScore: viewModel.whoopStrain ?? wearable.strainScore,
-                recoveryScore: viewModel.whoopRecovery ?? wearable.recoveryScore,
-                hrvMs: wearable.hrvMs,
-                restingHr: wearable.restingHr,
-                avgHr: wearable.avgHr,
-                maxHr: wearable.maxHr,
-                sleepHours: viewModel.whoopSleepHours ?? wearable.sleepHours,
-                sleepEfficiencyPct: viewModel.whoopSleep ?? wearable.sleepEfficiencyPct,
-                sourceDevice: wearable.sourceDevice,
-                whoopStressLevel: viewModel.whoopStress ?? wearable.whoopStressLevel,
-                whoopHealthMetricsInRange: wearable.whoopHealthMetricsInRange,
-                huaweiStressScore: wearable.huaweiStressScore,
-                huaweiTruSleepScore: wearable.huaweiTruSleepScore,
-                huaweiVo2Max: wearable.huaweiVo2Max,
-                samsungEnergyScore: wearable.samsungEnergyScore,
-                samsungBiaFatPct: wearable.samsungBiaFatPct,
-                samsungBiaMusclePct: wearable.samsungBiaMusclePct,
-                appleMoveKcal: wearable.appleMoveKcal,
-                appleExerciseMinutes: wearable.appleExerciseMinutes,
-                appleStandHours: wearable.appleStandHours,
-              )
-            : WearableMetricRecord(
-                date: DateTime.now(),
-                strainScore: viewModel.whoopStrain ?? viewModel.strainScore,
-                recoveryScore: viewModel.whoopRecovery ?? viewModel.recoveryScore,
-                hrvMs: 56.0,
-                restingHr: 58,
-                avgHr: 68,
-                maxHr: 155,
-                sleepHours: viewModel.whoopSleepHours ?? viewModel.sleepHours,
-                sleepEfficiencyPct: viewModel.whoopSleep ?? viewModel.sleepPct,
-                sourceDevice: viewModel.preferredWearable,
-                whoopStressLevel: viewModel.whoopStress ?? viewModel.stressScore,
-                whoopHealthMetricsInRange: 5,
-              );
+        final WearableMetricRecord? effectiveWearable =
+            (viewModel.hasWhoopData && wearable != null)
+                ? WearableMetricRecord(
+                    date: wearable.date,
+                    strainScore: viewModel.whoopStrain ?? wearable.strainScore,
+                    recoveryScore:
+                        viewModel.whoopRecovery ?? wearable.recoveryScore,
+                    hrvMs: wearable.hrvMs,
+                    restingHr: wearable.restingHr,
+                    avgHr: wearable.avgHr,
+                    maxHr: wearable.maxHr,
+                    sleepHours: viewModel.whoopSleepHours ?? wearable.sleepHours,
+                    sleepEfficiencyPct:
+                        viewModel.whoopSleep ?? wearable.sleepEfficiencyPct,
+                    sourceDevice: wearable.sourceDevice,
+                    whoopStressLevel:
+                        viewModel.whoopStress ?? wearable.whoopStressLevel,
+                    stressCategory:
+                        viewModel.whoopStressCategory ?? wearable.stressCategory,
+                    whoopHealthMetricsInRange: wearable.whoopHealthMetricsInRange,
+                    huaweiStressScore: wearable.huaweiStressScore,
+                    huaweiTruSleepScore: wearable.huaweiTruSleepScore,
+                    huaweiVo2Max: wearable.huaweiVo2Max,
+                    samsungEnergyScore: wearable.samsungEnergyScore,
+                    samsungBiaFatPct: wearable.samsungBiaFatPct,
+                    samsungBiaMusclePct: wearable.samsungBiaMusclePct,
+                    appleMoveKcal: wearable.appleMoveKcal,
+                    appleExerciseMinutes: wearable.appleExerciseMinutes,
+                    appleStandHours: wearable.appleStandHours,
+                  )
+                : null;
         final BiometricRecord? bio = viewModel.biometrics;
         final String activeSource =
             _normalizedWearableSource(viewModel.preferredWearable);
@@ -264,7 +259,10 @@ class _HomeScreenState extends State<HomeScreen> {
                           MaterialPageRoute<void>(
                             builder: (BuildContext ctx) => ProfileSetupScreen(
                               viewModel: authViewModel,
-                              onCompleted: () => Navigator.of(ctx).pop(),
+                              onCompleted: () {
+                                Navigator.of(ctx).pop();
+                                widget.onProfileOrBiometricsUpdated?.call();
+                              },
                             ),
                           ),
                         );
@@ -333,8 +331,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (viewModel.statusBanner != null)
                               _buildAlertBanner(
                                 viewModel.statusBanner!,
-                                (effectiveWearable.recoveryScore < 40.0 ||
-                                        effectiveWearable.sleepEfficiencyPct < 70.0)
+                                (effectiveWearable == null ||
+                                        effectiveWearable.recoveryScore < 40.0 ||
+                                        effectiveWearable.sleepEfficiencyPct <
+                                            70.0)
                                     ? ApexTheme.warningAmber
                                     : ApexTheme.readinessGreen,
                               ),
@@ -449,13 +449,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildDailyHydrationCard(BuildContext context) {
     final HydrationStatusModel? hyd = viewModel.hydration;
-    final double weightKg = viewModel.biometrics?.weightKg ?? 78.0;
-    final double strain = viewModel.wearable?.strainScore ?? 10.0;
-    final int goalMl = hyd?.recommendedGoalMl ??
-        ((weightKg * 35.0) + (strain * 60.0)).round().clamp(2000, 6000);
+    final double? weightKg =
+        viewModel.biometrics?.weightKg ?? authViewModel.currentUser?.weightKg;
+    final double? strain = viewModel.hasWhoopData
+        ? (viewModel.whoopStrain ?? viewModel.wearable?.strainScore)
+        : null;
+    final int? goalMl = hyd?.recommendedGoalMl ??
+        (weightKg != null
+            ? ((weightKg * 35.0) + ((strain ?? 0.0) * 60.0))
+                .round()
+                .clamp(1600, 6000)
+            : null);
     final int totalMl = hyd?.totalMl ?? 0;
-    final double progress = (totalMl / goalMl).clamp(0.0, 1.0);
-    final double pct = ((totalMl / goalMl) * 100.0).clamp(0.0, 150.0);
+    final double progress =
+        (goalMl != null && goalMl > 0) ? (totalMl / goalMl).clamp(0.0, 1.0) : 0.0;
+    final double pct = (goalMl != null && goalMl > 0)
+        ? ((totalMl / goalMl) * 100.0).clamp(0.0, 150.0)
+        : 0.0;
     final List<HydrationLogEntryModel> logs =
         hyd?.logs ?? const <HydrationLogEntryModel>[];
 
@@ -496,7 +506,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       Text(
-                        'Meta dinámica (Peso ${weightKg.toStringAsFixed(0)} kg + Strain ${strain.toStringAsFixed(1)}): ${(goalMl / 1000.0).toStringAsFixed(2)} L',
+                        goalMl != null
+                            ? 'Meta dinámica (Peso ${weightKg != null ? "${weightKg.toStringAsFixed(1)} kg" : "--"} + Strain ${strain != null ? strain.toStringAsFixed(1) : "--"}): ${(goalMl / 1000.0).toStringAsFixed(2)} L'
+                            : 'Registra tu peso corporal para calcular tu meta hídrica diaria',
                         style: const TextStyle(
                           fontSize: 10.5,
                           color: ApexTheme.textMuted,
@@ -523,7 +535,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   child: Text(
-                    '${(totalMl / 1000.0).toStringAsFixed(2)} / ${(goalMl / 1000.0).toStringAsFixed(1)} L (${pct.toStringAsFixed(0)}%)',
+                    goalMl != null
+                        ? '${(totalMl / 1000.0).toStringAsFixed(2)} / ${(goalMl / 1000.0).toStringAsFixed(1)} L (${pct.toStringAsFixed(0)}%)'
+                        : '${(totalMl / 1000.0).toStringAsFixed(2)} / -- L',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w900,
@@ -668,14 +682,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildPersonalizedAiFitCoachCard(BuildContext context) {
     final String summary = viewModel.aiCoachAthletePrescriptionSummary;
-    final WearableMetricRecord? w = viewModel.wearable;
+    final WearableMetricRecord? w =
+        viewModel.hasWhoopData ? viewModel.wearable : null;
     final bool isRed = w != null &&
         (w.recoveryScore < 40.0 || w.sleepEfficiencyPct < 70.0);
-    final Color accent = isRed
-        ? ApexTheme.deloadCrimson
-        : (w != null && w.recoveryScore >= 67.0
-            ? ApexTheme.readinessGreen
-            : ApexTheme.warningAmber);
+    final Color accent = w == null
+        ? ApexTheme.cyanElectric
+        : (isRed
+            ? ApexTheme.deloadCrimson
+            : (w.recoveryScore >= 67.0
+                ? ApexTheme.readinessGreen
+                : ApexTheme.warningAmber));
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -788,7 +805,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Renderiza polimórficamente el tablero del wearable seleccionado.
   Widget _buildPolymorphicWearableDashboard(
     BuildContext context,
-    WearableMetricRecord wearable,
+    WearableMetricRecord? wearable,
     String activeSource,
   ) {
     switch (activeSource) {
@@ -805,41 +822,59 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 1. Tarjeta Oficial WHOOP 4.0:
-  /// - 3 Anillos Superiores: SUEÑO (%), RECUPERACIÓN (%), ESFUERZO (0-21)
-  /// - Monitor de Salud (5/5 métricas) y Monitor de Estrés (0.0-3.0 Bajo/Medio/Alto)
+  /// - 3 Anillos Superiores: SUEÑO (%), RECUPERACIÓN (%), ESFUERZO (0-21) — muestra `--` si no se ha sincronizado hoy.
+  /// - Monitor de Salud y Monitor de Estrés (0.0-3.0 Bajo/Medio/Alto)
   /// - Prescripción Cognitiva de Gemini por Sueño y Estrés
   Widget _buildWhoopOfficialCard(
     BuildContext context,
-    WearableMetricRecord wearable,
+    WearableMetricRecord? wearable,
   ) {
-    final double activeSleepPct =
-        (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0);
-    final double recovery =
-        (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0);
-    final double strain =
-        (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0);
-    final double stress =
-        (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0);
-    final double activeSleepHours =
-        viewModel.whoopSleepHours ?? wearable.sleepHours;
+    final bool hasData = wearable != null && viewModel.hasWhoopData;
+    final double activeSleepPct = hasData
+        ? (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0)
+        : 0.0;
+    final double recovery = hasData
+        ? (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0)
+        : 0.0;
+    final double strain = hasData
+        ? (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0)
+        : 0.0;
+    final double stress = hasData
+        ? (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0)
+        : 0.0;
+    final double activeSleepHours = hasData
+        ? (viewModel.whoopSleepHours ?? wearable.sleepHours)
+        : 0.0;
 
-    final bool isCompromised = recovery < 34.0;
+    final bool isCompromised = hasData && recovery < 34.0;
     final Color recColor = viewModel.recoveryColor;
     final String zoneLabel = viewModel.recoveryStatusText;
 
-    final String activeStressCategory = viewModel.whoopStressCategory ??
-        (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'));
-    final Color stressColor = activeStressCategory == 'ALTO' || stress >= 2.0
-        ? ApexTheme.warningAmber
-        : (activeStressCategory == 'MEDIO' || stress >= 1.0
-            ? ApexTheme.readinessGreen
-            : ApexTheme.cyanElectric);
+    final String activeStressCategory = !hasData
+        ? 'SIN DATOS'
+        : (viewModel.whoopStressCategory ??
+            (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO')));
+    final Color stressColor = !hasData
+        ? const Color(0xFF6B7280)
+        : (activeStressCategory == 'ALTO' || stress >= 2.0
+            ? ApexTheme.warningAmber
+            : (activeStressCategory == 'MEDIO' || stress >= 1.0
+                ? ApexTheme.readinessGreen
+                : ApexTheme.cyanElectric));
 
-    final String geminiRationale = isCompromised
-        ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos el volumen prescrito (-20%) para evitar fatiga del SNC.'
-        : (recovery >= 67.0
-            ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%) • Esfuerzo ${strain.toStringAsFixed(1)} • Sueño ${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach activa sobrecarga progresiva (+2.5 kg).'
-            : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño ${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%) • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach mantiene volumen objetivo.');
+    final String sleepSummaryText = activeSleepHours > 0
+        ? '${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%)'
+        : '${activeSleepPct.toStringAsFixed(0)}%';
+
+    final String geminiRationale = !hasData
+        ? 'Sin telemetría de WHOOP sincronizada hoy. Pulsa "ESCANEAR CAPTURA DE WHOOP" (compresión automática <200 KB) para extraer tus métricas reales del día.'
+        : (isCompromised
+            ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos la carga prescrita (-15% • RPE 6.5-7.0) para proteger tu SNC.'
+            : (recovery >= 67.0
+                ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%) • Esfuerzo ${strain.toStringAsFixed(1)} • Sueño $sleepSummaryText • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach activa sobrecarga progresiva (+4% • RPE 8.5).'
+                : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño $sleepSummaryText • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach mantiene volumen e intensidad base (RPE 7.5-8.0).'));
+
+    final int healthMetrics = hasData ? wearable.whoopHealthMetricsInRange : 0;
 
     return Card(
       child: Padding(
@@ -897,22 +932,22 @@ class _HomeScreenState extends State<HomeScreen> {
               children: <Widget>[
                 _WhoopCircleGauge(
                   label: 'SUEÑO >',
-                  valueText: '${activeSleepPct.toStringAsFixed(0)}%',
-                  progress: (activeSleepPct / 100.0).clamp(0.0, 1.0),
-                  color: const Color(0xFF75A8D3),
+                  valueText: hasData ? '${activeSleepPct.toStringAsFixed(0)}%' : '--',
+                  progress: hasData ? (activeSleepPct / 100.0).clamp(0.0, 1.0) : 0.0,
+                  color: hasData ? const Color(0xFF75A8D3) : const Color(0xFF4B5563),
                 ),
                 _WhoopCircleGauge(
                   label: 'RECUPERACIÓN >',
-                  valueText: '${recovery.toStringAsFixed(0)}%',
-                  progress: (recovery / 100.0).clamp(0.0, 1.0),
-                  color: recColor,
+                  valueText: hasData ? '${recovery.toStringAsFixed(0)}%' : '--',
+                  progress: hasData ? (recovery / 100.0).clamp(0.0, 1.0) : 0.0,
+                  color: hasData ? recColor : const Color(0xFF4B5563),
                   isFeatured: true,
                 ),
                 _WhoopCircleGauge(
                   label: 'ESFUERZO >',
-                  valueText: strain.toStringAsFixed(1),
-                  progress: (strain / 21.0).clamp(0.0, 1.0),
-                  color: const Color(0xFF0095FF),
+                  valueText: hasData ? strain.toStringAsFixed(1) : '--',
+                  progress: hasData ? (strain / 21.0).clamp(0.0, 1.0) : 0.0,
+                  color: hasData ? const Color(0xFF0095FF) : const Color(0xFF4B5563),
                 ),
               ],
             ),
@@ -928,7 +963,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: ApexTheme.obsidianBg,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: ApexTheme.readinessGreen.withValues(alpha: 0.35),
+                        color: (hasData && healthMetrics > 0
+                                ? ApexTheme.readinessGreen
+                                : const Color(0xFF6B7280))
+                            .withValues(alpha: 0.35),
                       ),
                     ),
                     child: Column(
@@ -948,14 +986,20 @@ class _HomeScreenState extends State<HomeScreen> {
                             Container(
                               padding: const EdgeInsets.all(3),
                               decoration: BoxDecoration(
-                                color: ApexTheme.readinessGreen
+                                color: (hasData && healthMetrics > 0
+                                        ? ApexTheme.readinessGreen
+                                        : const Color(0xFF6B7280))
                                     .withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(5),
                               ),
-                              child: const Icon(
-                                Icons.check_rounded,
+                              child: Icon(
+                                hasData && healthMetrics > 0
+                                    ? Icons.check_rounded
+                                    : Icons.remove_rounded,
                                 size: 13,
-                                color: ApexTheme.readinessGreen,
+                                color: hasData && healthMetrics > 0
+                                    ? ApexTheme.readinessGreen
+                                    : const Color(0xFF9CA3AF),
                               ),
                             ),
                             const SizedBox(width: 6),
@@ -963,16 +1007,22 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
-                                  const Text(
-                                    'DENTRO DEL RANGO',
+                                  Text(
+                                    hasData && healthMetrics > 0
+                                        ? 'DENTRO DEL RANGO'
+                                        : 'SIN DATOS',
                                     style: TextStyle(
                                       fontSize: 9.5,
                                       fontWeight: FontWeight.w900,
-                                      color: ApexTheme.readinessGreen,
+                                      color: hasData && healthMetrics > 0
+                                          ? ApexTheme.readinessGreen
+                                          : ApexTheme.textMuted,
                                     ),
                                   ),
                                   Text(
-                                    '${wearable.whoopHealthMetricsInRange}/5 métricas',
+                                    hasData && healthMetrics > 0
+                                        ? '$healthMetrics/5 métricas'
+                                        : '--/5 métricas',
                                     style: const TextStyle(
                                       fontSize: 10.5,
                                       color: ApexTheme.textMuted,
@@ -1021,7 +1071,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                stress.toStringAsFixed(1),
+                                hasData ? stress.toStringAsFixed(1) : '--',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w900,
@@ -1108,13 +1158,15 @@ class _HomeScreenState extends State<HomeScreen> {
   /// - Nivel de Estrés (0-100), Puntuación TruSleep, Frecuencia Cardíaca Media y VO2Max
   Widget _buildHuaweiGtCard(
     BuildContext context,
-    WearableMetricRecord wearable,
+    WearableMetricRecord? wearable,
   ) {
-    final int stress = wearable.huaweiStressScore.clamp(1, 100);
-    final int truSleep = wearable.huaweiTruSleepScore.clamp(1, 100);
-    final int avgHr = wearable.avgHr;
-    final double vo2Max = wearable.huaweiVo2Max;
-    final bool isHighStress = stress >= 68 || truSleep < 70;
+    final bool hasData = wearable != null && viewModel.hasWhoopData;
+    final int stress = hasData ? wearable.huaweiStressScore : 0;
+    final int truSleep = hasData ? wearable.huaweiTruSleepScore : 0;
+    final int avgHr = hasData ? wearable.avgHr : 0;
+    final double vo2Max = hasData ? wearable.huaweiVo2Max : 0.0;
+    final bool isHighStress =
+        hasData && (stress >= 68 || (truSleep > 0 && truSleep < 70));
 
     return Card(
       child: Padding(
@@ -1145,24 +1197,30 @@ class _HomeScreenState extends State<HomeScreen> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: (isHighStress
-                              ? ApexTheme.deloadCrimson
-                              : ApexTheme.readinessGreen)
+                      color: (!hasData
+                              ? const Color(0xFF6B7280)
+                              : (isHighStress
+                                  ? ApexTheme.deloadCrimson
+                                  : ApexTheme.readinessGreen))
                           .withValues(alpha: 0.16),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      isHighStress
-                          ? 'DESCARGA ACTIVA (-15% CARGA)'
-                          : 'ESTADO FISIOLÓGICO ÓPTIMO',
+                      !hasData
+                          ? 'SIN SINCRONIZAR HOY'
+                          : (isHighStress
+                              ? 'DESCARGA ACTIVA (-15% CARGA)'
+                              : 'ESTADO FISIOLÓGICO ÓPTIMO'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 9.0,
                         fontWeight: FontWeight.w900,
-                        color: isHighStress
-                            ? ApexTheme.deloadCrimson
-                            : ApexTheme.readinessGreen,
+                        color: !hasData
+                            ? const Color(0xFF9CA3AF)
+                            : (isHighStress
+                                ? ApexTheme.deloadCrimson
+                                : ApexTheme.readinessGreen),
                       ),
                     ),
                   ),
@@ -1176,9 +1234,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _DeviceKpiBox(
                     title: 'NIVEL DE ESTRÉS',
-                    value: '$stress / 100',
-                    subtitle: stress >= 68 ? 'Elevado' : 'Normal (Calma)',
-                    accent: stress >= 68
+                    value: hasData && stress > 0 ? '$stress / 100' : '--',
+                    subtitle: !hasData
+                        ? 'Sin lectura hoy'
+                        : (stress >= 68 ? 'Elevado' : 'Normal (Calma)'),
+                    accent: hasData && stress >= 68
                         ? ApexTheme.warningAmber
                         : ApexTheme.cyanElectric,
                   ),
@@ -1186,8 +1246,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _DeviceKpiBox(
                     title: 'PUNTUACIÓN TRUSLEEP',
-                    value: '$truSleep pts',
-                    subtitle: '${wearable.sleepHours.toStringAsFixed(1)} h sueño',
+                    value: hasData && truSleep > 0 ? '$truSleep pts' : '--',
+                    subtitle: hasData && wearable.sleepHours > 0
+                        ? '${wearable.sleepHours.toStringAsFixed(1)} h sueño'
+                        : 'Sueño: -- h',
                     accent: ApexTheme.readinessGreen,
                   ),
                 ),
@@ -1200,15 +1262,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _DeviceKpiBox(
                     title: 'FC MEDIA DIARIA',
-                    value: '$avgHr bpm',
-                    subtitle: 'Reposo: ${wearable.restingHr} bpm',
+                    value: hasData && avgHr > 0 ? '$avgHr bpm' : '--',
+                    subtitle: hasData && wearable.restingHr > 0
+                        ? 'Reposo: ${wearable.restingHr} bpm'
+                        : 'Reposo: -- bpm',
                     accent: ApexTheme.voltAccent,
                   ),
                 ),
                 Expanded(
                   child: _DeviceKpiBox(
                     title: 'VO2MAX ESTIMADO',
-                    value: '${vo2Max.toStringAsFixed(1)} ml/kg',
+                    value: hasData && vo2Max > 0
+                        ? '${vo2Max.toStringAsFixed(1)} ml/kg'
+                        : '--',
                     subtitle: 'Capacidad aeróbica',
                     accent: ApexTheme.cyanElectric,
                   ),
@@ -1227,10 +1293,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// - Puntuación de Energía (Energy Score), Tiempo de Sueño y Composición Corporal BIA
   Widget _buildSamsungWatchCard(
     BuildContext context,
-    WearableMetricRecord wearable,
+    WearableMetricRecord? wearable,
   ) {
-    final int energyScore = wearable.samsungEnergyScore.clamp(1, 100);
-    final Color scoreColor = ApexTheme.readinessColor(energyScore.toDouble());
+    final bool hasData = wearable != null && viewModel.hasWhoopData;
+    final int energyScore = hasData
+        ? (wearable.samsungEnergyScore > 0
+            ? wearable.samsungEnergyScore
+            : wearable.recoveryScore.round())
+        : 0;
+    final Color scoreColor = hasData && energyScore > 0
+        ? ApexTheme.readinessColor(energyScore.toDouble())
+        : const Color(0xFF6B7280);
 
     return Card(
       child: Padding(
@@ -1265,7 +1338,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      'ENERGY SCORE $energyScore',
+                      hasData && energyScore > 0
+                          ? 'ENERGY SCORE $energyScore'
+                          : 'SIN SINCRONIZAR HOY',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1285,19 +1360,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _DeviceKpiBox(
                     title: 'PUNTUACIÓN DE ENERGÍA',
-                    value: '$energyScore / 100',
-                    subtitle: energyScore < 45
-                        ? 'Descarga sugerida por Gemini'
-                        : 'Listo para sobrecarga',
+                    value:
+                        hasData && energyScore > 0 ? '$energyScore / 100' : '--',
+                    subtitle: !hasData
+                        ? 'Escanea tu captura hoy'
+                        : (energyScore < 45
+                            ? 'Descarga sugerida por Gemini'
+                            : 'Listo para sobrecarga'),
                     accent: scoreColor,
                   ),
                 ),
                 Expanded(
                   child: _DeviceKpiBox(
                     title: 'TIEMPO DE SUEÑO',
-                    value: '${wearable.sleepHours.toStringAsFixed(1)} h',
-                    subtitle:
-                        'Eficiencia: ${wearable.sleepEfficiencyPct.toStringAsFixed(0)}%',
+                    value: hasData && wearable.sleepHours > 0
+                        ? '${wearable.sleepHours.toStringAsFixed(1)} h'
+                        : '--',
+                    subtitle: hasData
+                        ? 'Eficiencia: ${wearable.sleepEfficiencyPct.toStringAsFixed(0)}%'
+                        : 'Eficiencia: --%',
                     accent: ApexTheme.cyanElectric,
                   ),
                 ),
@@ -1306,8 +1387,11 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 8),
             _DeviceKpiBox(
               title: 'COMPOSICIÓN CORPORAL BIA (GALAXY SENSOR)',
-              value:
-                  'Músculo Esquelético: ${wearable.samsungBiaMusclePct.toStringAsFixed(1)}%  •  Grasa BIA: ${wearable.samsungBiaFatPct.toStringAsFixed(1)}%',
+              value: hasData &&
+                      (wearable.samsungBiaMusclePct > 0 ||
+                          wearable.samsungBiaFatPct > 0)
+                  ? 'Músculo Esquelético: ${wearable.samsungBiaMusclePct.toStringAsFixed(1)}%  •  Grasa BIA: ${wearable.samsungBiaFatPct.toStringAsFixed(1)}%'
+                  : 'Músculo Esquelético: --%  •  Grasa BIA: --%',
               subtitle:
                   'Sincronizado con índice alométrico LBM^0.67 y Gemini Coach',
               accent: ApexTheme.voltAccent,
@@ -1324,8 +1408,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// - 3 Anillos (Moverse kcal, Ejercicio min, De Pie h) y Variabilidad HRV
   Widget _buildAppleWatchCard(
     BuildContext context,
-    WearableMetricRecord wearable,
+    WearableMetricRecord? wearable,
   ) {
+    final bool hasData = wearable != null && viewModel.hasWhoopData;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -1357,31 +1442,46 @@ class _HomeScreenState extends State<HomeScreen> {
               children: <Widget>[
                 _WhoopCircleGauge(
                   label: 'MOVERSE',
-                  valueText: '${wearable.appleMoveKcal} kcal',
-                  progress: (wearable.appleMoveKcal / 800.0).clamp(0.0, 1.0),
-                  color: const Color(0xFFFA114F),
+                  valueText: hasData ? '${wearable.appleMoveKcal} kcal' : '--',
+                  progress: hasData
+                      ? (wearable.appleMoveKcal / 800.0).clamp(0.0, 1.0)
+                      : 0.0,
+                  color: hasData
+                      ? const Color(0xFFFA114F)
+                      : const Color(0xFF4B5563),
                 ),
                 _WhoopCircleGauge(
                   label: 'EJERCICIO',
-                  valueText: '${wearable.appleExerciseMinutes} min',
-                  progress:
-                      (wearable.appleExerciseMinutes / 60.0).clamp(0.0, 1.0),
-                  color: const Color(0xFF92E82A),
+                  valueText:
+                      hasData ? '${wearable.appleExerciseMinutes} min' : '--',
+                  progress: hasData
+                      ? (wearable.appleExerciseMinutes / 60.0).clamp(0.0, 1.0)
+                      : 0.0,
+                  color: hasData
+                      ? const Color(0xFF92E82A)
+                      : const Color(0xFF4B5563),
                 ),
                 _WhoopCircleGauge(
                   label: 'DE PIE',
-                  valueText: '${wearable.appleStandHours} h',
-                  progress: (wearable.appleStandHours / 12.0).clamp(0.0, 1.0),
-                  color: const Color(0xFF00D9FF),
+                  valueText: hasData ? '${wearable.appleStandHours} h' : '--',
+                  progress: hasData
+                      ? (wearable.appleStandHours / 12.0).clamp(0.0, 1.0)
+                      : 0.0,
+                  color: hasData
+                      ? const Color(0xFF00D9FF)
+                      : const Color(0xFF4B5563),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             _DeviceKpiBox(
               title: 'VARIABILIDAD HRV (SDNN / RMSSD)',
-              value: '${wearable.hrvMs.toStringAsFixed(0)} ms',
-              subtitle:
-                  'FC en reposo: ${wearable.restingHr} bpm • Sueño: ${wearable.sleepHours.toStringAsFixed(1)} h',
+              value: hasData && wearable.hrvMs > 0
+                  ? '${wearable.hrvMs.toStringAsFixed(0)} ms'
+                  : '--',
+              subtitle: hasData
+                  ? 'FC en reposo: ${wearable.restingHr > 0 ? "${wearable.restingHr} bpm" : "--"} • Sueño: ${wearable.sleepHours > 0 ? "${wearable.sleepHours.toStringAsFixed(1)} h" : "--"}'
+                  : 'Sin sincronizar hoy',
               accent: ApexTheme.cyanElectric,
             ),
             const SizedBox(height: 10),
@@ -1513,10 +1613,12 @@ class _HomeScreenState extends State<HomeScreen> {
       sourceOverride ?? viewModel.preferredWearable,
     );
     final ImagePicker picker = ImagePicker();
+    // Compresión obligatoria antes de subir (< 200 KB) para evitar Error 502 en Render
     final XFile? pickedFile = await picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 90,
-      maxWidth: 1600,
+      maxWidth: 1080,
+      maxHeight: 1920,
+      imageQuality: 75,
     );
     if (pickedFile == null) {
       return;
@@ -1554,7 +1656,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(width: 14),
                 Expanded(
                   child: Text(
-                    'Gemini Vision analizando telemetría de Whoop...',
+                    'Gemini Vision extrayendo telemetría real...',
                     style: TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
@@ -1584,8 +1686,9 @@ class _HomeScreenState extends State<HomeScreen> {
         dialogOpen = false;
       }
 
-      // 1. Sobrescribir inmediatamente TODAS las variables del ViewModel (+ caché local) y notificar
+      // 1. Sobrescribir inmediatamente TODAS las variables del ViewModel (+ caché local por usuario/día)
       viewModel.applyScanResponse(response, sourceDevice: activeSource);
+      widget.onProfileOrBiometricsUpdated?.call();
 
       // 2. Forzar reconstrucción inmediata
       if (mounted) {
@@ -1593,14 +1696,14 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (context.mounted) {
-        final double rec = viewModel.whoopRecovery ?? viewModel.recoveryScore;
-        final double str = viewModel.whoopStrain ?? viewModel.strainScore;
+        final double? rec = viewModel.effectiveRecovery;
+        final double? str = viewModel.whoopStrain ?? viewModel.strainScore;
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: viewModel.recoveryColor,
             content: Text(
-              'Whoop Sincronizado: Recuperación ${rec.toStringAsFixed(0)}% | Esfuerzo ${str.toStringAsFixed(1)}',
+              'Sincronizado: Recuperación ${rec != null ? "${rec.toStringAsFixed(0)}%" : "--"} | Esfuerzo ${str != null ? str.toStringAsFixed(1) : "--"}',
               style: const TextStyle(
                 color: Colors.black,
                 fontWeight: FontWeight.w800,
@@ -1637,7 +1740,7 @@ class _HomeScreenState extends State<HomeScreen> {
           SnackBar(
             backgroundColor: const Color(0xFFEF4444),
             duration: const Duration(seconds: 5),
-            content: Text('Error de escaneo Whoop: $err'),
+            content: Text('Error de escaneo wearable: $err'),
           ),
         );
       }
@@ -1645,16 +1748,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWearableTelemetryRow(
-    WearableMetricRecord wearable,
+    WearableMetricRecord? wearable,
     String activeSource,
   ) {
+    final bool hasData = wearable != null && viewModel.hasWhoopData;
     return Row(
       spacing: 8,
       children: <Widget>[
         Expanded(
           child: _MetricTile(
             label: 'HRV (RMSSD)',
-            value: '${wearable.hrvMs.toStringAsFixed(0)} ms',
+            value: hasData && wearable.hrvMs > 0
+                ? '${wearable.hrvMs.toStringAsFixed(0)} ms'
+                : '--',
             accent: ApexTheme.voltAccent,
             icon: Icons.monitor_heart_outlined,
           ),
@@ -1662,7 +1768,9 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _MetricTile(
             label: 'FC REPOSO',
-            value: '${wearable.restingHr} bpm',
+            value: hasData && wearable.restingHr > 0
+                ? '${wearable.restingHr} bpm'
+                : '--',
             accent: ApexTheme.cyanElectric,
             icon: Icons.favorite_border_rounded,
           ),
@@ -1670,9 +1778,11 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _MetricTile(
             label: activeSource == 'WHOOP' ? 'SUEÑO (%)' : 'SUEÑO (H)',
-            value: activeSource == 'WHOOP'
-                ? '${(viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).toStringAsFixed(0)}%'
-                : '${(viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h',
+            value: !hasData
+                ? '--'
+                : (activeSource == 'WHOOP'
+                    ? '${(viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).toStringAsFixed(0)}%'
+                    : '${(viewModel.whoopSleepHours ?? wearable.sleepHours).toStringAsFixed(1)} h'),
             accent: ApexTheme.readinessGreen,
             icon: Icons.bedtime_outlined,
           ),
@@ -1759,7 +1869,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             SizedBox(height: 4),
             Text(
-              'Usa "Captura Manual" o "Escanear Fitdays" (JPEG 90 • Gemini Vision) para registrar peso, % grasa, masa muscular y BMR en PostgreSQL.',
+              'Usa "Captura Manual" o "Escanear Fitdays" (1080×1920 @ calidad 75 • Gemini Vision) para registrar peso, % grasa y masa magra (LBM) real en PostgreSQL.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
             ),
@@ -1955,7 +2065,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'La imagen se transcodifica automáticamente a JPEG (calidad 90 • image/jpeg) para Gemini Vision.',
+                  'La imagen se comprime automáticamente a 1080×1920 JPEG (calidad 75 • <200 KB) para Gemini Vision.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
                 ),
@@ -2006,7 +2116,7 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     FitdaysExtractedMetricsModel? prefilled,
   ) {
-    showModalBottomSheet<void>(
+    showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: ApexTheme.cardGraphite,
@@ -2020,7 +2130,10 @@ class _HomeScreenState extends State<HomeScreen> {
           latestRecord: viewModel.biometrics,
         );
       },
-    ).then((_) {
+    ).then((bool? saved) {
+      if (saved == true) {
+        widget.onProfileOrBiometricsUpdated?.call();
+      }
       if (mounted) {
         setState(() {});
       }
@@ -2330,7 +2443,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openWearableManualSyncModal(BuildContext context, String activeSource) {
-    showModalBottomSheet<void>(
+    showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: ApexTheme.cardGraphite,
@@ -2343,7 +2456,10 @@ class _HomeScreenState extends State<HomeScreen> {
           activeSource: activeSource,
         );
       },
-    ).then((_) {
+    ).then((bool? saved) {
+      if (saved == true) {
+        widget.onProfileOrBiometricsUpdated?.call();
+      }
       if (mounted) {
         setState(() {});
       }
@@ -2385,7 +2501,7 @@ class _WhoopCircleGauge extends StatelessWidget {
                 width: innerSize,
                 height: innerSize,
                 child: CircularProgressIndicator(
-                  value: progress.clamp(0.05, 1.0),
+                  value: progress <= 0.0 ? 0.0 : progress.clamp(0.03, 1.0),
                   strokeWidth: strokeWidth,
                   backgroundColor: Colors.white10,
                   valueColor: AlwaysStoppedAnimation<Color>(color),
@@ -2512,37 +2628,49 @@ class _BiometricCaptureModalSheetState
     _weightCtrl = TextEditingController(
       text: p != null
           ? p.weightKg.toString()
-          : (latest != null ? latest.weightKg.toString() : ''),
+          : (latest != null && latest.weightKg > 0
+              ? latest.weightKg.toString()
+              : ''),
     );
     _fatPctCtrl = TextEditingController(
       text: p != null
           ? p.fatPercentage.toString()
-          : (latest != null ? latest.fatPercentage.toString() : ''),
+          : (latest != null && latest.fatPercentage > 0
+              ? latest.fatPercentage.toString()
+              : ''),
     );
     _muscleKgCtrl = TextEditingController(
-      text: p != null
-          ? p.muscleMassKg.toString()
-          : (latest != null ? latest.muscleMassKg.toString() : ''),
+      text: p?.muscleMassKg != null
+          ? p!.muscleMassKg.toString()
+          : (latest != null && latest.muscleMassKg > 0
+              ? latest.muscleMassKg.toString()
+              : ''),
     );
     _skeletalPctCtrl = TextEditingController(
-      text: p != null
-          ? p.skeletalMusclePct.toString()
-          : (latest != null ? latest.skeletalMusclePct.toString() : ''),
+      text: p?.skeletalMusclePct != null
+          ? p!.skeletalMusclePct.toString()
+          : (latest != null && latest.skeletalMusclePct > 0
+              ? latest.skeletalMusclePct.toString()
+              : ''),
     );
     _visceralCtrl = TextEditingController(
-      text: p != null
-          ? p.visceralFat.toString()
-          : (latest != null ? latest.visceralFat.toString() : ''),
+      text: p?.visceralFat != null
+          ? p!.visceralFat.toString()
+          : (latest != null && latest.visceralFat > 0
+              ? latest.visceralFat.toString()
+              : ''),
     );
     _waterPctCtrl = TextEditingController(
-      text: p != null
-          ? p.bodyWaterPct.toString()
-          : (latest != null ? latest.bodyWaterPct.toString() : ''),
+      text: p?.bodyWaterPct != null
+          ? p!.bodyWaterPct.toString()
+          : (latest != null && latest.bodyWaterPct > 0
+              ? latest.bodyWaterPct.toString()
+              : ''),
     );
     _bmrCtrl = TextEditingController(
-      text: p != null
-          ? p.bmr.toString()
-          : (latest != null ? latest.bmr.toString() : ''),
+      text: p?.bmr != null
+          ? p!.bmr.toString()
+          : (latest != null && latest.bmr > 0 ? latest.bmr.toString() : ''),
     );
   }
 
@@ -2558,26 +2686,35 @@ class _BiometricCaptureModalSheetState
     super.dispose();
   }
 
+  double? _parseOptionalDouble(TextEditingController ctrl) {
+    final String raw = ctrl.text.trim().replaceAll(',', '.');
+    if (raw.isEmpty) {
+      return null;
+    }
+    return double.tryParse(raw);
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
+    final double? bmrDouble = _parseOptionalDouble(_bmrCtrl);
     final FitdaysExtractedMetricsModel payload = FitdaysExtractedMetricsModel(
-      weightKg: double.parse(_weightCtrl.text.trim()),
-      fatPercentage: double.parse(_fatPctCtrl.text.trim()),
-      muscleMassKg: double.parse(_muscleKgCtrl.text.trim()),
-      skeletalMusclePct: double.parse(_skeletalPctCtrl.text.trim()),
-      visceralFat: double.parse(_visceralCtrl.text.trim()),
-      bodyWaterPct: double.parse(_waterPctCtrl.text.trim()),
-      bmr: double.parse(_bmrCtrl.text.trim()).round(),
+      weightKg: double.parse(_weightCtrl.text.trim().replaceAll(',', '.')),
+      fatPercentage: double.parse(_fatPctCtrl.text.trim().replaceAll(',', '.')),
+      muscleMassKg: _parseOptionalDouble(_muscleKgCtrl),
+      skeletalMusclePct: _parseOptionalDouble(_skeletalPctCtrl),
+      visceralFat: _parseOptionalDouble(_visceralCtrl),
+      bodyWaterPct: _parseOptionalDouble(_waterPctCtrl),
+      bmr: bmrDouble?.round(),
       ocrConfidence: widget.prefilled?.ocrConfidence ?? 1.0,
       sourceProvider: widget.prefilled != null ? 'FITDAYS_OCR' : 'MANUAL_FORM',
     );
 
     final bool saved = await widget.viewModel.saveBiometricsRecord(payload);
     if (saved && mounted) {
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
     }
   }
 
@@ -2602,7 +2739,7 @@ class _BiometricCaptureModalSheetState
               Text(
                 isOcrReview
                     ? 'REVISAR REPORTE FITDAYS EXTRAÍDO POR GEMINI'
-                    : 'REGISTRO MANUAL DE BIOIMPEDANCIA',
+                    : 'REGISTRO DE PESO Y COMPOSICIÓN CORPORAL',
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w900,
@@ -2611,7 +2748,7 @@ class _BiometricCaptureModalSheetState
               ),
               const SizedBox(height: 4),
               const Text(
-                'Verifica los 7 indicadores biométricos antes de guardar en Render PostgreSQL.',
+                'Peso y % Grasa recalculan automáticamente tu Masa Magra (LBM) y regeneran las cargas de tu rutina.',
                 style: TextStyle(fontSize: 12, color: ApexTheme.textMuted),
               ),
               const SizedBox(height: 14),
@@ -2620,18 +2757,20 @@ class _BiometricCaptureModalSheetState
                   Expanded(
                     child: _buildNumberField(
                       controller: _weightCtrl,
-                      label: 'Peso (kg)',
+                      label: 'Peso (kg) *',
                       min: 30,
                       max: 280,
+                      requiredField: true,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: _buildNumberField(
                       controller: _fatPctCtrl,
-                      label: 'Grasa Corporal (%)',
+                      label: 'Grasa Corporal (%) *',
                       min: 2.5,
                       max: 65,
+                      requiredField: true,
                     ),
                   ),
                 ],
@@ -2642,18 +2781,20 @@ class _BiometricCaptureModalSheetState
                   Expanded(
                     child: _buildNumberField(
                       controller: _muscleKgCtrl,
-                      label: 'Masa Muscular (kg)',
+                      label: 'Masa Muscular (kg, opc.)',
                       min: 15,
                       max: 160,
+                      requiredField: false,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: _buildNumberField(
                       controller: _skeletalPctCtrl,
-                      label: 'Músculo Esquelético (%)',
+                      label: 'Músculo Esq. (%, opc.)',
                       min: 15,
                       max: 75,
+                      requiredField: false,
                     ),
                   ),
                 ],
@@ -2664,19 +2805,21 @@ class _BiometricCaptureModalSheetState
                   Expanded(
                     child: _buildNumberField(
                       controller: _visceralCtrl,
-                      label: 'Grasa Visceral (0.5-60)',
+                      label: 'Grasa Visceral (opc.)',
                       min: 0.5,
                       max: 60,
                       isInteger: false,
+                      requiredField: false,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: _buildNumberField(
                       controller: _waterPctCtrl,
-                      label: 'Agua Corporal (%)',
+                      label: 'Agua Corporal (%, opc.)',
                       min: 30,
                       max: 85,
+                      requiredField: false,
                     ),
                   ),
                 ],
@@ -2684,10 +2827,11 @@ class _BiometricCaptureModalSheetState
               const SizedBox(height: 10),
               _buildNumberField(
                 controller: _bmrCtrl,
-                label: 'BMR / Metabolismo Basal (kcal)',
+                label: 'BMR / Metabolismo Basal (kcal, opcional)',
                 min: 800,
                 max: 5500,
                 isInteger: true,
+                requiredField: false,
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
@@ -2700,7 +2844,7 @@ class _BiometricCaptureModalSheetState
                     widget.viewModel.isSavingBiometrics ? null : _submit,
                 icon: const Icon(Icons.cloud_upload_outlined),
                 label: const Text(
-                  'GUARDAR EN POSTGRESQL (RENDER)',
+                  'GUARDAR Y ACTUALIZAR RUTINA (POSTGRESQL)',
                   style: TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
@@ -2717,6 +2861,7 @@ class _BiometricCaptureModalSheetState
     required double min,
     required double max,
     bool isInteger = false,
+    bool requiredField = true,
   }) {
     return TextFormField(
       controller: controller,
@@ -2729,7 +2874,12 @@ class _BiometricCaptureModalSheetState
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
       ),
       validator: (String? v) {
-        final String raw = (v ?? '').trim();
+        final String raw = (v ?? '').trim().replaceAll(',', '.');
+        if (raw.isEmpty) {
+          return requiredField
+              ? '${min.toStringAsFixed(isInteger ? 0 : 1)} - ${max.toStringAsFixed(isInteger ? 0 : 1)}'
+              : null;
+        }
         final double? val = double.tryParse(raw);
         if (val == null || val < min || val > max) {
           return '${min.toStringAsFixed(isInteger ? 0 : 1)} - ${max.toStringAsFixed(isInteger ? 0 : 1)}';
@@ -2788,54 +2938,75 @@ class _WearablePolymorphicSyncModalSheetState
   @override
   void initState() {
     super.initState();
-    final WearableMetricRecord? w = widget.viewModel.wearable;
-    // Pre-llenado con los valores reales del Whoop del atleta (35% Rec, 9.6 Strain, 72% Sueño, 2.2 Estrés)
-    _recoverySlider = (w?.recoveryScore ?? 35.0).clamp(0.0, 100.0);
-    _strainSlider = (w?.strainScore ?? 9.6).clamp(0.0, 21.0);
-    _whoopSleepPctSlider = (w?.sleepEfficiencyPct ?? 72.0).clamp(0.0, 100.0);
-    _whoopStressSlider = (w?.whoopStressLevel ?? 2.2).clamp(0.0, 3.0);
+    final WearableMetricRecord? w =
+        widget.viewModel.hasWhoopData ? widget.viewModel.wearable : null;
+    // Sin constantes quemadas: solo pre-llena si el usuario ya sincronizó su banda hoy.
+    _recoverySlider = (w?.recoveryScore ?? 0.0).clamp(0.0, 100.0);
+    _strainSlider = (w?.strainScore ?? 0.0).clamp(0.0, 21.0);
+    _whoopSleepPctSlider = (w?.sleepEfficiencyPct ?? 0.0).clamp(0.0, 100.0);
+    _whoopStressSlider = (w?.whoopStressLevel ?? 0.0).clamp(0.0, 3.0);
 
     _hrvCtrl = TextEditingController(
-      text: (w?.hrvMs ?? 54.0).toStringAsFixed(0),
+      text: (w != null && w.hrvMs > 0) ? w.hrvMs.toStringAsFixed(0) : '',
     );
     _rhrCtrl = TextEditingController(
-      text: (w?.restingHr ?? 58).toString(),
+      text: (w != null && w.restingHr > 0) ? w.restingHr.toString() : '',
     );
     _sleepHoursCtrl = TextEditingController(
-      text: (w?.sleepHours ?? 6.8).toStringAsFixed(1),
+      text: (w != null && w.sleepHours > 0)
+          ? w.sleepHours.toStringAsFixed(1)
+          : '',
     );
 
     _huaweiStressCtrl = TextEditingController(
-      text: (w?.huaweiStressScore ?? 45).toString(),
+      text: (w != null && w.huaweiStressScore > 0)
+          ? w.huaweiStressScore.toString()
+          : '',
     );
     _huaweiTruSleepCtrl = TextEditingController(
-      text: (w?.huaweiTruSleepScore ?? 82).toString(),
+      text: (w != null && w.huaweiTruSleepScore > 0)
+          ? w.huaweiTruSleepScore.toString()
+          : '',
     );
     _huaweiAvgHrCtrl = TextEditingController(
-      text: (w?.avgHr ?? 68).toString(),
+      text: (w != null && w.avgHr > 0) ? w.avgHr.toString() : '',
     );
     _huaweiVo2MaxCtrl = TextEditingController(
-      text: (w?.huaweiVo2Max ?? 52.0).toStringAsFixed(1),
+      text: (w != null && w.huaweiVo2Max > 0)
+          ? w.huaweiVo2Max.toStringAsFixed(1)
+          : '',
     );
 
     _samsungEnergyCtrl = TextEditingController(
-      text: (w?.samsungEnergyScore ?? 78).toString(),
+      text: (w != null && w.samsungEnergyScore > 0)
+          ? w.samsungEnergyScore.toString()
+          : '',
     );
     _samsungMusclePctCtrl = TextEditingController(
-      text: (w?.samsungBiaMusclePct ?? 43.8).toStringAsFixed(1),
+      text: (w != null && w.samsungBiaMusclePct > 0)
+          ? w.samsungBiaMusclePct.toStringAsFixed(1)
+          : '',
     );
     _samsungFatPctCtrl = TextEditingController(
-      text: (w?.samsungBiaFatPct ?? 13.8).toStringAsFixed(1),
+      text: (w != null && w.samsungBiaFatPct > 0)
+          ? w.samsungBiaFatPct.toStringAsFixed(1)
+          : '',
     );
 
     _appleMoveKcalCtrl = TextEditingController(
-      text: (w?.appleMoveKcal ?? 720).toString(),
+      text: (w != null && w.appleMoveKcal > 0)
+          ? w.appleMoveKcal.toString()
+          : '',
     );
     _appleExerciseMinCtrl = TextEditingController(
-      text: (w?.appleExerciseMinutes ?? 52).toString(),
+      text: (w != null && w.appleExerciseMinutes > 0)
+          ? w.appleExerciseMinutes.toString()
+          : '',
     );
     _appleStandHoursCtrl = TextEditingController(
-      text: (w?.appleStandHours ?? 12).toString(),
+      text: (w != null && w.appleStandHours > 0)
+          ? w.appleStandHours.toString()
+          : '',
     );
   }
 
@@ -2862,52 +3033,72 @@ class _WearablePolymorphicSyncModalSheetState
       return;
     }
 
-    final int rhr = (int.tryParse(_rhrCtrl.text.trim()) ?? 58).clamp(30, 130);
-    final double hrv =
-        (double.tryParse(_hrvCtrl.text.trim()) ?? 54.0).clamp(10.0, 250.0);
-    final double sleepH =
-        (double.tryParse(_sleepHoursCtrl.text.trim()) ?? 6.8).clamp(0.0, 24.0);
+    final int rhr = (int.tryParse(_rhrCtrl.text.trim()) ?? 0).clamp(0, 220);
+    final double hrv = (double.tryParse(
+              _hrvCtrl.text.trim().replaceAll(',', '.'),
+            ) ??
+            0.0)
+        .clamp(0.0, 250.0);
+    final double sleepH = (double.tryParse(
+              _sleepHoursCtrl.text.trim().replaceAll(',', '.'),
+            ) ??
+            0.0)
+        .clamp(0.0, 24.0);
 
     double computedRecovery = _recoverySlider;
     double computedStrain = _strainSlider;
     double computedSleepPct = _whoopSleepPctSlider;
 
     final int huaweiStress =
-        (int.tryParse(_huaweiStressCtrl.text.trim()) ?? 45).clamp(1, 100);
+        (int.tryParse(_huaweiStressCtrl.text.trim()) ?? 0).clamp(0, 100);
     final int huaweiTruSleep =
-        (int.tryParse(_huaweiTruSleepCtrl.text.trim()) ?? 82).clamp(1, 100);
+        (int.tryParse(_huaweiTruSleepCtrl.text.trim()) ?? 0).clamp(0, 100);
     final int huaweiAvgHr =
-        (int.tryParse(_huaweiAvgHrCtrl.text.trim()) ?? 68).clamp(35, 200);
-    final double huaweiVo2 =
-        (double.tryParse(_huaweiVo2MaxCtrl.text.trim()) ?? 52.0)
-            .clamp(15.0, 90.0);
+        (int.tryParse(_huaweiAvgHrCtrl.text.trim()) ?? 0).clamp(0, 220);
+    final double huaweiVo2 = (double.tryParse(
+              _huaweiVo2MaxCtrl.text.trim().replaceAll(',', '.'),
+            ) ??
+            0.0)
+        .clamp(0.0, 95.0);
 
     final int samsungEnergy =
-        (int.tryParse(_samsungEnergyCtrl.text.trim()) ?? 78).clamp(1, 100);
-    final double samsungMuscle =
-        (double.tryParse(_samsungMusclePctCtrl.text.trim()) ?? 43.8)
-            .clamp(15.0, 75.0);
-    final double samsungFat =
-        (double.tryParse(_samsungFatPctCtrl.text.trim()) ?? 13.8)
-            .clamp(3.0, 60.0);
+        (int.tryParse(_samsungEnergyCtrl.text.trim()) ?? 0).clamp(0, 100);
+    final double samsungMuscle = (double.tryParse(
+              _samsungMusclePctCtrl.text.trim().replaceAll(',', '.'),
+            ) ??
+            0.0)
+        .clamp(0.0, 75.0);
+    final double samsungFat = (double.tryParse(
+              _samsungFatPctCtrl.text.trim().replaceAll(',', '.'),
+            ) ??
+            0.0)
+        .clamp(0.0, 65.0);
 
     final int appleMove =
-        (int.tryParse(_appleMoveKcalCtrl.text.trim()) ?? 720).clamp(0, 5000);
+        (int.tryParse(_appleMoveKcalCtrl.text.trim()) ?? 0).clamp(0, 5000);
     final int appleEx =
-        (int.tryParse(_appleExerciseMinCtrl.text.trim()) ?? 52).clamp(0, 600);
+        (int.tryParse(_appleExerciseMinCtrl.text.trim()) ?? 0).clamp(0, 600);
     final int appleStand =
-        (int.tryParse(_appleStandHoursCtrl.text.trim()) ?? 12).clamp(0, 24);
+        (int.tryParse(_appleStandHoursCtrl.text.trim()) ?? 0).clamp(0, 24);
 
     if (widget.activeSource == 'HUAWEI_GT') {
-      computedRecovery =
-          ((100 - huaweiStress) * 0.45 + huaweiTruSleep * 0.55).clamp(10.0, 99.0);
+      if (huaweiStress > 0 || huaweiTruSleep > 0) {
+        computedRecovery =
+            ((100 - huaweiStress) * 0.45 + huaweiTruSleep * 0.55)
+                .clamp(1.0, 100.0);
+      }
       computedSleepPct = huaweiTruSleep.toDouble();
     } else if (widget.activeSource == 'SAMSUNG_WATCH') {
       computedRecovery = samsungEnergy.toDouble();
-      computedSleepPct = ((sleepH / 8.0) * 100.0).clamp(40.0, 100.0);
+      computedSleepPct = sleepH > 0
+          ? ((sleepH / 8.0) * 100.0).clamp(0.0, 100.0)
+          : 0.0;
     } else if (widget.activeSource == 'APPLE_WATCH') {
-      computedRecovery = ((hrv / 85.0) * 82.0).clamp(25.0, 98.0);
-      computedStrain = ((appleMove / 1000.0) * 16.0).clamp(2.0, 20.5);
+      computedRecovery =
+          hrv > 0 ? ((hrv / 85.0) * 82.0).clamp(1.0, 100.0) : 0.0;
+      computedStrain = appleMove > 0
+          ? ((appleMove / 1000.0) * 16.0).clamp(0.0, 21.0)
+          : 0.0;
     }
 
     final WearableMetricRecord record = WearableMetricRecord(
@@ -2916,15 +3107,13 @@ class _WearablePolymorphicSyncModalSheetState
       strainScore: double.parse(computedStrain.toStringAsFixed(1)),
       hrvMs: hrv,
       restingHr: rhr,
-      avgHr: widget.activeSource == 'HUAWEI_GT'
-          ? huaweiAvgHr
-          : (rhr + 14).clamp(45, 190),
-      maxHr: 172,
+      avgHr: widget.activeSource == 'HUAWEI_GT' ? huaweiAvgHr : rhr,
+      maxHr: 0,
       sleepHours: sleepH,
       sleepEfficiencyPct: double.parse(computedSleepPct.toStringAsFixed(0)),
       sourceDevice: widget.activeSource,
       whoopStressLevel: double.parse(_whoopStressSlider.toStringAsFixed(1)),
-      whoopHealthMetricsInRange: 5,
+      whoopHealthMetricsInRange: 0,
       huaweiStressScore: huaweiStress,
       huaweiTruSleepScore: huaweiTruSleep,
       huaweiVo2Max: huaweiVo2,
@@ -2939,7 +3128,7 @@ class _WearablePolymorphicSyncModalSheetState
     final bool ok =
         await widget.viewModel.saveDirectWearableTelemetry(record);
     if (ok && mounted) {
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
     }
   }
 

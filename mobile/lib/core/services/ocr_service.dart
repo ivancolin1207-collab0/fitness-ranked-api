@@ -155,9 +155,10 @@ class OcrService {
     final double sleep =
         ((result['sleep_pct'] ?? result['sleep_performance_pct']) as num)
             .toDouble();
-    final double stress =
-        ((result['stress_level'] ?? result['whoop_stress_level'] ?? 1.8) as num)
-            .toDouble();
+    final double stress = ((result['stress_level'] ??
+                result['whoop_stress_level'] ??
+                0.0) as num)
+        .toDouble();
     final double sleepHours = (result['sleep_hours'] as num?)?.toDouble() ??
         double.parse(((sleep / 100.0) * 8.0).toStringAsFixed(1));
 

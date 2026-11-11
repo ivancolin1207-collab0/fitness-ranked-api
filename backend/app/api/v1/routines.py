@@ -27,16 +27,18 @@ async def get_current_routine(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     """
-    Consulta ÚNICAMENTE la tabla de PostgreSQL (`user_routines`) y retorna la última
-    rutina guardada en menos de 100 ms sin disparar llamadas a Gemini.
+    Consulta la rutina activa del usuario en PostgreSQL (`user_routines`).
+    Si cambió su `biometric_signature` (peso, Fitdays o sexo biológico), la regenera automáticamente.
     """
     try:
         current = await fetch_current_ai_routine_dict(db, current_user)
         return {
             "status": "success",
-            "routine": current,
+            "routine": current if current.get("has_routine") else None,
             **current,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         print("ERROR DETALLADO EN GET_CURRENT_ROUTINE:", traceback.format_exc())
         await db.rollback()
@@ -51,13 +53,13 @@ async def generate_ai_routine(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     """
-    Llama a Gemini 2.5 Flash con la biometría real del atleta (Peso, % Grasa, LBM)
-    y telemetría del wearable (Recuperación, Sueño, Estrés), genera una periodización
-    de 5 días con 6 ejercicios exactos por día y cargas reales en KG, la almacena
-    en PostgreSQL y reemplaza cualquier planificación anterior.
+    Genera y persiste en PostgreSQL una periodización de 5 días × 6 ejercicios exactos por día
+    con cargas calculadas matemáticamente a partir de `sex`, `weight_kg`, `lbm_kg` y `recovery_score` real.
     """
     try:
         return await generate_and_persist_ai_routine(db, current_user)
+    except HTTPException:
+        raise
     except Exception as exc:
         print("ERROR DETALLADO EN GENERATE_AI:", traceback.format_exc())
         await db.rollback()

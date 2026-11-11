@@ -72,7 +72,8 @@ class FitnessRepository {
   Future<String> getAthleteGender() async {
     final UserProfileModel? cached =
         await _storageService.readUserProfileCache();
-    final String rawSex = (cached?.biologicalSex ?? 'MALE').toLowerCase().trim();
+    final String rawSex =
+        (cached?.sex ?? cached?.biologicalSex ?? 'male').toLowerCase().trim();
     if (rawSex.contains('fem') || rawSex == 'f' || rawSex.contains('mujer')) {
       return 'female';
     }
@@ -81,13 +82,14 @@ class FitnessRepository {
 
   /// Actualiza el género del avatar en el perfil persistido localmente.
   Future<void> setAthleteGender(String gender) async {
-    final String normalized =
-        gender.toLowerCase().contains('fem') ? 'FEMALE' : 'MALE';
+    final bool isFem = gender.toLowerCase().contains('fem');
+    final String normalizedBio = isFem ? 'FEMALE' : 'MALE';
+    final String normalizedSex = isFem ? 'female' : 'male';
     final UserProfileModel? cached =
         await _storageService.readUserProfileCache();
     if (cached != null) {
       await _storageService.saveUserProfileCache(
-        cached.copyWith(biologicalSex: normalized),
+        cached.copyWith(sex: normalizedSex, biologicalSex: normalizedBio),
       );
     }
   }
@@ -115,7 +117,7 @@ class FitnessRepository {
   // =========================================================================
 
   /// Verifica si existe un token JWT válido en disco y restaura de inmediato
-  /// el perfil persistido para saltar directo a la pantalla principal (Auto-login).
+  /// el perfil real persistido o consultado en backend (cero perfiles mock).
   Future<UserProfileModel?> restoreCachedSessionProfile() async {
     final String? token = await _authService.readActiveJwtToken();
     if (token == null || token.isEmpty) {
@@ -124,35 +126,11 @@ class FitnessRepository {
 
     final UserProfileModel? cached =
         await _storageService.readUserProfileCache();
-    if (cached != null) {
+    if (cached != null && cached.id.isNotEmpty) {
       return cached;
     }
 
-    final String savedUnit = await _storageService.readUnitSystem();
-    final String savedWearable = await _storageService.readPreferredWearable();
-    final String? savedUserId = await _authService.readActiveUserId();
-
-    final UserProfileModel fallback = UserProfileModel(
-      id: savedUserId ?? 'persisted-session',
-      username: 'atleta_activo',
-      fullName: 'Atleta ApexMetrix',
-      maskedEmail: '',
-      biologicalSex: 'MALE',
-      heightCm: 175.0,
-      trainingGoal: 'HIPERTROFIA',
-      preferredWearable: savedWearable,
-      unitSystem: savedUnit,
-      onboardingCompleted: true,
-      currentElo: 1200,
-      currentTier: 'Plata',
-      createdAt: DateTime.now(),
-    );
-    await _authService.persistSession(
-      jwtToken: token,
-      userId: fallback.id,
-      profile: fallback,
-    );
-    return fallback;
+    return fetchCurrentSessionProfile();
   }
 
   Future<UserProfileModel> login({
@@ -172,8 +150,11 @@ class FitnessRepository {
       userId: profile.id,
       profile: profile,
     );
-    await _storageService.saveUnitSystem(profile.unitSystem);
-    await _storageService.savePreferredWearable(profile.preferredWearable);
+    await _storageService.saveUnitSystem(profile.unitSystem, userId: profile.id);
+    await _storageService.savePreferredWearable(
+      profile.preferredWearable,
+      userId: profile.id,
+    );
     return profile;
   }
 
@@ -183,8 +164,10 @@ class FitnessRepository {
     required String password,
     String? fullName,
     DateTime? birthDate,
-    String biologicalSex = 'MALE',
-    double heightCm = 175.0,
+    required String biologicalSex,
+    double? heightCm,
+    double? weightKg,
+    double? bodyFatPct,
     String trainingGoal = 'HIPERTROFIA',
     String preferredWearable = 'WHOOP',
     String unitSystem = 'KG',
@@ -197,6 +180,8 @@ class FitnessRepository {
       birthDate: birthDate,
       biologicalSex: biologicalSex,
       heightCm: heightCm,
+      weightKg: weightKg,
+      bodyFatPct: bodyFatPct,
       trainingGoal: trainingGoal,
       preferredWearable: preferredWearable,
       unitSystem: unitSystem,
@@ -210,8 +195,11 @@ class FitnessRepository {
       userId: profile.id,
       profile: profile,
     );
-    await _storageService.saveUnitSystem(profile.unitSystem);
-    await _storageService.savePreferredWearable(profile.preferredWearable);
+    await _storageService.saveUnitSystem(profile.unitSystem, userId: profile.id);
+    await _storageService.savePreferredWearable(
+      profile.preferredWearable,
+      userId: profile.id,
+    );
     return profile;
   }
 
@@ -233,8 +221,11 @@ class FitnessRepository {
       userId: profile.id,
       profile: profile,
     );
-    await _storageService.saveUnitSystem(profile.unitSystem);
-    await _storageService.savePreferredWearable(profile.preferredWearable);
+    await _storageService.saveUnitSystem(profile.unitSystem, userId: profile.id);
+    await _storageService.savePreferredWearable(
+      profile.preferredWearable,
+      userId: profile.id,
+    );
     return profile;
   }
 
@@ -252,8 +243,14 @@ class FitnessRepository {
         userId: profile.id,
         profile: profile,
       );
-      await _storageService.saveUnitSystem(profile.unitSystem);
-      await _storageService.savePreferredWearable(profile.preferredWearable);
+      await _storageService.saveUnitSystem(
+        profile.unitSystem,
+        userId: profile.id,
+      );
+      await _storageService.savePreferredWearable(
+        profile.preferredWearable,
+        userId: profile.id,
+      );
       return profile;
     } catch (_) {
       return await _storageService.readUserProfileCache();
@@ -273,8 +270,14 @@ class FitnessRepository {
       userId: updated.id,
       profile: updated,
     );
-    await _storageService.saveUnitSystem(updated.unitSystem);
-    await _storageService.savePreferredWearable(updated.preferredWearable);
+    await _storageService.saveUnitSystem(
+      updated.unitSystem,
+      userId: updated.id,
+    );
+    await _storageService.savePreferredWearable(
+      updated.preferredWearable,
+      userId: updated.id,
+    );
     return updated;
   }
 
@@ -282,7 +285,7 @@ class FitnessRepository {
     await _authService.logoutExplicitly();
   }
 
-  Future<WearableMetricRecord> readCachedWearableTelemetry({
+  Future<WearableMetricRecord?> readCachedWearableTelemetry({
     String defaultSource = 'WHOOP',
   }) {
     return _storageService.readCachedWearableTelemetry(
@@ -310,6 +313,10 @@ class FitnessRepository {
     return _storageService.saveCachedAiRoutinePlan(plan);
   }
 
+  Future<void> clearCachedAiRoutinePlan() {
+    return _storageService.clearCachedAiRoutinePlan();
+  }
+
   Future<List<RoutineTemplateModel>> readCachedRoutineTemplates() {
     return _storageService.readCachedRoutineTemplates();
   }
@@ -327,7 +334,7 @@ class FitnessRepository {
   /// Intenta leer telemetría real desde Health Connect (alimentada por Whoop/Huawei)
   /// y sincronizarla en PostgreSQL. Si Health Connect no reporta datos hoy,
   /// consulta si ya existe un registro sincronizado hoy en PostgreSQL (`GET /wearables/today`).
-  /// Si tampoco existe, retorna `null` para mostrar "Esperando sincronización de Whoop".
+  /// Si tampoco existe, retorna `null` para mostrar `--` (sin datos hoy).
   Future<WearableMetricRecord?> syncTodayWearableData({
     String? sourceDevice,
     bool forceSensorPoll = false,
@@ -336,15 +343,11 @@ class FitnessRepository {
     final String preferred =
         sourceDevice ?? await _storageService.readPreferredWearable();
 
-    // Priorizar el registro ya persistido hoy en PostgreSQL (ej. por escaneo de captura o sync previo)
     if (!forceSensorPoll) {
       try {
         final WearableMetricRecord? existingCloud =
             await _apiClient.fetchTodayWearable(jwtToken: token);
-        if (existingCloud != null &&
-            !(existingCloud.recoveryScore.round() == 62 &&
-                existingCloud.sleepEfficiencyPct.round() == 90 &&
-                existingCloud.restingHr == 62)) {
+        if (existingCloud != null) {
           return existingCloud;
         }
       } catch (_) {}
@@ -361,15 +364,7 @@ class FitnessRepository {
       );
     }
 
-    final WearableMetricRecord? fallbackCloud =
-        await _apiClient.fetchTodayWearable(jwtToken: token);
-    if (fallbackCloud != null &&
-        fallbackCloud.recoveryScore.round() == 62 &&
-        fallbackCloud.sleepEfficiencyPct.round() == 90 &&
-        fallbackCloud.restingHr == 62) {
-      return null;
-    }
-    return fallbackCloud;
+    return _apiClient.fetchTodayWearable(jwtToken: token);
   }
 
   /// Solicita explícitamente permisos de lectura a Health Connect, sincroniza con PostgreSQL
@@ -401,14 +396,8 @@ class FitnessRepository {
 
     final WearableMetricRecord? cloudRecord =
         await _apiClient.fetchTodayWearable(jwtToken: token);
-    final WearableMetricRecord? sanitizedCloud = (cloudRecord != null &&
-            cloudRecord.recoveryScore.round() == 62 &&
-            cloudRecord.sleepEfficiencyPct.round() == 90 &&
-            cloudRecord.restingHr == 62)
-        ? null
-        : cloudRecord;
     return HealthConnectPollResult(
-      record: sanitizedCloud,
+      record: cloudRecord,
       sdkAvailable: poll.sdkAvailable,
       permissionGranted: poll.permissionGranted,
       statusMessage: poll.statusMessage,
@@ -520,12 +509,15 @@ class FitnessRepository {
   }
 
   Future<HydrationStatusModel> loadTodayHydration({
-    double weightKg = 78.0,
-    double strainScore = 10.0,
+    double? weightKg,
+    double? strainScore,
   }) async {
     final String ymd = _todayYmd();
-    final int recommendedGoal =
-        ((weightKg * 35.0) + (strainScore * 60.0)).round().clamp(2000, 6000);
+    final int recommendedGoal = weightKg != null
+        ? ((weightKg * 35.0) + ((strainScore ?? 0.0) * 60.0))
+            .round()
+            .clamp(2000, 6000)
+        : 2500;
     final List<Map<String, dynamic>> localRaw =
         await _storageService.readHydrationLogsForDate(ymd);
 
@@ -563,8 +555,8 @@ class FitnessRepository {
 
   Future<HydrationStatusModel> addWaterIntakeMl({
     required int amountMl,
-    double weightKg = 78.0,
-    double strainScore = 10.0,
+    double? weightKg,
+    double? strainScore,
   }) async {
     final String ymd = _todayYmd();
     final DateTime now = DateTime.now();
@@ -595,8 +587,11 @@ class FitnessRepository {
       }
     } catch (_) {}
 
-    final int recommendedGoal =
-        ((weightKg * 35.0) + (strainScore * 60.0)).round().clamp(2000, 6000);
+    final int recommendedGoal = weightKg != null
+        ? ((weightKg * 35.0) + ((strainScore ?? 0.0) * 60.0))
+            .round()
+            .clamp(2000, 6000)
+        : 2500;
     final List<HydrationLogEntryModel> entries =
         updatedRaw.map(HydrationLogEntryModel.fromJson).toList();
     final int total = entries.fold<int>(
@@ -767,7 +762,7 @@ class FitnessRepository {
     );
   }
 
-  Future<ActiveDuo2v2DuelModel> loadActive2v2Duel({
+  Future<ActiveDuo2v2DuelModel?> loadActive2v2Duel({
     String seasonId = '2026-S4',
   }) async {
     final String token = await _requireToken();

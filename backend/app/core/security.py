@@ -209,13 +209,13 @@ async def validate_uploaded_image(file: UploadFile) -> tuple[bytes, str]:
         )
 
     try:
-        with Image.open(io.BytesIO(raw_bytes)) as img:
-            img.verify()
-        # Re-abrir y re-codificar sin EXIF (CDR) a JPEG RGB calidad 90
+        # Decodificación en una sola pasada, escalado máx 1080x1920 y compresión JPEG calidad 75
+        # para proteger la memoria RAM del contenedor en Render (evita OOM / Error 502) y eliminar EXIF.
         with Image.open(io.BytesIO(raw_bytes)) as clean_img:
             rgb_img = clean_img.convert("RGB")
+            rgb_img.thumbnail((1080, 1920), Image.Resampling.LANCZOS)
             out_buf = io.BytesIO()
-            rgb_img.save(out_buf, format="JPEG", quality=90, optimize=True)
+            rgb_img.save(out_buf, format="JPEG", quality=75, optimize=True)
             sanitized_bytes = out_buf.getvalue()
     except Exception as exc:
         raise HTTPException(

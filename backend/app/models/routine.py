@@ -6,6 +6,7 @@ generada por Gemini 2.5 Flash (`UserRoutine`, `WorkoutDay`, `WorkoutExercise`).
 """
 
 from datetime import datetime
+from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -56,6 +57,10 @@ class UserRoutine(Base):
         nullable=False,
         default="active",
         server_default=text("'active'"),
+    )
+    biometric_signature: Mapped[Optional[str]] = mapped_column(
+        String(80),
+        nullable=True,
     )
 
     days: Mapped[list["WorkoutDay"]] = relationship(

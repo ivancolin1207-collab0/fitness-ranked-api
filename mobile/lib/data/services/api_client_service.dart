@@ -260,8 +260,10 @@ class ApiClientService {
     required String password,
     String? fullName,
     DateTime? birthDate,
-    String biologicalSex = 'MALE',
-    double heightCm = 175.0,
+    required String biologicalSex,
+    double? heightCm,
+    double? weightKg,
+    double? bodyFatPct,
     String trainingGoal = 'HIPERTROFIA',
     String preferredWearable = 'WHOOP',
     String unitSystem = 'KG',
@@ -269,6 +271,8 @@ class ApiClientService {
     final String? birthYmd = birthDate != null
         ? '${birthDate.year.toString().padLeft(4, '0')}-${birthDate.month.toString().padLeft(2, '0')}-${birthDate.day.toString().padLeft(2, '0')}'
         : null;
+    final bool isFemale = biologicalSex.toUpperCase() == 'FEMALE' ||
+        biologicalSex.toLowerCase() == 'female';
 
     final http.Response response = await _sendWithFallback(
       (String base) => _httpClient.post(
@@ -281,8 +285,11 @@ class ApiClientService {
           if (fullName != null && fullName.trim().isNotEmpty)
             'full_name': fullName.trim(),
           if (birthYmd != null) 'birth_date': birthYmd,
-          'biological_sex': biologicalSex,
-          'height_cm': heightCm,
+          'sex': isFemale ? 'female' : 'male',
+          'biological_sex': isFemale ? 'FEMALE' : 'MALE',
+          if (heightCm != null) 'height_cm': heightCm,
+          if (weightKg != null) 'weight_kg': weightKg,
+          if (bodyFatPct != null) 'body_fat_pct': bodyFatPct,
           'training_goal': trainingGoal,
           'preferred_wearable': preferredWearable,
           'unit_system': unitSystem,
@@ -609,105 +616,54 @@ class ApiClientService {
     required String message,
     required Map<String, dynamic> context,
   }) {
-    final String name =
-        (context['athlete_name'] as String?) ?? 'Atleta';
-    final double weightKg =
-        (context['weight_kg'] as num?)?.toDouble() ?? 78.0;
-    final double lbmKg =
-        (context['lean_body_mass_kg'] as num?)?.toDouble() ?? 65.0;
-    final double rec =
-        (context['recovery_score'] as num?)?.toDouble() ?? 47.0;
-    final double sleepPct =
-        (context['sleep_performance_pct'] as num?)?.toDouble() ?? 80.0;
-    final double strain =
-        (context['strain_score'] as num?)?.toDouble() ?? 7.2;
-    final double stress =
-        (context['stress_level'] as num?)?.toDouble() ?? 2.4;
+    final String name = (context['athlete_name'] as String?) ?? 'Atleta';
+    final double? weightKg = (context['weight_kg'] as num?)?.toDouble();
+    final double? lbmKg = (context['lean_body_mass_kg'] as num?)?.toDouble();
+    final double? rec = (context['recovery_score'] as num?)?.toDouble();
+    final double? sleepPct =
+        (context['sleep_performance_pct'] as num?)?.toDouble();
+    final double? strain = (context['strain_score'] as num?)?.toDouble();
+    final double? stress = (context['stress_level'] as num?)?.toDouble();
     final String stressCat = (context['stress_category'] as String?) ??
-        (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'));
+        (stress != null
+            ? (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'))
+            : 'SIN DATOS');
     final int hydConsumed =
         (context['hydration_consumed_ml'] as num?)?.toInt() ?? 0;
-    final int hydGoal =
-        (context['hydration_goal_ml'] as num?)?.toInt() ?? 2800;
+    final int? hydGoal = (context['hydration_goal_ml'] as num?)?.toInt();
     final String routine = (context['scheduled_routine_name'] as String?) ??
         'Sesión de Fuerza Programada';
 
-    final String zone =
-        rec >= 67.0 ? 'VERDE' : (rec >= 34.0 ? 'AMARILLA' : 'ROJA');
-    final int hydMissing = (hydGoal - hydConsumed).clamp(0, 6000);
-    final String q = message.toLowerCase();
+    final String zone = rec == null
+        ? 'SIN_SINCRONIZAR'
+        : (rec >= 67.0 ? 'VERDE' : (rec >= 34.0 ? 'AMARILLA' : 'ROJA'));
+    final String recTxt = rec != null ? '${rec.round()}%' : '--';
+    final String sleepTxt = sleepPct != null ? '${sleepPct.round()}%' : '--';
+    final String strainTxt =
+        strain != null ? strain.toStringAsFixed(1) : '--';
+    final String stressTxt =
+        stress != null ? '${stress.toStringAsFixed(1)} ($stressCat)' : '--';
+    final String weightTxt =
+        weightKg != null ? '${weightKg.toStringAsFixed(1)} kg' : '--';
+    final String lbmTxt =
+        lbmKg != null ? '${lbmKg.toStringAsFixed(1)} kg LBM' : '--';
+    final String hydGoalTxt = hydGoal != null ? '$hydGoal ml' : '--';
 
-    final int tdeeKcal =
-        ((lbmKg * 21.6 + 370) * (1.55 + (strain / 45.0))).round();
-    final int surplusKcal = tdeeKcal + 350;
-    final int proteinG = (weightKg * 2.2).round();
-    final int fatsG = (weightKg * 1.0).round();
-    final int carbsG =
-        ((surplusKcal - (proteinG * 4 + fatsG * 9)) / 4).round();
+    final String directive = rec == null
+        ? 'Escanea tu wearable de hoy para ajustar el RPE diario automáticamente.'
+        : (zone == 'VERDE'
+            ? 'Sobrecarga progresiva habilitada (+2.5 kg en básicos, RPE 8.5).'
+            : (zone == 'AMARILLA'
+                ? 'Mantén volumen objetivo con RPE controlado (7.5–8.0, RIR 2).'
+                : 'Descarga técnica activa (-15% carga, RPE 6.5–7.0) para proteger el SNC.'));
 
-    String reply;
-    if (q.contains('subir de peso') ||
-        q.contains('volumen') ||
-        q.contains('masa') ||
-        q.contains('hipertrofia') ||
-        q.contains('calor') ||
-        q.contains('macro') ||
-        q.contains('ganar')) {
-      reply =
-          'Protocolo de hipertrofia y superávit para $name (${weightKg.toStringAsFixed(1)} kg | ${lbmKg.toStringAsFixed(1)} kg LBM, Strain ${strain.toStringAsFixed(1)}):\n'
-          '1. Superávit Calórico: Consume $surplusKcal kcal/día (+350 kcal sobre tu mantenimiento de $tdeeKcal kcal).\n'
-          '2. Macros Exactos: Proteína $proteinG g (2.2 g/kg), Carbohidratos $carbsG g (prioriza 90 g peri-entreno en "$routine") y Grasas $fatsG g.\n'
-          '3. Suplementación: Creatina monohidratada 5 g/día + batido hipercalórico líquido si presentas saciedad alta.';
-    } else if (q.contains('cena') ||
-        q.contains('comer') ||
-        q.contains('estr') ||
-        q.contains('sueñ') ||
-        q.contains('dormir')) {
-      reply =
-          'Con Estrés en ${stress.toStringAsFixed(1)} ($stressCat), Sueño en ${sleepPct.round()}% y Recuperación en ${rec.round()}%, prioriza descarga parasimpática nocturna:\n'
-          '1. Cena recomendada: 45 g de proteína magra (salmón o pechuga) + 75 g de carbohidratos complejos (arroz jazmín o papa al horno) para optimizar serotonina y reducir cortisol.\n'
-          '2. Protocolo de descanso: 400 mg de bisglicinato de magnesio 60 min antes de dormir + 3 min de respiración fisiológica.';
-    } else if (q.contains('agua') ||
-        q.contains('hidrat') ||
-        q.contains('electrolit')) {
-      reply =
-          'Estado hídrico hoy: $hydConsumed / $hydGoal ml (déficit de $hydMissing ml para tu Strain de ${strain.toStringAsFixed(1)}).\n'
-          '• Pre-entreno: Ingiere 500 ml con 500 mg de sodio 30 min antes de "$routine".\n'
-          '• Intra-entreno: 250 ml cada 20 min para sostener la potencia contráctil.';
-    } else if (q.contains('pesad') ||
-        q.contains('entren') ||
-        q.contains('carga') ||
-        q.contains('rpe') ||
-        q.contains('serie') ||
-        q.contains('rutina')) {
-      if (zone == 'VERDE') {
-        reply =
-            'Con ${rec.round()}% de Recuperación (Zona VERDE) y ${sleepPct.round()}% de Sueño:\n'
-            '• En "$routine", aplica sobrecarga progresiva (+2.5 kg en el básico principal) trabajando en RPE 8.0–8.5.\n'
-            '• Descanso: 150 s entre series efectivas.';
-      } else if (zone == 'AMARILLA') {
-        reply =
-            'Con ${rec.round()}% de Recuperación (Zona AMARILLA), Sueño ${sleepPct.round()}%, Strain ${strain.toStringAsFixed(1)} y Estrés ${stress.toStringAsFixed(1)} ($stressCat):\n'
-            '• En "$routine", mantén las cargas base sin buscar 1RM hoy; fija el esfuerzo en RPE 7.5–8.0 (RIR 2).\n'
-            '• Descansa 150–180 s entre series compuestas.';
-      } else {
-        reply =
-            'Alerta de fatiga del SNC (Recuperación ${rec.round()}% Zona ROJA, Estrés ${stress.toStringAsFixed(1)} $stressCat):\n'
-            '• En "$routine", aplica descarga reactiva: reduce -10% la carga en barra, recorta 1 serie por ejercicio y limita el RPE a 7.0.';
-      }
-    } else {
-      final String directive = zone == 'VERDE'
-          ? 'Sobrecarga progresiva habilitada (+2.5 kg en básicos, RPE 8.5).'
-          : (zone == 'AMARILLA'
-              ? 'Mantén volumen objetivo con RPE controlado (7.5–8.0, RIR 2).'
-              : 'Descarga técnica activa (-10% carga, RPE <= 7.0) para proteger el SNC.');
-      reply =
-          'Análisis táctico en tiempo real para $name:\n'
-          '• Recuperación: ${rec.round()}% (Zona $zone) | Sueño: ${sleepPct.round()}%\n'
-          '• Esfuerzo (Strain): ${strain.toStringAsFixed(1)} | Estrés: ${stress.toStringAsFixed(1)} ($stressCat)\n'
-          '• Hidratación: $hydConsumed / $hydGoal ml | Rutina: $routine\n\n'
-          'Directriz: $directive';
-    }
+    final String reply =
+        'Resumen táctico con tus datos reales registrados ($name):\n'
+        '• Biometría: $weightTxt | $lbmTxt\n'
+        '• Recuperación hoy: $recTxt | Sueño: $sleepTxt\n'
+        '• Esfuerzo (Strain): $strainTxt | Estrés: $stressTxt\n'
+        '• Hidratación: $hydConsumed / $hydGoalTxt | Rutina: $routine\n\n'
+        'Directriz para "${message.trim()}": $directive';
 
     return AiCoachChatResponseModel(
       reply: reply,
@@ -715,7 +671,7 @@ class ApiClientService {
       suggestedPrompts: const <String>[
         '¿Qué puedo hacer para subir de peso limpio?',
         'Ajusta mis series y RPE para la rutina de hoy',
-        '¿Qué me recomiendas cenar para bajar mi estrés?',
+        '¿Qué me recomiendas cenar según mi recuperación?',
         '¿Cuánta agua me falta antes de entrenar?',
       ],
     );
@@ -1058,7 +1014,7 @@ class ApiClientService {
   }
 
   /// GET /api/v1/leaderboard/duels/2v2
-  Future<ActiveDuo2v2DuelModel> fetchActive2v2Duel({
+  Future<ActiveDuo2v2DuelModel?> fetchActive2v2Duel({
     required String seasonId,
     required String jwtToken,
   }) async {
@@ -1072,6 +1028,9 @@ class ApiClientService {
     );
 
     if (response.statusCode == 200) {
+      if (response.body.isEmpty || response.body.trim() == 'null') {
+        return null;
+      }
       return ActiveDuo2v2DuelModel.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>,
       );

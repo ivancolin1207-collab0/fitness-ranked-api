@@ -1126,7 +1126,8 @@ class _BiomechanicalExerciseAvatarModuleState
       widget.exerciseName,
       exerciseKey: widget.exerciseKey,
     );
-    final bool isFemale = _localGender == 'female';
+    final bool isFemale = widget.athleteGender.toLowerCase().contains('fem') ||
+        _localGender == 'female';
     final String displayExerciseName = widget.exerciseName.trim().isNotEmpty
         ? widget.exerciseName.trim()
         : spec.canonicalName;
@@ -1147,10 +1148,14 @@ class _BiomechanicalExerciseAvatarModuleState
       targetRepsRange: widget.targetRepsRange,
       prescribedRpe: widget.prescribedRpe,
     );
-    final double effectiveLbm = widget.lbmKg ?? 62.7;
-    final int effectiveRec = (widget.recoveryScore ?? 47.0).round();
+    final String lbmLabel = (widget.lbmKg != null && widget.lbmKg! > 0)
+        ? '${widget.lbmKg!.toStringAsFixed(1)} kg LBM'
+        : 'LBM real del perfil';
+    final String recLabel = widget.recoveryScore != null
+        ? 'con ${widget.recoveryScore!.round()}% de recuperación'
+        : 'sin recuperación sincronizada hoy (100% carga base)';
     final String targetSecondary =
-        'Carga calculada para ${effectiveLbm.toStringAsFixed(1)} kg LBM con $effectiveRec% de recuperación';
+        'Carga calculada para $lbmLabel $recLabel';
 
     return AnimatedBuilder(
       animation: _controller,
@@ -1213,10 +1218,12 @@ class _BiomechanicalExerciseAvatarModuleState
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    // Selector de Avatar por Género (♂ MASC / ♀ FEM)
+                    // Indicador de Anatomía Vinculado al Sexo Biológico del Atleta (♂ MASC / ♀ FEM)
                     InkWell(
                       borderRadius: BorderRadius.circular(7),
-                      onTap: () => _toggleGender(isFemale ? 'male' : 'female'),
+                      onTap: widget.onGenderChanged != null
+                          ? () => _toggleGender(isFemale ? 'male' : 'female')
+                          : null,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 7,

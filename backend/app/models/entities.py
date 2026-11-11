@@ -72,6 +72,8 @@ class User(Base):
         default=BiologicalSex.MALE,
     )
     height_cm: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
+    weight_kg: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
+    body_fat_pct: Mapped[Optional[float]] = mapped_column(Numeric(4, 2), nullable=True)
     training_goal: Mapped[TrainingGoal] = mapped_column(
         _pg_enum(TrainingGoal, "training_goal_enum"),
         nullable=False,

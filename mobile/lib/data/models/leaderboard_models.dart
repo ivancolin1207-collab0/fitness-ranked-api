@@ -141,9 +141,9 @@ class SymmetricChallengeExerciseModel {
       targetReps: (json['target_reps'] as num?)?.toInt() ?? 8,
       targetRpe: (json['target_rpe'] as num?)?.toDouble() ?? 8.0,
       challengerPrescribedWeightKg:
-          (json['challenger_prescribed_weight_kg'] as num?)?.toDouble() ?? 95.0,
+          (json['challenger_prescribed_weight_kg'] as num?)?.toDouble() ?? 0.0,
       opponentPrescribedWeightKg:
-          (json['opponent_prescribed_weight_kg'] as num?)?.toDouble() ?? 85.0,
+          (json['opponent_prescribed_weight_kg'] as num?)?.toDouble() ?? 0.0,
       parityNote: (json['parity_note'] as String?) ??
           'Escala alométrica LBM^0.67 equitativa (100% paridad relativa)',
     );
@@ -218,57 +218,20 @@ class HeadToHeadDuelModel {
     final double lbmA =
         (json['challenger_lbm_score'] as num?)?.toDouble() ?? 0.0;
     final double multA =
-        (json['challenger_discipline_multiplier'] as num?)?.toDouble() ?? 1.14;
+        (json['challenger_discipline_multiplier'] as num?)?.toDouble() ?? 1.0;
     final double lbmB =
         (json['opponent_lbm_score'] as num?)?.toDouble() ?? 0.0;
     final double multB =
-        (json['opponent_discipline_multiplier'] as num?)?.toDouble() ?? 1.10;
+        (json['opponent_discipline_multiplier'] as num?)?.toDouble() ?? 1.0;
     final String chName =
         (json['challenger_username'] as String?) ?? 'atleta';
     final List<dynamic> rawChallenges =
         (json['symmetric_challenge'] as List<dynamic>?) ?? <dynamic>[];
 
-    final List<SymmetricChallengeExerciseModel> parsedChallenges =
-        rawChallenges.isNotEmpty
-            ? rawChallenges
-                .whereType<Map<String, dynamic>>()
-                .map(SymmetricChallengeExerciseModel.fromJson)
-                .toList()
-            : <SymmetricChallengeExerciseModel>[
-                SymmetricChallengeExerciseModel(
-                  movementPattern: 'Dominante de Rodilla (Sentadilla)',
-                  exerciseName: 'Barbell Back Squat',
-                  targetSets: 4,
-                  targetReps: 8,
-                  targetRpe: 8.0,
-                  challengerPrescribedWeightKg: 95.0,
-                  opponentPrescribedWeightKg: 82.5,
-                  parityNote:
-                      'Paridad Alométrica LBM^0.67 ($chName): esfuerzo relativo idéntico.',
-                ),
-                SymmetricChallengeExerciseModel(
-                  movementPattern: 'Empuje Horizontal (Torso)',
-                  exerciseName: 'Barbell Bench Press',
-                  targetSets: 4,
-                  targetReps: 8,
-                  targetRpe: 8.0,
-                  challengerPrescribedWeightKg: 72.5,
-                  opponentPrescribedWeightKg: 62.5,
-                  parityNote:
-                      'Paridad Alométrica LBM^0.67 ($chName): esfuerzo relativo idéntico.',
-                ),
-                SymmetricChallengeExerciseModel(
-                  movementPattern: 'Bisagra de Cadera (Cadena Posterior)',
-                  exerciseName: 'Romanian Deadlift (RDL)',
-                  targetSets: 3,
-                  targetReps: 10,
-                  targetRpe: 8.0,
-                  challengerPrescribedWeightKg: 85.0,
-                  opponentPrescribedWeightKg: 75.0,
-                  parityNote:
-                      'Paridad Alométrica LBM^0.67 ($chName): esfuerzo relativo idéntico.',
-                ),
-              ];
+    final List<SymmetricChallengeExerciseModel> parsedChallenges = rawChallenges
+        .whereType<Map<String, dynamic>>()
+        .map(SymmetricChallengeExerciseModel.fromJson)
+        .toList();
 
     return HeadToHeadDuelModel(
       competitionId: (json['competition_id'] as String?) ?? '',
@@ -287,11 +250,11 @@ class HeadToHeadDuelModel {
           (json['challenger_rpe_compliance_pct'] as num?)?.toDouble() ?? 100.0,
       challengerDisciplineMultiplier: multA,
       challengerSleepBonusPct:
-          (json['challenger_sleep_bonus_pct'] as num?)?.toDouble() ?? 7.0,
+          (json['challenger_sleep_bonus_pct'] as num?)?.toDouble() ?? 0.0,
       challengerConsistencyBonusPct:
-          (json['challenger_consistency_bonus_pct'] as num?)?.toDouble() ?? 4.5,
+          (json['challenger_consistency_bonus_pct'] as num?)?.toDouble() ?? 0.0,
       challengerStrainBalancePct:
-          (json['challenger_strain_balance_pct'] as num?)?.toDouble() ?? 93.0,
+          (json['challenger_strain_balance_pct'] as num?)?.toDouble() ?? 0.0,
       challengerEffectiveScore:
           (json['challenger_effective_score'] as num?)?.toDouble() ??
               double.parse((lbmA * multA).toStringAsFixed(2)),
@@ -343,10 +306,10 @@ class DuoPairMemberModel {
       username: (json['username'] as String?) ?? 'atleta',
       elo: (json['elo'] as num?)?.toInt() ?? 1200,
       tier: (json['tier'] as String?) ?? 'Plata',
-      lbmScore: (json['lbm_score'] as num?)?.toDouble() ?? 395.0,
-      dotsScore: (json['dots_score'] as num?)?.toDouble() ?? 4820.0,
+      lbmScore: (json['lbm_score'] as num?)?.toDouble() ?? 0.0,
+      dotsScore: (json['dots_score'] as num?)?.toDouble() ?? 0.0,
       disciplineMultiplier:
-          (json['discipline_multiplier'] as num?)?.toDouble() ?? 1.12,
+          (json['discipline_multiplier'] as num?)?.toDouble() ?? 1.0,
       statusLabel: (json['status_label'] as String?) ?? 'Entrenando • Activo',
     );
   }
@@ -398,63 +361,40 @@ class ActiveDuo2v2DuelModel {
   });
 
   factory ActiveDuo2v2DuelModel.fromJson(Map<String, dynamic> json) {
+    const DuoPairMemberModel emptyMember = DuoPairMemberModel(
+      username: '--',
+      elo: 1200,
+      tier: 'Plata',
+      lbmScore: 0.0,
+      dotsScore: 0.0,
+      disciplineMultiplier: 1.0,
+      statusLabel: 'Sin datos',
+    );
     final DuoPairMemberModel aA = json['ally_member_a'] is Map<String, dynamic>
         ? DuoPairMemberModel.fromJson(
             json['ally_member_a'] as Map<String, dynamic>,
           )
-        : const DuoPairMemberModel(
-            username: 'Tú',
-            elo: 1200,
-            tier: 'Plata',
-            lbmScore: 410.0,
-            dotsScore: 4920.0,
-            disciplineMultiplier: 1.14,
-            statusLabel: 'Entrenando • Activo',
-          );
+        : emptyMember;
     final DuoPairMemberModel aB = json['ally_member_b'] is Map<String, dynamic>
         ? DuoPairMemberModel.fromJson(
             json['ally_member_b'] as Map<String, dynamic>,
           )
-        : const DuoPairMemberModel(
-            username: 'alan_gt_pro',
-            elo: 1185,
-            tier: 'Plata',
-            lbmScore: 398.5,
-            dotsScore: 4820.0,
-            disciplineMultiplier: 1.12,
-            statusLabel: 'Sincronizado • Activo',
-          );
+        : emptyMember;
     final DuoPairMemberModel rA = json['rival_member_a'] is Map<String, dynamic>
         ? DuoPairMemberModel.fromJson(
             json['rival_member_a'] as Map<String, dynamic>,
           )
-        : const DuoPairMemberModel(
-            username: 'kronos_barbell',
-            elo: 1220,
-            tier: 'Plata',
-            lbmScore: 402.0,
-            dotsScore: 4890.0,
-            disciplineMultiplier: 1.11,
-            statusLabel: 'En progreso / Entrenando (Oculto)',
-          );
+        : emptyMember;
     final DuoPairMemberModel rB = json['rival_member_b'] is Map<String, dynamic>
         ? DuoPairMemberModel.fromJson(
             json['rival_member_b'] as Map<String, dynamic>,
           )
-        : const DuoPairMemberModel(
-            username: 'valkyrie_lifts',
-            elo: 1235,
-            tier: 'Plata',
-            lbmScore: 389.5,
-            dotsScore: 4710.0,
-            disciplineMultiplier: 1.13,
-            statusLabel: 'En progreso / Entrenando (Oculto)',
-          );
+        : emptyMember;
 
     return ActiveDuo2v2DuelModel(
-      duoDuelId: (json['duo_duel_id'] as String?) ?? '2v2-2026-S4',
+      duoDuelId: (json['duo_duel_id'] as String?) ?? '',
       seasonId: (json['season_id'] as String?) ?? '2026-S4',
-      allyDuoName: (json['ally_duo_name'] as String?) ?? 'Apex Twin Barbell',
+      allyDuoName: (json['ally_duo_name'] as String?) ?? 'Dúo Aliado',
       allyMemberA: aA,
       allyMemberB: aB,
       allyCombinedLbmScore:
@@ -464,11 +404,10 @@ class ActiveDuo2v2DuelModel {
           (json['ally_combined_dots_score'] as num?)?.toDouble() ??
               (aA.dotsScore + aB.dotsScore),
       allyAvgDisciplineMultiplier:
-          (json['ally_avg_discipline_multiplier'] as num?)?.toDouble() ?? 1.13,
+          (json['ally_avg_discipline_multiplier'] as num?)?.toDouble() ?? 1.0,
       allyEffectiveTotal:
-          (json['ally_effective_total'] as num?)?.toDouble() ?? 913.6,
-      rivalDuoName:
-          (json['rival_duo_name'] as String?) ?? 'Titan Twin Protocol',
+          (json['ally_effective_total'] as num?)?.toDouble() ?? 0.0,
+      rivalDuoName: (json['rival_duo_name'] as String?) ?? 'Dúo Rival',
       rivalMemberA: rA,
       rivalMemberB: rB,
       rivalCombinedLbmScore:
@@ -478,9 +417,9 @@ class ActiveDuo2v2DuelModel {
           (json['rival_combined_dots_score'] as num?)?.toDouble() ??
               (rA.dotsScore + rB.dotsScore),
       rivalAvgDisciplineMultiplier:
-          (json['rival_avg_discipline_multiplier'] as num?)?.toDouble() ?? 1.12,
+          (json['rival_avg_discipline_multiplier'] as num?)?.toDouble() ?? 1.0,
       rivalEffectiveTotal:
-          (json['rival_effective_total'] as num?)?.toDouble() ?? 886.4,
+          (json['rival_effective_total'] as num?)?.toDouble() ?? 0.0,
       isBlindDuel: (json['is_blind_duel'] as bool?) ?? true,
       isRevealed: (json['is_revealed'] as bool?) ?? false,
       rivalStatusLabel: (json['rival_status_label'] as String?) ??
@@ -512,11 +451,11 @@ class SquadMemberModel {
       userId: json['user_id']?.toString(),
       username: (json['username'] as String?) ?? 'atleta',
       role: (json['role'] as String?) ?? 'MEMBER',
-      weeklyLbmScore: (json['weekly_lbm_score'] as num?)?.toDouble() ?? 380.0,
+      weeklyLbmScore: (json['weekly_lbm_score'] as num?)?.toDouble() ?? 0.0,
       weeklyDotsScore:
-          (json['weekly_dots_score'] as num?)?.toDouble() ?? 4650.0,
+          (json['weekly_dots_score'] as num?)?.toDouble() ?? 0.0,
       weeklyCompliancePct:
-          (json['weekly_compliance_pct'] as num?)?.toDouble() ?? 95.0,
+          (json['weekly_compliance_pct'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -554,16 +493,16 @@ class SquadLeaderboardEntryModel {
     return SquadLeaderboardEntryModel(
       rank: (json['rank'] as num?)?.toInt() ?? 1,
       teamId: json['team_id']?.toString() ?? '',
-      name: (json['name'] as String?) ?? 'Apex Squad',
-      tag: (json['tag'] as String?) ?? 'APEX',
-      memberCount: (json['member_count'] as num?)?.toInt() ?? 4,
+      name: (json['name'] as String?) ?? 'Squad',
+      tag: (json['tag'] as String?) ?? 'SQD',
+      memberCount: (json['member_count'] as num?)?.toInt() ?? 0,
       totalLbmAllometricScore:
-          (json['total_lbm_allometric_score'] as num?)?.toDouble() ?? 1550.0,
-      totalDotsScore: (json['total_dots_score'] as num?)?.toDouble() ?? 18900.0,
+          (json['total_lbm_allometric_score'] as num?)?.toDouble() ?? 0.0,
+      totalDotsScore: (json['total_dots_score'] as num?)?.toDouble() ?? 0.0,
       avgConsistencyPct:
-          (json['avg_consistency_pct'] as num?)?.toDouble() ?? 95.0,
+          (json['avg_consistency_pct'] as num?)?.toDouble() ?? 0.0,
       combinedSquadPoints:
-          (json['combined_squad_points'] as num?)?.toDouble() ?? 1530.0,
+          (json['combined_squad_points'] as num?)?.toDouble() ?? 0.0,
       isUserSquad: (json['is_user_squad'] as bool?) ?? false,
       members: rawMembers
           .whereType<Map<String, dynamic>>()

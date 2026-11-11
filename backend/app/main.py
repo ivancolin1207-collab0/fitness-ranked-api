@@ -115,6 +115,16 @@ async def ensure_postgres_enums() -> None:
         async with engine.begin() as conn:
             await conn.execute(
                 text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS weight_kg NUMERIC(5,2)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS body_fat_pct NUMERIC(4,2)"
+                )
+            )
+            await conn.execute(
+                text(
                     """
                     CREATE TABLE IF NOT EXISTS daily_readiness (
                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -124,8 +134,8 @@ async def ensure_postgres_enums() -> None:
                         recovery_score NUMERIC(5,2) NOT NULL,
                         strain_score NUMERIC(4,1) NOT NULL,
                         stress_level NUMERIC(3,1) NOT NULL DEFAULT 0.0,
-                        stress_category VARCHAR(20) NOT NULL DEFAULT 'BAJO',
-                        sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7,
+                        stress_category VARCHAR(20) NOT NULL DEFAULT 'SIN DATO',
+                        sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 0.0,
                         source_device VARCHAR(30) NOT NULL DEFAULT 'WHOOP',
                         synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (user_id, date, source_device)
@@ -135,7 +145,7 @@ async def ensure_postgres_enums() -> None:
             )
             await conn.execute(
                 text(
-                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 7.7"
+                    "ALTER TABLE daily_readiness ADD COLUMN IF NOT EXISTS sleep_hours NUMERIC(4,2) NOT NULL DEFAULT 0.0"
                 )
             )
             await conn.execute(
@@ -147,9 +157,15 @@ async def ensure_postgres_enums() -> None:
                         name VARCHAR(180) NOT NULL,
                         weekly_focus VARCHAR(240) NOT NULL DEFAULT 'Enfoque biomecánico adaptado a LBM',
                         generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        status VARCHAR(30) NOT NULL DEFAULT 'active'
+                        status VARCHAR(30) NOT NULL DEFAULT 'active',
+                        biometric_signature VARCHAR(80)
                     )
                     """
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE user_routines ADD COLUMN IF NOT EXISTS biometric_signature VARCHAR(80)"
                 )
             )
             await conn.execute(
@@ -201,14 +217,6 @@ async def ensure_postgres_enums() -> None:
                     """
                     DELETE FROM wearable_metrics
                     WHERE ROUND(recovery_score) = 62 AND ROUND(sleep_efficiency_pct) = 90 AND resting_hr = 62
-                    """
-                )
-            )
-            await conn.execute(
-                text(
-                    """
-                    DELETE FROM biometrics
-                    WHERE weight_kg = 78.4 AND fat_percentage IN (14.6, 14.8)
                     """
                 )
             )

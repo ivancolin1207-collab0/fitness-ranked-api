@@ -34,6 +34,7 @@ class MainNavigationShell extends StatefulWidget {
 class _MainNavigationShellState extends State<MainNavigationShell> {
   int _selectedIndex = 0;
   String? _activeUserId;
+  String? _activeBiometricSignature;
   final List<AiCoachChatMessageModel> _chatHistory = <AiCoachChatMessageModel>[];
   List<String> _suggestedPrompts = const <String>[
     '¿Qué puedo hacer para subir de peso limpio?',
@@ -46,9 +47,12 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   void initState() {
     super.initState();
     _activeUserId = widget.authViewModel.currentUser?.id;
+    _activeBiometricSignature =
+        widget.authViewModel.currentUser?.biometricSignature;
     widget.authViewModel.addListener(_onAuthUserChanged);
     widget.homeViewModel.resetForUserSwitch();
     widget.workoutViewModel.resetForUserSwitch();
+    widget.arenaViewModel.resetForUserSwitch();
     widget.homeViewModel.initializeDashboard();
     widget.workoutViewModel.initializeWorkoutPlan();
     widget.arenaViewModel.loadArenaData();
@@ -62,16 +66,26 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   @override
   void dispose() {
     widget.authViewModel.removeListener(_onAuthUserChanged);
+    if (!widget.authViewModel.isAuthenticated) {
+      widget.homeViewModel.resetForUserSwitch();
+      widget.workoutViewModel.resetForUserSwitch();
+      widget.arenaViewModel.resetForUserSwitch();
+    }
     super.dispose();
   }
 
   void _onAuthUserChanged() {
-    final String? nextUserId = widget.authViewModel.currentUser?.id;
+    final user = widget.authViewModel.currentUser;
+    final String? nextUserId = user?.id;
+    final String? nextSig = user?.biometricSignature;
+
     if (nextUserId != _activeUserId) {
       _activeUserId = nextUserId;
+      _activeBiometricSignature = nextSig;
       _chatHistory.clear();
       widget.homeViewModel.resetForUserSwitch();
       widget.workoutViewModel.resetForUserSwitch();
+      widget.arenaViewModel.resetForUserSwitch();
       if (nextUserId != null && nextUserId.isNotEmpty) {
         widget.homeViewModel.initializeDashboard();
         widget.workoutViewModel.initializeWorkoutPlan();
@@ -82,7 +96,23 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
           ),
         );
       }
+      return;
     }
+
+    if (nextUserId != null &&
+        nextSig != null &&
+        nextSig != _activeBiometricSignature) {
+      _activeBiometricSignature = nextSig;
+      unawaited(
+        widget.workoutViewModel.initializeWorkoutPlan(forceRefresh: true),
+      );
+    }
+  }
+
+  Future<void> _handleProfileOrBiometricsUpdated() async {
+    await widget.authViewModel.refreshProfile();
+    await widget.homeViewModel.initializeDashboard();
+    await widget.workoutViewModel.initializeWorkoutPlan(forceRefresh: true);
   }
 
   Map<String, dynamic> _buildLiveAthleteContext() {
@@ -92,39 +122,43 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     final hydration = widget.homeViewModel.hydration;
     final routine = widget.workoutViewModel.selectedRoutine;
 
-    final double recovery = widget.homeViewModel.hasWhoopData
-        ? widget.homeViewModel.recoveryScore
-        : (wearable?.recoveryScore ?? 47.0);
-    final double sleepPct = widget.homeViewModel.hasWhoopData
-        ? widget.homeViewModel.sleepPct
-        : (wearable?.sleepEfficiencyPct ?? 80.0);
-    final double strain = widget.homeViewModel.hasWhoopData
-        ? widget.homeViewModel.strainScore
-        : (wearable?.strainScore ?? 7.4);
-    final double stress = widget.homeViewModel.hasWhoopData
-        ? widget.homeViewModel.stressScore
-        : (wearable?.whoopStressLevel ?? 1.8);
-    final String stressCat =
-        stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO');
+    final bool syncedToday =
+        widget.homeViewModel.hasWhoopData && wearable != null;
+    final double? recovery = syncedToday
+        ? (widget.homeViewModel.whoopRecovery ?? wearable.recoveryScore)
+        : null;
+    final double? sleepPct = syncedToday
+        ? (widget.homeViewModel.whoopSleep ?? wearable.sleepEfficiencyPct)
+        : null;
+    final double? strain = syncedToday
+        ? (widget.homeViewModel.whoopStrain ?? wearable.strainScore)
+        : null;
+    final double? stress = syncedToday
+        ? (widget.homeViewModel.whoopStress ?? wearable.whoopStressLevel)
+        : null;
+    final String? stressCat = stress != null
+        ? (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO'))
+        : null;
 
     final String rawFullName = user?.fullName?.trim() ?? '';
     return <String, dynamic>{
       'athlete_name': rawFullName.isNotEmpty
           ? rawFullName
           : (user?.username ?? 'Atleta'),
-      'weight_kg': biometrics?.weightKg ?? 78.0,
-      'lean_body_mass_kg': biometrics?.leanBodyMassKg ?? 65.0,
-      'fat_percentage': biometrics?.fatPercentage ?? 14.8,
+      'sex': user?.sex ?? 'male',
+      'weight_kg': biometrics?.weightKg ?? user?.weightKg,
+      'lean_body_mass_kg': biometrics?.leanBodyMassKg ?? user?.lbmKg,
+      'fat_percentage': biometrics?.fatPercentage ?? user?.bodyFatPct,
       'wearable_source': widget.homeViewModel.preferredWearable,
       'recovery_score': recovery,
       'sleep_performance_pct': sleepPct,
       'strain_score': strain,
       'stress_level': stress,
       'stress_category': stressCat,
-      'hrv_ms': wearable?.hrvMs ?? 64.0,
-      'resting_hr': wearable?.restingHr ?? 62,
+      'hrv_ms': syncedToday ? wearable.hrvMs : null,
+      'resting_hr': syncedToday ? wearable.restingHr : null,
       'hydration_consumed_ml': hydration?.totalMl ?? 0,
-      'hydration_goal_ml': hydration?.recommendedGoalMl ?? 2800,
+      'hydration_goal_ml': hydration?.recommendedGoalMl,
       'scheduled_routine_name': routine != null
           ? '${routine.name} (${routine.focusGroup})'
           : 'Sesión de Fuerza Programada',
@@ -137,25 +171,37 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
 
     if (_chatHistory.isEmpty) {
       final String name = initialContext['athlete_name'] as String;
-      final double rec = (initialContext['recovery_score'] as num).toDouble();
-      final double sleep =
-          (initialContext['sleep_performance_pct'] as num).toDouble();
-      final double strain = (initialContext['strain_score'] as num).toDouble();
-      final double stress = (initialContext['stress_level'] as num).toDouble();
-      final String stressCat = initialContext['stress_category'] as String;
+      final double? rec = (initialContext['recovery_score'] as num?)?.toDouble();
+      final double? sleep =
+          (initialContext['sleep_performance_pct'] as num?)?.toDouble();
+      final double? strain =
+          (initialContext['strain_score'] as num?)?.toDouble();
+      final double? stress =
+          (initialContext['stress_level'] as num?)?.toDouble();
+      final String? stressCat = initialContext['stress_category'] as String?;
       final int hyd = (initialContext['hydration_consumed_ml'] as num).toInt();
-      final int hydGoal = (initialContext['hydration_goal_ml'] as num).toInt();
+      final int? hydGoal =
+          (initialContext['hydration_goal_ml'] as num?)?.toInt();
       final String routineName =
           initialContext['scheduled_routine_name'] as String;
+
+      final String recText = rec != null ? '${rec.round()}%' : '--';
+      final String sleepText = sleep != null ? '${sleep.round()}%' : '--';
+      final String strainText =
+          strain != null ? strain.toStringAsFixed(1) : '--';
+      final String stressText = stress != null
+          ? '${stress.toStringAsFixed(1)} (${stressCat ?? "--"})'
+          : '--';
+      final String hydGoalText = hydGoal != null ? '$hydGoal' : '--';
 
       _chatHistory.add(
         AiCoachChatMessageModel(
           role: 'assistant',
           content:
               'Atleta: $name • Telemetría activa:\n'
-              '• Recuperación: ${rec.round()}% | Sueño: ${sleep.round()}%\n'
-              '• Esfuerzo (Strain): ${strain.toStringAsFixed(1)} | Estrés: ${stress.toStringAsFixed(1)} ($stressCat)\n'
-              '• Hidratación: $hyd / $hydGoal ml | Rutina: $routineName\n\n'
+              '• Recuperación: $recText | Sueño: $sleepText\n'
+              '• Esfuerzo (Strain): $strainText | Estrés: $stressText\n'
+              '• Hidratación: $hyd / $hydGoalText ml | Rutina: $routineName\n\n'
               'Solicita ajustes de RPE, cargas, superávit nutricional o protocolo de descanso.',
           timestamp: DateTime.now(),
         ),
@@ -187,10 +233,13 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         viewModel: widget.homeViewModel,
         authViewModel: widget.authViewModel,
         onOpenTacticalCenter: () => _openTacticalCenterModal(context),
+        onProfileOrBiometricsUpdated: _handleProfileOrBiometricsUpdated,
       ),
       LiveWorkoutScreen(
         viewModel: widget.workoutViewModel,
+        authViewModel: widget.authViewModel,
         onOpenTacticalCenter: () => _openTacticalCenterModal(context),
+        onProfileOrBiometricsUpdated: _handleProfileOrBiometricsUpdated,
       ),
       RankedArenaScreen(
         viewModel: widget.arenaViewModel,
@@ -369,13 +418,15 @@ class _TacticalCenterBottomSheetState
   @override
   Widget build(BuildContext context) {
     final Map<String, dynamic> ctx = widget.contextBuilder();
-    final double rec = (ctx['recovery_score'] as num).toDouble();
-    final double sleep = (ctx['sleep_performance_pct'] as num).toDouble();
-    final double strain = (ctx['strain_score'] as num).toDouble();
-    final double stress = (ctx['stress_level'] as num).toDouble();
+    final double? rec = (ctx['recovery_score'] as num?)?.toDouble();
+    final double? sleep = (ctx['sleep_performance_pct'] as num?)?.toDouble();
+    final double? strain = (ctx['strain_score'] as num?)?.toDouble();
+    final double? stress = (ctx['stress_level'] as num?)?.toDouble();
     final int hyd = (ctx['hydration_consumed_ml'] as num).toInt();
-    final int hydGoal = (ctx['hydration_goal_ml'] as num).toInt();
-    final Color recColor = ApexTheme.readinessColor(rec);
+    final int? hydGoal = (ctx['hydration_goal_ml'] as num?)?.toInt();
+    final Color recColor = rec != null
+        ? ApexTheme.readinessColor(rec)
+        : const Color(0xFF6B7280);
 
     final double bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
@@ -486,25 +537,36 @@ class _TacticalCenterBottomSheetState
                           spacing: 6,
                           children: <Widget>[
                             _PitwallBadge(
-                              label: 'REC ${rec.round()}%',
+                              label: rec != null
+                                  ? 'REC ${rec.round()}%'
+                                  : 'REC --',
                               color: recColor,
                             ),
                             _PitwallBadge(
-                              label: 'SUEÑO ${sleep.round()}%',
+                              label: sleep != null
+                                  ? 'SUEÑO ${sleep.round()}%'
+                                  : 'SUEÑO --',
                               color: ApexTheme.textPrimary,
                             ),
                             _PitwallBadge(
-                              label: 'STRAIN ${strain.toStringAsFixed(1)}',
+                              label: strain != null
+                                  ? 'STRAIN ${strain.toStringAsFixed(1)}'
+                                  : 'STRAIN --',
                               color: ApexTheme.warningAmber,
                             ),
                             _PitwallBadge(
-                              label: 'ESTRÉS ${stress.toStringAsFixed(1)}',
-                              color: stress >= 2.0
-                                  ? ApexTheme.deloadCrimson
-                                  : ApexTheme.readinessGreen,
+                              label: stress != null
+                                  ? 'ESTRÉS ${stress.toStringAsFixed(1)}'
+                                  : 'ESTRÉS --',
+                              color: stress == null
+                                  ? ApexTheme.textMuted
+                                  : (stress >= 2.0
+                                      ? ApexTheme.deloadCrimson
+                                      : ApexTheme.readinessGreen),
                             ),
                             _PitwallBadge(
-                              label: 'AGUA $hyd/$hydGoal ML',
+                              label:
+                                  'AGUA $hyd/${hydGoal != null ? "$hydGoal" : "--"} ML',
                               color: ApexTheme.textMuted,
                             ),
                           ],

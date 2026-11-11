@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """
 Endpoints de Autenticación, Perfil Fisiológico y Onboarding (`/api/v1/auth`).
+Unifica `users` y `biometrics` con sexo biológico, peso, estatura, % grasa corporal, LBM (Boer / real)
+y regeneración automática de rutinas al cambiar la huella biométrica (`biometric_signature`).
 """
 
 import logging
@@ -10,14 +12,12 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger("apexmetrix_auth")
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.elo_engine import ExerciseCategory, Formula1RM, RankedTier
+from app.core.elo_engine import RankedTier
 from app.core.security import (
     bearer_scheme,
     create_access_token,
@@ -29,12 +29,12 @@ from app.core.security import (
     verify_password,
 )
 from app.models.entities import (
-    Exercise,
+    Biometric,
     RankedPoint,
     RoutineTemplate,
-    RoutineTemplateExercise,
     User,
 )
+from app.models.routine import UserRoutine
 from app.schemas.auth import (
     PasswordResetDirectRequest,
     ProfileSetupUpdateRequest,
@@ -45,8 +45,36 @@ from app.schemas.auth import (
     calculate_age_years,
     mask_email,
 )
+from app.services.biometrics_service import (
+    derive_secondary_bioimpedance_metrics,
+    get_athlete_biometrics,
+    normalize_sex_code,
+)
+
+logger = logging.getLogger("apexmetrix_auth")
 
 router = APIRouter(prefix="/auth", tags=["Authentication & Profile"])
+
+_USER_BIO_COLUMNS_VERIFIED = False
+
+
+async def _ensure_user_bio_columns(db: AsyncSession) -> None:
+    global _USER_BIO_COLUMNS_VERIFIED
+    if _USER_BIO_COLUMNS_VERIFIED:
+        return
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weight_kg NUMERIC(5,2)")
+            )
+            await db.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS body_fat_pct NUMERIC(4,2)"
+                )
+            )
+        _USER_BIO_COLUMNS_VERIFIED = True
+    except Exception:
+        pass
 
 
 async def _get_or_create_ranked_point(
@@ -71,19 +99,97 @@ async def _get_or_create_ranked_point(
     return rp
 
 
-async def _seed_default_weekly_routines_if_empty(
-    db: AsyncSession, user: User
+async def _sync_biometric_record_from_profile(
+    db: AsyncSession,
+    user: User,
+    weight_kg: Optional[float],
+    body_fat_pct: Optional[float],
 ) -> None:
     """
-    Las plantillas estáticas por defecto fueron eliminadas.
-    El 100% de la planificación semanal (5 días x 6 ejercicios) es generada
-    dinámicamente por Gemini 2.5 Flash en `POST /api/v1/routines/generate-ai`.
+    Si el usuario provee `weight_kg` (y opcionalmente `body_fat_pct`) durante el registro
+    o en la pantalla de Perfil, sincroniza también un registro real en `biometrics`.
     """
-    return None
+    if weight_kg is None or weight_kg <= 0:
+        return
+
+    sex_norm = normalize_sex_code(user.biological_sex)
+    height_val = float(user.height_cm) if user.height_cm is not None else None
+    derived = derive_secondary_bioimpedance_metrics(
+        sex=sex_norm,
+        weight_kg=float(weight_kg),
+        height_cm=height_val,
+        body_fat_pct=float(body_fat_pct) if body_fat_pct is not None else None,
+    )
+    bio_row = Biometric(
+        user_id=user.id,
+        weight_kg=derived["weight_kg"],
+        fat_percentage=derived["fat_percentage"],
+        muscle_mass_kg=derived["muscle_mass_kg"],
+        skeletal_muscle_pct=derived["skeletal_muscle_pct"],
+        visceral_fat=derived["visceral_fat"],
+        body_water_pct=derived["body_water_pct"],
+        bmr=derived["bmr"],
+        ocr_confidence=1.0,
+        source_provider=derived["source_provider"],
+    )
+    db.add(bio_row)
+    await db.flush()
 
 
-def _to_user_profile(
-    user: User, ranked: Optional[RankedPoint] = None
+async def _sync_routine_if_biometric_signature_changed(
+    db: AsyncSession,
+    user: User,
+) -> None:
+    """
+    Verifica si el usuario ya tenía una rutina activa en `user_routines` cuya
+    `biometric_signature` cambió tras editar sexo, peso, estatura o % grasa.
+    Si cambió, regenera automáticamente su rutina y cargas en PostgreSQL.
+    """
+    try:
+        from app.services.ai_routine_service import (
+            ensure_ai_routine_tables,
+            generate_and_persist_ai_routine,
+        )
+
+        await ensure_ai_routine_tables(db)
+        active_routine = (
+            await db.execute(
+                select(UserRoutine)
+                .where(
+                    UserRoutine.user_id == user.id,
+                    UserRoutine.status == "active",
+                )
+                .order_by(UserRoutine.generated_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if active_routine is None:
+            return
+
+        bio = await get_athlete_biometrics(db, user.id)
+        new_sig = bio.get("biometric_signature")
+        if new_sig and active_routine.biometric_signature != new_sig:
+            if bio.get("has_complete_biometrics"):
+                await generate_and_persist_ai_routine(db, user)
+            else:
+                await db.execute(
+                    delete(UserRoutine).where(UserRoutine.user_id == user.id)
+                )
+                await db.execute(
+                    delete(RoutineTemplate).where(RoutineTemplate.user_id == user.id)
+                )
+                await db.flush()
+    except Exception as exc:
+        logger.warning(
+            "No se pudo regenerar rutina automáticamente tras actualizar perfil: %s",
+            exc,
+        )
+
+
+async def _to_user_profile_async(
+    db: AsyncSession,
+    user: User,
+    ranked: Optional[RankedPoint] = None,
 ) -> UserProfileResponse:
     elo = int(ranked.current_elo) if ranked is not None else 1200
     tier_val = (
@@ -91,6 +197,7 @@ def _to_user_profile(
         if (ranked is not None and isinstance(ranked.tier, RankedTier))
         else (str(ranked.tier) if ranked is not None else "Plata")
     )
+    bio = await get_athlete_biometrics(db, user.id)
     return UserProfileResponse(
         id=user.id,
         username=user.username,
@@ -99,7 +206,12 @@ def _to_user_profile(
         birth_date=user.birth_date,
         age_years=calculate_age_years(user.birth_date),
         biological_sex=user.biological_sex,
-        height_cm=float(user.height_cm) if user.height_cm is not None else None,
+        sex=bio["sex"],
+        height_cm=bio["height_cm"],
+        weight_kg=bio["weight_kg"],
+        body_fat_pct=bio["body_fat_pct"],
+        lbm_kg=bio["lbm_kg"],
+        biometric_signature=bio["biometric_signature"],
         training_goal=user.training_goal,
         preferred_wearable=user.preferred_wearable,
         unit_system=user.unit_system,
@@ -123,10 +235,11 @@ async def register_user(
 ) -> TokenResponse:
     """
     Registra un nuevo usuario en PostgreSQL de forma transaccional,
-    inicializa atómicamente su registro en `ranked_points` (1200 ELO - Plata, temporada '2026-S4')
-    y crea su plantilla semanal base editable.
+    guardando sexo biológico (`male`/`female`), peso corporal, estatura y % grasa (si se indican),
+    e inicializa atómicamente `ranked_points` (1200 ELO - Plata).
     """
     try:
+        await _ensure_user_bio_columns(db)
         settings = get_settings()
         clean_username = payload.username.strip()
         clean_email = payload.email.lower().strip()
@@ -141,15 +254,19 @@ async def register_user(
                 detail="El nombre de usuario o correo electrónico ya está registrado.",
             )
 
-        onboarding_done = bool(payload.full_name and payload.birth_date)
+        onboarding_done = bool(
+            payload.height_cm is not None and payload.weight_kg is not None
+        )
         new_user = User(
             username=clean_username,
             email=clean_email,
             password_hash=hash_password(payload.password),
-            full_name=payload.full_name,
+            full_name=payload.full_name.strip() if payload.full_name else None,
             birth_date=payload.birth_date,
             biological_sex=payload.biological_sex,
             height_cm=payload.height_cm,
+            weight_kg=payload.weight_kg,
+            body_fat_pct=payload.body_fat_pct,
             training_goal=payload.training_goal,
             preferred_wearable=payload.preferred_wearable,
             unit_system=payload.unit_system,
@@ -158,7 +275,13 @@ async def register_user(
         db.add(new_user)
         await db.flush()
 
-        # Inserción atómica del registro inicial en ranked_points dentro de la misma transacción
+        await _sync_biometric_record_from_profile(
+            db=db,
+            user=new_user,
+            weight_kg=payload.weight_kg,
+            body_fat_pct=payload.body_fat_pct,
+        )
+
         season_id = settings.DEFAULT_SEASON_ID or "2026-S4"
         ranked = RankedPoint(
             user_id=new_user.id,
@@ -170,11 +293,10 @@ async def register_user(
         db.add(ranked)
         await db.flush()
 
-        await _seed_default_weekly_routines_if_empty(db, new_user)
-
         await db.commit()
         await db.refresh(new_user)
 
+        profile_resp = await _to_user_profile_async(db, new_user, ranked)
         token = create_access_token(
             subject=new_user.id,
             extra_claims={
@@ -185,7 +307,7 @@ async def register_user(
         return TokenResponse(
             access_token=token,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=_to_user_profile(new_user, ranked),
+            user=profile_resp,
         )
     except HTTPException:
         raise
@@ -210,6 +332,7 @@ async def login_user(
     _rl: Annotated[None, Depends(rate_limit_dependency)],
 ) -> TokenResponse:
     try:
+        await _ensure_user_bio_columns(db)
         settings = get_settings()
         identifier = payload.username_or_email.strip()
         stmt = select(User).where(
@@ -224,9 +347,9 @@ async def login_user(
             )
 
         ranked = await _get_or_create_ranked_point(db, user)
-        await _seed_default_weekly_routines_if_empty(db, user)
         await db.commit()
 
+        profile_resp = await _to_user_profile_async(db, user, ranked)
         token = create_access_token(
             subject=user.id,
             extra_claims={
@@ -237,7 +360,7 @@ async def login_user(
         return TokenResponse(
             access_token=token,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=_to_user_profile(user, ranked),
+            user=profile_resp,
         )
     except HTTPException:
         raise
@@ -267,9 +390,11 @@ async def update_user_profile(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserProfileResponse:
     """
-    Actualiza el perfil fisiológico y de onboarding del atleta en Render PostgreSQL.
+    Actualiza el perfil fisiológico (sexo biológico, peso, estatura, % grasa) en Render PostgreSQL,
+    sincroniza `biometrics` y regenera automáticamente la rutina IA si cambió `biometric_signature`.
     """
     try:
+        await _ensure_user_bio_columns(db)
         if payload.username and payload.username.strip() != current_user.username:
             new_uname = payload.username.strip()
             taken = (
@@ -288,20 +413,35 @@ async def update_user_profile(
             current_user.username = new_uname
 
         current_user.full_name = payload.full_name.strip()
-        current_user.birth_date = payload.birth_date
+        if payload.birth_date is not None:
+            current_user.birth_date = payload.birth_date
         current_user.biological_sex = payload.biological_sex
         current_user.height_cm = payload.height_cm
+        if payload.weight_kg is not None:
+            current_user.weight_kg = payload.weight_kg
+        if payload.body_fat_pct is not None:
+            current_user.body_fat_pct = payload.body_fat_pct
         current_user.training_goal = payload.training_goal
         current_user.preferred_wearable = payload.preferred_wearable
         current_user.unit_system = payload.unit_system
         current_user.onboarding_completed = True
+        await db.flush()
+
+        if payload.weight_kg is not None:
+            await _sync_biometric_record_from_profile(
+                db=db,
+                user=current_user,
+                weight_kg=payload.weight_kg,
+                body_fat_pct=payload.body_fat_pct,
+            )
 
         ranked = await _get_or_create_ranked_point(db, current_user)
-        await _seed_default_weekly_routines_if_empty(db, current_user)
-
         await db.commit()
         await db.refresh(current_user)
-        return _to_user_profile(current_user, ranked)
+
+        await _sync_routine_if_biometric_signature_changed(db, current_user)
+
+        return await _to_user_profile_async(db, current_user, ranked)
     except HTTPException:
         raise
     except Exception as e:
@@ -331,9 +471,10 @@ async def get_my_profile(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserProfileResponse:
+    await _ensure_user_bio_columns(db)
     ranked = await _get_or_create_ranked_point(db, current_user)
     await db.commit()
-    return _to_user_profile(current_user, ranked)
+    return await _to_user_profile_async(db, current_user, ranked)
 
 
 @router.post(
@@ -356,6 +497,7 @@ async def reset_password_direct(
     del atleta registrado en PostgreSQL y emite un nuevo JWT persistente.
     """
     try:
+        await _ensure_user_bio_columns(db)
         settings = get_settings()
         identifier = payload.email.strip()
         stmt = select(User).where(
@@ -377,6 +519,7 @@ async def reset_password_direct(
         await db.commit()
         await db.refresh(user)
 
+        profile_resp = await _to_user_profile_async(db, user, ranked)
         token = create_access_token(
             subject=user.id,
             extra_claims={
@@ -387,7 +530,7 @@ async def reset_password_direct(
         return TokenResponse(
             access_token=token,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=_to_user_profile(user, ranked),
+            user=profile_resp,
         )
     except HTTPException:
         raise

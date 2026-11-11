@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Esquemas Pydantic v2 para Biometría Dual (Manual + OCR Fitdays) y Wearables (Whoop / Health Connect)."""
+"""Esquemas Pydantic v2 para Biometría Dual (Manual + OCR Fitdays) y Wearables (Whoop / Health Connect / Multi-Marca)."""
 
 from datetime import date, datetime
 from typing import Any, Optional
@@ -17,13 +17,13 @@ class FitdaysExtractedMetrics(BaseModel):
     weight_kg: float = Field(..., ge=20.0, le=350.0)
     body_fat_pct: Optional[float] = Field(default=None, ge=1.0, le=80.0)
     fat_percentage: float = Field(..., ge=1.0, le=80.0)
-    muscle_mass_kg: float = Field(..., ge=5.0, le=220.0)
-    skeletal_muscle_pct: float = Field(..., ge=5.0, le=85.0)
-    visceral_fat: float = Field(..., ge=0.5, le=60.0)
+    muscle_mass_kg: Optional[float] = Field(default=None, ge=5.0, le=220.0)
+    skeletal_muscle_pct: Optional[float] = Field(default=None, ge=5.0, le=85.0)
+    visceral_fat: Optional[float] = Field(default=None, ge=0.5, le=60.0)
     water_pct: Optional[float] = Field(default=None, ge=20.0, le=90.0)
-    body_water_pct: float = Field(..., ge=20.0, le=90.0)
+    body_water_pct: Optional[float] = Field(default=None, ge=20.0, le=90.0)
     bmr_kcal: Optional[int] = Field(default=None, ge=500, le=7000)
-    bmr: int = Field(..., ge=500, le=7000)
+    bmr: Optional[int] = Field(default=None, ge=500, le=7000)
     ocr_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     source_provider: str = Field(default="FITDAYS_OCR", max_length=50)
 
@@ -43,9 +43,13 @@ class FitdaysExtractedMetrics(BaseModel):
         elif "body_water_pct" in merged and "water_pct" not in merged:
             merged["water_pct"] = merged["body_water_pct"]
 
-        if "bmr_kcal" in merged and "bmr" not in merged:
+        if (
+            "bmr_kcal" in merged
+            and merged["bmr_kcal"] is not None
+            and "bmr" not in merged
+        ):
             merged["bmr"] = int(round(float(merged["bmr_kcal"])))
-        elif "bmr" in merged and "bmr_kcal" not in merged:
+        elif "bmr" in merged and merged["bmr"] is not None and "bmr_kcal" not in merged:
             merged["bmr_kcal"] = int(round(float(merged["bmr"])))
         return merged
 
@@ -53,9 +57,9 @@ class FitdaysExtractedMetrics(BaseModel):
     def sync_alias_fields(self) -> "FitdaysExtractedMetrics":
         if self.body_fat_pct is None:
             self.body_fat_pct = self.fat_percentage
-        if self.water_pct is None:
+        if self.water_pct is None and self.body_water_pct is not None:
             self.water_pct = self.body_water_pct
-        if self.bmr_kcal is None:
+        if self.bmr_kcal is None and self.bmr is not None:
             self.bmr_kcal = self.bmr
         return self
 
@@ -82,12 +86,12 @@ class WearableSyncRequest(BaseModel):
     date: date
     strain_score: float = Field(..., ge=0.0, le=21.0)
     recovery_score: float = Field(..., ge=0.0, le=100.0)
-    hrv_ms: Optional[float] = Field(default=65.0, ge=5.0, le=300.0)
-    resting_hr: Optional[int] = Field(default=58, ge=25, le=140)
+    hrv_ms: Optional[float] = Field(default=None, ge=0.0, le=300.0)
+    resting_hr: Optional[int] = Field(default=None, ge=0, le=200)
     avg_hr: int = Field(..., ge=30, le=220)
     max_hr: int = Field(..., ge=40, le=240)
     sleep_hours: float = Field(..., ge=0.0, le=24.0)
-    sleep_efficiency_pct: Optional[float] = Field(default=88.0, ge=0.0, le=100.0)
+    sleep_efficiency_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
     source_device: WearableSource = WearableSource.WHOOP
 
     @model_validator(mode="after")
@@ -105,17 +109,17 @@ class WearableSyncResponse(BaseModel):
     date: date
     strain_score: float
     recovery_score: float
-    hrv_ms: Optional[float]
-    resting_hr: Optional[int]
-    avg_hr: int
-    max_hr: int
-    sleep_hours: float
-    sleep_efficiency_pct: Optional[float]
+    hrv_ms: Optional[float] = None
+    resting_hr: Optional[int] = None
+    avg_hr: int = 0
+    max_hr: int = 0
+    sleep_hours: float = 0.0
+    sleep_efficiency_pct: Optional[float] = None
     sleep_pct: Optional[float] = None
     stress_level: Optional[float] = None
     stress_category: Optional[str] = None
     whoop_stress_level: Optional[float] = None
-    source_device: WearableSource
+    source_device: WearableSource = WearableSource.WHOOP
     synced_at: datetime
 
 
@@ -143,17 +147,17 @@ class WhoopScreenExtractedMetrics(BaseModel):
     sleep_performance_pct: float = Field(..., ge=0.0, le=100.0)
     recovery_score: float = Field(..., ge=0.0, le=100.0)
     strain_score: float = Field(..., ge=0.0, le=21.0)
-    stress_level: float = Field(..., ge=0.0, le=3.0)
-    stress_category: str = Field(...)
-    sleep_hours: float = Field(default=7.7, ge=0.0, le=24.0)
-    resting_hr: int = Field(default=60, ge=25, le=140)
-    hrv_ms: float = Field(default=60.0, ge=5.0, le=300.0)
+    stress_level: float = Field(default=0.0, ge=0.0, le=3.0)
+    stress_category: str = Field(default="SIN DATO")
+    sleep_hours: float = Field(default=0.0, ge=0.0, le=24.0)
+    resting_hr: int = Field(default=0, ge=0, le=220)
+    hrv_ms: float = Field(default=0.0, ge=0.0, le=300.0)
     trusleep_score: int = Field(default=0, ge=0, le=100)
     stress_score: int = Field(default=0, ge=0, le=100)
-    avg_heart_rate: int = Field(default=60, ge=30, le=220)
-    vo2max: float = Field(default=50.0, ge=15.0, le=95.0)
+    avg_heart_rate: int = Field(default=0, ge=0, le=240)
+    vo2max: float = Field(default=0.0, ge=0.0, le=95.0)
     energy_score: int = Field(default=0, ge=0, le=100)
-    sleep_duration_hours: float = Field(default=7.7, ge=0.0, le=24.0)
+    sleep_duration_hours: float = Field(default=0.0, ge=0.0, le=24.0)
     bia_muscle_pct: float = Field(default=0.0, ge=0.0, le=75.0)
     bia_fat_pct: float = Field(default=0.0, ge=0.0, le=70.0)
 
@@ -171,19 +175,19 @@ class WhoopScreenScanResponse(BaseModel):
     stress_level: float
     stress_category: str
     whoop_stress_level: float
-    whoop_health_metrics_in_range: int = 5
-    resting_hr: int
-    hrv_ms: float
-    avg_hr: int
-    max_hr: int
-    sleep_hours: float
-    sleep_efficiency_pct: float
-    huawei_trusleep_score: int = 84
-    huawei_stress_score: int = 42
-    huawei_vo2_max: float = 52.0
-    samsung_energy_score: int = 78
-    samsung_bia_muscle_pct: float = 43.8
-    samsung_bia_fat_pct: float = 13.8
+    whoop_health_metrics_in_range: int = 0
+    resting_hr: int = 0
+    hrv_ms: float = 0.0
+    avg_hr: int = 0
+    max_hr: int = 0
+    sleep_hours: float = 0.0
+    sleep_efficiency_pct: float = 0.0
+    huawei_trusleep_score: int = 0
+    huawei_stress_score: int = 0
+    huawei_vo2_max: float = 0.0
+    samsung_energy_score: int = 0
+    samsung_bia_muscle_pct: float = 0.0
+    samsung_bia_fat_pct: float = 0.0
     source_device: WearableSource = WearableSource.WHOOP
     synced_at: datetime
 

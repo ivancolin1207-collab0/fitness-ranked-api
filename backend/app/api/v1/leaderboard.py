@@ -53,6 +53,7 @@ from app.schemas.leaderboard import (
     SquadMemberEntry,
     SymmetricWeeklyChallengeExercise,
 )
+from app.services.biometrics_service import get_athlete_biometrics
 from app.services.gemini_service import round_to_plate_increment
 
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard & 1v1 Matchmaking"])
@@ -114,19 +115,22 @@ async def _compute_athlete_discipline_multiplier(
         )
     ).scalar_one_or_none()
 
-    sleep_hours = float(latest_wearable.sleep_hours) if latest_wearable else 7.4
+    consistency_bonus_pct = round(max(0.0, (avg_compliance_pct - 75.0) * 0.4), 1)
+    if latest_wearable is None:
+        base_mult = round(min(1.15, 1.0 + consistency_bonus_pct / 100.0), 2)
+        return base_mult, 0.0, consistency_bonus_pct, 0.0
+
+    sleep_hours = float(latest_wearable.sleep_hours)
     sleep_eff = (
         float(latest_wearable.sleep_efficiency_pct)
-        if (latest_wearable and latest_wearable.sleep_efficiency_pct is not None)
-        else 86.0
+        if latest_wearable.sleep_efficiency_pct is not None
+        else 0.0
     )
-    rec = float(latest_wearable.recovery_score) if latest_wearable else 78.0
-    strain = float(latest_wearable.strain_score) if latest_wearable else 11.5
+    rec = float(latest_wearable.recovery_score)
+    strain = float(latest_wearable.strain_score)
 
     sleep_ratio = min(1.0, (sleep_hours / 7.5) * 0.6 + (sleep_eff / 100.0) * 0.4)
     sleep_bonus_pct = round(max(0.0, (sleep_ratio - 0.65) * 35.0), 1)
-
-    consistency_bonus_pct = round(max(0.0, (avg_compliance_pct - 75.0) * 0.4), 1)
 
     target_strain = 6.0 + (rec / 100.0) * 10.0
     strain_diff = abs(strain - target_strain)
@@ -141,21 +145,11 @@ async def _compute_athlete_discipline_multiplier(
 
 
 async def _get_athlete_lbm_factor(db: AsyncSession, user: User) -> float:
-    bio = (
-        await db.execute(
-            select(Biometric)
-            .where(Biometric.user_id == user.id)
-            .order_by(Biometric.captured_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if bio:
-        weight = float(bio.weight_kg)
-        fat = float(bio.fat_percentage)
-        lbm = max(32.0, weight * (1.0 - fat / 100.0))
-    else:
-        lbm = 50.0 if user.biological_sex.value == "FEMALE" else 66.0
-    return round(lbm ** 0.67, 2)
+    bio = await get_athlete_biometrics(db, user.id)
+    lbm_val = bio.get("lbm_kg")
+    if lbm_val is not None and float(lbm_val) > 0:
+        return round(float(lbm_val) ** 0.67, 2)
+    return 12.0
 
 
 async def _build_symmetric_weekly_challenge(
@@ -875,34 +869,8 @@ async def get_squads_leaderboard(
     como la suma alométrica (`Sum(LBM^0.67)` + consistencia semanal) de la escuadra.
     """
     teams = (await db.execute(select(Team).order_by(Team.created_at.asc()))).scalars().all()
-
     if not teams:
-        default_squads = [
-            Team(name="Apex Barbell Club", tag="APEX"),
-            Team(name="Iron Hypertrophy", tag="IRON"),
-            Team(name="Titan Endurance", tag="TITN"),
-        ]
-        for t in default_squads:
-            db.add(t)
-        await db.flush()
-        teams = default_squads
-
-    user_membership = (
-        await db.execute(
-            select(TeamMember).where(TeamMember.user_id == current_user.id).limit(1)
-        )
-    ).scalar_one_or_none()
-
-    if user_membership is None and teams:
-        user_membership = TeamMember(
-            team_id=teams[0].id,
-            user_id=current_user.id,
-            role=TeamRole.CAPTAIN,
-        )
-        db.add(user_membership)
-        await db.commit()
-    elif not teams:
-        await db.commit()
+        return []
 
     members_rows = (
         await db.execute(
@@ -914,28 +882,11 @@ async def get_squads_leaderboard(
     for tm, usr in members_rows:
         members_by_team.setdefault(tm.team_id, []).append((tm, usr))
 
-    synthetic_rosters: dict[str, list[tuple[str, float, float, float]]] = {
-        "APEX": [
-            ("carlos_power", 412.5, 5180.0, 96.5),
-            ("diana_hybrid", 388.0, 4690.0, 95.0),
-            ("marco_str", 365.4, 4420.0, 93.2),
-        ],
-        "IRON": [
-            ("hector_lifts", 425.0, 5310.0, 94.8),
-            ("sofia_fit", 392.0, 4810.0, 93.5),
-            ("bruno_rpe9", 374.5, 4590.0, 91.0),
-            ("valeria_gt", 348.0, 4210.0, 92.4),
-        ],
-        "TITN": [
-            ("kyle_endure", 379.0, 4620.0, 95.2),
-            ("elena_whoop", 361.5, 4390.0, 94.0),
-            ("diego_barbell", 344.0, 4150.0, 90.5),
-        ],
-    }
-
     unsorted_entries: list[SquadLeaderboardEntryResponse] = []
     for team in teams:
         real_members = members_by_team.get(team.id, [])
+        if not real_members:
+            continue
         squad_members_out: list[SquadMemberEntry] = []
         is_my_squad = False
 
@@ -943,35 +894,16 @@ async def get_squads_leaderboard(
             if usr.id == current_user.id:
                 is_my_squad = True
             lbm_w, dots_w, comp_w = await _compute_weekly_user_scores(db, usr.id)
-            eff_lbm = lbm_w if lbm_w > 0 else 395.0
-            eff_dots = dots_w if dots_w > 0 else 4890.0
             squad_members_out.append(
                 SquadMemberEntry(
                     user_id=usr.id,
                     username=usr.username,
                     role=tm.role.value,
-                    weekly_lbm_score=round(eff_lbm, 2),
-                    weekly_dots_score=round(eff_dots, 2),
+                    weekly_lbm_score=round(lbm_w, 2),
+                    weekly_dots_score=round(dots_w, 2),
                     weekly_compliance_pct=round(comp_w, 1),
                 )
             )
-
-        roster_defaults = synthetic_rosters.get(team.tag, synthetic_rosters["APEX"])
-        existing_names = {m.username.lower() for m in squad_members_out}
-        for syn_name, syn_lbm, syn_dots, syn_comp in roster_defaults:
-            if len(squad_members_out) >= 5:
-                break
-            if syn_name.lower() not in existing_names:
-                squad_members_out.append(
-                    SquadMemberEntry(
-                        user_id=None,
-                        username=syn_name,
-                        role="MEMBER",
-                        weekly_lbm_score=syn_lbm,
-                        weekly_dots_score=syn_dots,
-                        weekly_compliance_pct=syn_comp,
-                    )
-                )
 
         total_lbm = round(sum(m.weekly_lbm_score for m in squad_members_out), 2)
         total_dots = round(sum(m.weekly_dots_score for m in squad_members_out), 2)
@@ -1026,10 +958,16 @@ async def join_or_create_squad(
         await db.execute(select(Team).where(func.lower(Team.name) == clean_name.lower()))
     ).scalar_one_or_none()
 
+    assigned_role = TeamRole.MEMBER
     if team is None:
-        team = Team(name=clean_name, tag=clean_tag)
+        team = Team(
+            name=clean_name,
+            tag=clean_tag,
+            captain_id=current_user.id,
+        )
         db.add(team)
         await db.flush()
+        assigned_role = TeamRole.CAPTAIN
 
     prev_memberships = (
         await db.execute(select(TeamMember).where(TeamMember.user_id == current_user.id))
@@ -1041,7 +979,7 @@ async def join_or_create_squad(
         TeamMember(
             team_id=team.id,
             user_id=current_user.id,
-            role=TeamRole.CAPTAIN,
+            role=assigned_role,
         )
     )
     await db.commit()
@@ -1050,115 +988,92 @@ async def join_or_create_squad(
 
 @router.get(
     "/duels/2v2",
-    response_model=ActiveDuo2v2DuelResponse,
+    response_model=Optional[ActiveDuo2v2DuelResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_active_2v2_duo_duel(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     season_id: str = Query(default="2026-S4", pattern=r"^[A-Za-z0-9_-]{3,32}$"),
-) -> ActiveDuo2v2DuelResponse:
+) -> Optional[ActiveDuo2v2DuelResponse]:
     """
-    Devuelve el Duelo 2v2 por Parejas activo del atleta autenticado.
-    Combina el puntaje alométrico (LBM^0.67), DOTS y multiplicador de disciplina
-    de ambos compañeros frente al dúo rival en modo Duelo a Ciegas (revelación Dom 23:59).
+    Devuelve el Duelo 2v2 por Parejas activo del atleta autenticado únicamente cuando
+    existe un compañero real vinculado y rivales reales en PostgreSQL.
     """
-    my_rank = (
-        await db.execute(
-            select(RankedPoint).where(
-                RankedPoint.user_id == current_user.id,
-                RankedPoint.season_id == season_id,
-            )
-        )
-    ).scalar_one_or_none()
-    my_elo = int(my_rank.current_elo) if my_rank else 1200
-
-    my_lbm, my_dots, my_comp = await _get_athlete_weekly_stats(db, current_user.id)
-    eff_my_lbm = my_lbm if my_lbm > 0 else 410.0
-    eff_my_dots = my_dots if my_dots > 0 else 4920.0
-    my_mult, _, _, _ = await _compute_athlete_discipline_multiplier(
-        db, current_user.id, my_comp
-    )
-
     custom_pair = _USER_DUO_PARTNERS.get(str(current_user.id))
-    partner_uname = custom_pair[0] if custom_pair else "alan_gt_pro"
-    duo_name = custom_pair[1] if custom_pair else f"Dúo {current_user.username} & {partner_uname}"
+    if not custom_pair:
+        return None
 
+    partner_uname, duo_name = custom_pair
     partner_user = (
         await db.execute(
             select(User).where(
+                func.lower(User.username) == partner_uname.lower(),
                 User.id != current_user.id,
                 User.is_active.is_(True),
-            ).limit(1)
+            )
         )
     ).scalar_one_or_none()
+    if partner_user is None:
+        return None
 
-    if partner_user and not custom_pair:
-        partner_uname = partner_user.username
-        duo_name = f"Dúo {current_user.username} & {partner_uname}"
-        p_lbm, p_dots, p_comp = await _get_athlete_weekly_stats(db, partner_user.id)
-        p_lbm = p_lbm if p_lbm > 0 else 395.0
-        p_dots = p_dots if p_dots > 0 else 4780.0
-        p_mult, _, _, _ = await _compute_athlete_discipline_multiplier(
-            db, partner_user.id, p_comp
+    rival_users = (
+        await db.execute(
+            select(User)
+            .where(
+                User.id.notin_([current_user.id, partner_user.id]),
+                User.is_active.is_(True),
+            )
+            .limit(2)
         )
-        p_id = partner_user.id
-    else:
-        p_lbm = 398.5
-        p_dots = 4820.0
-        p_mult = 1.14
-        p_id = None
+    ).scalars().all()
+    if len(rival_users) < 2:
+        return None
 
-    ally_a = DuoPairMemberSchema(
-        user_id=current_user.id,
-        username=current_user.username,
-        elo=my_elo,
-        tier=resolve_tier(my_elo).value,
-        lbm_score=round(eff_my_lbm, 2),
-        dots_score=round(eff_my_dots, 2),
-        discipline_multiplier=my_mult,
-        status_label="Entrenando • Activo",
-    )
-    ally_b = DuoPairMemberSchema(
-        user_id=p_id,
-        username=partner_uname,
-        elo=max(1150, my_elo - 15),
-        tier=resolve_tier(max(1150, my_elo - 15)).value,
-        lbm_score=round(p_lbm, 2),
-        dots_score=round(p_dots, 2),
-        discipline_multiplier=p_mult,
-        status_label="Sincronizado • Activo",
-    )
+    async def _build_member_schema(usr: User, status_lbl: str) -> DuoPairMemberSchema:
+        rp = (
+            await db.execute(
+                select(RankedPoint).where(
+                    RankedPoint.user_id == usr.id,
+                    RankedPoint.season_id == season_id,
+                )
+            )
+        ).scalar_one_or_none()
+        elo_val = int(rp.current_elo) if rp else 1200
+        u_lbm, u_dots, u_comp = await _get_athlete_weekly_stats(db, usr.id)
+        u_mult, _, _, _ = await _compute_athlete_discipline_multiplier(db, usr.id, u_comp)
+        return DuoPairMemberSchema(
+            user_id=usr.id,
+            username=usr.username,
+            elo=elo_val,
+            tier=resolve_tier(elo_val).value,
+            lbm_score=round(u_lbm, 2),
+            dots_score=round(u_dots, 2),
+            discipline_multiplier=u_mult,
+            status_label=status_lbl,
+        )
 
-    rival_a = DuoPairMemberSchema(
-        user_id=None,
-        username="kronos_barbell",
-        elo=my_elo + 20,
-        tier=resolve_tier(my_elo + 20).value,
-        lbm_score=402.0,
-        dots_score=4890.0,
-        discipline_multiplier=1.11,
-        status_label="En progreso / Entrenando (Oculto)",
+    ally_a = await _build_member_schema(current_user, "Entrenando • Activo")
+    ally_b = await _build_member_schema(partner_user, "Sincronizado • Activo")
+    rival_a = await _build_member_schema(
+        rival_users[0], "En progreso / Entrenando (Oculto)"
     )
-    rival_b = DuoPairMemberSchema(
-        user_id=None,
-        username="valkyrie_lifts",
-        elo=my_elo + 35,
-        tier=resolve_tier(my_elo + 35).value,
-        lbm_score=389.5,
-        dots_score=4710.0,
-        discipline_multiplier=1.13,
-        status_label="En progreso / Entrenando (Oculto)",
+    rival_b = await _build_member_schema(
+        rival_users[1], "En progreso / Entrenando (Oculto)"
     )
 
     ally_lbm_tot = round(ally_a.lbm_score + ally_b.lbm_score, 2)
     ally_dots_tot = round(ally_a.dots_score + ally_b.dots_score, 2)
-    ally_mult_avg = round((ally_a.discipline_multiplier + ally_b.discipline_multiplier) / 2.0, 2)
+    ally_mult_avg = round(
+        (ally_a.discipline_multiplier + ally_b.discipline_multiplier) / 2.0, 2
+    )
     ally_eff_tot = round(ally_lbm_tot * ally_mult_avg, 2)
 
     rival_lbm_tot = round(rival_a.lbm_score + rival_b.lbm_score, 2)
     rival_dots_tot = round(rival_a.dots_score + rival_b.dots_score, 2)
-    rival_mult_avg = round((rival_a.discipline_multiplier + rival_b.discipline_multiplier) / 2.0, 2)
+    rival_mult_avg = round(
+        (rival_a.discipline_multiplier + rival_b.discipline_multiplier) / 2.0, 2
+    )
     rival_eff_tot = round(rival_lbm_tot * rival_mult_avg, 2)
 
     now_utc = datetime.now(timezone.utc)
@@ -1174,7 +1089,7 @@ async def get_active_2v2_duo_duel(
         ally_combined_dots_score=ally_dots_tot,
         ally_avg_discipline_multiplier=ally_mult_avg,
         ally_effective_total=ally_eff_tot,
-        rival_duo_name="Titan Twin Protocol",
+        rival_duo_name=f"Dúo {rival_users[0].username} & {rival_users[1].username}",
         rival_member_a=rival_a,
         rival_member_b=rival_b,
         rival_combined_lbm_score=rival_lbm_tot,
@@ -1204,9 +1119,30 @@ async def invite_partner_2v2_duel(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ActiveDuo2v2DuelResponse:
     """
-    Vincula un compañero para el Duelo 2v2 por Parejas de la semana.
+    Vincula un compañero real registrado en PostgreSQL para el Duelo 2v2 por Parejas.
     """
     partner_clean = payload.partner_username.strip().lstrip("@")
-    duo_clean = payload.duo_name.strip() or f"Dúo {current_user.username} & {partner_clean}"
-    _USER_DUO_PARTNERS[str(current_user.id)] = (partner_clean, duo_clean)
-    return await get_active_2v2_duo_duel(current_user=current_user, db=db)
+    partner_user = (
+        await db.execute(
+            select(User).where(
+                func.lower(User.username) == partner_clean.lower(),
+                User.id != current_user.id,
+                User.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if partner_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No existe un atleta activo con username @{partner_clean}.",
+        )
+
+    duo_clean = payload.duo_name.strip() or f"Dúo {current_user.username} & {partner_user.username}"
+    _USER_DUO_PARTNERS[str(current_user.id)] = (partner_user.username, duo_clean)
+    duel = await get_active_2v2_duo_duel(current_user=current_user, db=db)
+    if duel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compañero vinculado, pero aún se requieren al menos otros 2 atletas activos para iniciar un duelo 2v2.",
+        )
+    return duel

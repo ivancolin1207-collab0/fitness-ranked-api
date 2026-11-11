@@ -5,8 +5,13 @@ class UserProfileModel {
   final String maskedEmail;
   final DateTime? birthDate;
   final int? ageYears;
+  final String sex;
   final String biologicalSex;
-  final double heightCm;
+  final double? heightCm;
+  final double? weightKg;
+  final double? bodyFatPct;
+  final double? lbmKg;
+  final String? biometricSignature;
   final String trainingGoal;
   final String preferredWearable;
   final String unitSystem;
@@ -23,7 +28,12 @@ class UserProfileModel {
     this.birthDate,
     this.ageYears,
     required this.biologicalSex,
-    required this.heightCm,
+    String? sex,
+    this.heightCm,
+    this.weightKg,
+    this.bodyFatPct,
+    this.lbmKg,
+    this.biometricSignature,
     required this.trainingGoal,
     required this.preferredWearable,
     required this.unitSystem,
@@ -31,9 +41,26 @@ class UserProfileModel {
     required this.currentElo,
     required this.currentTier,
     required this.createdAt,
-  });
+  }) : sex = sex ??
+            ((biologicalSex == 'FEMALE' || biologicalSex == 'female')
+                ? 'female'
+                : 'male');
+
+  static String _normalizeSexCode(Object? rawSex, Object? rawBioSex) {
+    final String candidate =
+        '${rawSex ?? ''} ${rawBioSex ?? ''}'.toLowerCase().trim();
+    if (candidate.contains('fem') ||
+        candidate.contains('mujer') ||
+        candidate == 'f') {
+      return 'female';
+    }
+    return 'male';
+  }
 
   factory UserProfileModel.fromJson(Map<String, dynamic> json) {
+    final String resolvedSex =
+        _normalizeSexCode(json['sex'], json['biological_sex']);
+    final String resolvedBioSex = resolvedSex == 'female' ? 'FEMALE' : 'MALE';
     return UserProfileModel(
       id: (json['id'] as String?) ?? '',
       username: (json['username'] as String?) ?? 'atleta',
@@ -43,8 +70,13 @@ class UserProfileModel {
           ? DateTime.tryParse(json['birth_date'].toString())
           : null,
       ageYears: (json['age_years'] as num?)?.toInt(),
-      biologicalSex: (json['biological_sex'] as String?) ?? 'MALE',
-      heightCm: (json['height_cm'] as num?)?.toDouble() ?? 175.0,
+      sex: resolvedSex,
+      biologicalSex: resolvedBioSex,
+      heightCm: (json['height_cm'] as num?)?.toDouble(),
+      weightKg: (json['weight_kg'] as num?)?.toDouble(),
+      bodyFatPct: (json['body_fat_pct'] as num?)?.toDouble(),
+      lbmKg: (json['lbm_kg'] as num?)?.toDouble(),
+      biometricSignature: json['biometric_signature'] as String?,
       trainingGoal: (json['training_goal'] as String?) ?? 'HIPERTROFIA',
       preferredWearable: (json['preferred_wearable'] as String?) ?? 'WHOOP',
       unitSystem: (json['unit_system'] as String?) ?? 'KG',
@@ -65,8 +97,13 @@ class UserProfileModel {
       'masked_email': maskedEmail,
       'birth_date': birthDate?.toIso8601String(),
       'age_years': ageYears,
+      'sex': sex,
       'biological_sex': biologicalSex,
       'height_cm': heightCm,
+      'weight_kg': weightKg,
+      'body_fat_pct': bodyFatPct,
+      'lbm_kg': lbmKg,
+      'biometric_signature': biometricSignature,
       'training_goal': trainingGoal,
       'preferred_wearable': preferredWearable,
       'unit_system': unitSystem,
@@ -84,8 +121,13 @@ class UserProfileModel {
     String? maskedEmail,
     DateTime? birthDate,
     int? ageYears,
+    String? sex,
     String? biologicalSex,
     double? heightCm,
+    double? weightKg,
+    double? bodyFatPct,
+    double? lbmKg,
+    String? biometricSignature,
     String? trainingGoal,
     String? preferredWearable,
     String? unitSystem,
@@ -94,6 +136,11 @@ class UserProfileModel {
     String? currentTier,
     DateTime? createdAt,
   }) {
+    final String nextBio = biologicalSex ?? this.biologicalSex;
+    final String nextSex = sex ??
+        (biologicalSex != null
+            ? _normalizeSexCode(null, biologicalSex)
+            : this.sex);
     return UserProfileModel(
       id: id ?? this.id,
       username: username ?? this.username,
@@ -101,8 +148,13 @@ class UserProfileModel {
       maskedEmail: maskedEmail ?? this.maskedEmail,
       birthDate: birthDate ?? this.birthDate,
       ageYears: ageYears ?? this.ageYears,
-      biologicalSex: biologicalSex ?? this.biologicalSex,
+      sex: nextSex,
+      biologicalSex: nextBio,
       heightCm: heightCm ?? this.heightCm,
+      weightKg: weightKg ?? this.weightKg,
+      bodyFatPct: bodyFatPct ?? this.bodyFatPct,
+      lbmKg: lbmKg ?? this.lbmKg,
+      biometricSignature: biometricSignature ?? this.biometricSignature,
       trainingGoal: trainingGoal ?? this.trainingGoal,
       preferredWearable: preferredWearable ?? this.preferredWearable,
       unitSystem: unitSystem ?? this.unitSystem,
@@ -146,6 +198,8 @@ class ProfileSetupRequestModel {
   final DateTime birthDate;
   final String biologicalSex;
   final double heightCm;
+  final double? weightKg;
+  final double? bodyFatPct;
   final String trainingGoal;
   final String preferredWearable;
   final String unitSystem;
@@ -156,6 +210,8 @@ class ProfileSetupRequestModel {
     required this.birthDate,
     required this.biologicalSex,
     required this.heightCm,
+    this.weightKg,
+    this.bodyFatPct,
     required this.trainingGoal,
     required this.preferredWearable,
     required this.unitSystem,
@@ -164,13 +220,18 @@ class ProfileSetupRequestModel {
   Map<String, dynamic> toJson() {
     final String ymd =
         '${birthDate.year.toString().padLeft(4, '0')}-${birthDate.month.toString().padLeft(2, '0')}-${birthDate.day.toString().padLeft(2, '0')}';
+    final bool isFemale = biologicalSex.toUpperCase() == 'FEMALE' ||
+        biologicalSex.toLowerCase() == 'female';
     return <String, dynamic>{
       if (username != null && username!.trim().isNotEmpty)
         'username': username!.trim(),
       'full_name': fullName.trim(),
       'birth_date': ymd,
-      'biological_sex': biologicalSex,
+      'sex': isFemale ? 'female' : 'male',
+      'biological_sex': isFemale ? 'FEMALE' : 'MALE',
       'height_cm': heightCm,
+      if (weightKg != null) 'weight_kg': weightKg,
+      if (bodyFatPct != null) 'body_fat_pct': bodyFatPct,
       'training_goal': trainingGoal,
       'preferred_wearable': preferredWearable,
       'unit_system': unitSystem,

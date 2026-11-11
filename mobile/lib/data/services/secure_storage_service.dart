@@ -8,19 +8,17 @@ import '../models/workout_models.dart';
 class SecureStorageService {
   static const String _jwtKey = 'apexmetrix_jwt_token';
   static const String _userIdKey = 'apexmetrix_user_id';
-  static const String _cachedProfileKey = 'apexmetrix_cached_user_profile_v1';
-  static const String _unitKey = 'apexmetrix_unit_system';
-  static const String _wearableKey = 'apexmetrix_preferred_wearable';
+  static const String _cachedProfileKey = 'apexmetrix_cached_user_profile_v2';
+  static const String _unitPrefix = 'unit_';
+  static const String _wearablePrefPrefix = 'wearable_pref_';
   static const String _apiBaseUrlKey = 'apexmetrix_cloud_api_url_v2';
-  static const String _hydrationLogsPrefix = 'apexmetrix_hydration_logs_';
-  static const String _userRoutinePrefix = 'user_routine_';
-  static const String _userRoutineTemplatesPrefix = 'user_routine_templates_';
-  static const String _userWearablePrefix = 'user_wearable_';
-  static const String _userBiometricsPrefix = 'user_biometrics_';
+  static const String _hydrationLogsPrefix = 'hydration_';
+  static const String _routinePrefix = 'routine_';
+  static const String _routineTemplatesPrefix = 'routine_templates_';
+  static const String _readinessPrefix = 'readiness_';
+  static const String _biometricsPrefix = 'biometrics_';
   static const String _pairedBleIdPrefix = 'last_paired_ble_id_';
   static const String _pairedBleNamePrefix = 'last_paired_ble_name_';
-  static const String _globalPairedBleIdKey = 'last_paired_ble_id';
-  static const String _globalPairedBleNameKey = 'last_paired_ble_name';
 
   final FlutterSecureStorage _secureStorage;
 
@@ -123,7 +121,12 @@ class SecureStorageService {
     await prefs.remove(_cachedProfileKey);
   }
 
-  Future<String> _resolveActiveUserId([String? explicitUserId]) async {
+  String _todayYmd() {
+    final DateTime now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<String?> _tryResolveActiveUserId([String? explicitUserId]) async {
     if (explicitUserId != null && explicitUserId.trim().isNotEmpty) {
       return explicitUserId.trim();
     }
@@ -135,7 +138,7 @@ class SecureStorageService {
     if (profile != null && profile.id.trim().isNotEmpty) {
       return profile.id.trim();
     }
-    return 'anonymous';
+    return null;
   }
 
   Future<void> saveHydrationLogsForDate(
@@ -143,7 +146,10 @@ class SecureStorageService {
     List<Map<String, dynamic>> logs, {
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString('$_hydrationLogsPrefix${uid}_$ymd', jsonEncode(logs));
   }
@@ -152,7 +158,10 @@ class SecureStorageService {
     String ymd, {
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return <Map<String, dynamic>>[];
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? raw = prefs.getString('$_hydrationLogsPrefix${uid}_$ymd');
     if (raw == null || raw.isEmpty) {
@@ -166,24 +175,40 @@ class SecureStorageService {
     }
   }
 
-  Future<void> saveUnitSystem(String unit) async {
+  Future<void> saveUnitSystem(String unit, {String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_unitKey, unit == 'LB' ? 'LB' : 'KG');
+    await prefs.setString('$_unitPrefix$uid', unit == 'LB' ? 'LB' : 'KG');
   }
 
-  Future<String> readUnitSystem() async {
+  Future<String> readUnitSystem({String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return 'KG';
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_unitKey) ?? 'KG';
+    return prefs.getString('$_unitPrefix$uid') ?? 'KG';
   }
 
-  Future<void> savePreferredWearable(String source) async {
+  Future<void> savePreferredWearable(String source, {String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_wearableKey, source);
+    await prefs.setString('$_wearablePrefPrefix$uid', source);
   }
 
-  Future<String> readPreferredWearable() async {
+  Future<String> readPreferredWearable({String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return 'WHOOP';
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_wearableKey) ?? 'WHOOP';
+    return prefs.getString('$_wearablePrefPrefix$uid') ?? 'WHOOP';
   }
 
   Future<void> saveApiBaseUrl(String url) async {
@@ -200,15 +225,18 @@ class SecureStorageService {
     return saved.trim();
   }
 
-  /// Guarda la periodización completa de 5 días indexada estrictamente por `user_routine_${currentUser.id}`.
+  /// Guarda la periodización completa de 5 días indexada estrictamente por `routine_${userId}`.
   Future<void> saveCachedAiRoutinePlan(
     AiGeneratedRoutinePlanModel plan, {
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-      '$_userRoutinePrefix$uid',
+      '$_routinePrefix$uid',
       jsonEncode(plan.toJson()),
     );
     if (plan.days.isNotEmpty) {
@@ -216,13 +244,16 @@ class SecureStorageService {
     }
   }
 
-  /// Lee la rutina de 5 días aislada por usuario (`user_routine_${currentUser.id}`).
+  /// Lee la rutina de 5 días aislada por usuario (`routine_${userId}`).
   Future<AiGeneratedRoutinePlanModel?> readCachedAiRoutinePlan({
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return null;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString('$_userRoutinePrefix$uid');
+    final String? raw = prefs.getString('$_routinePrefix$uid');
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -235,16 +266,30 @@ class SecureStorageService {
     }
   }
 
+  /// Invalida la rutina cacheada localmente del usuario (`routine_${userId}`).
+  Future<void> clearCachedAiRoutinePlan({String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_routinePrefix$uid');
+    await prefs.remove('$_routineTemplatesPrefix$uid');
+  }
+
   Future<void> saveCachedRoutineTemplates(
     List<RoutineTemplateModel> routines, {
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final List<Map<String, dynamic>> encodedList =
         routines.map((RoutineTemplateModel r) => r.toJson()).toList();
     await prefs.setString(
-      '$_userRoutineTemplatesPrefix$uid',
+      '$_routineTemplatesPrefix$uid',
       jsonEncode(encodedList),
     );
   }
@@ -252,9 +297,12 @@ class SecureStorageService {
   Future<List<RoutineTemplateModel>> readCachedRoutineTemplates({
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return <RoutineTemplateModel>[];
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString('$_userRoutineTemplatesPrefix$uid');
+    final String? raw = prefs.getString('$_routineTemplatesPrefix$uid');
     if (raw == null || raw.isEmpty) {
       return <RoutineTemplateModel>[];
     }
@@ -269,12 +317,16 @@ class SecureStorageService {
     }
   }
 
-  /// Persiste localmente la telemetría de wearable aislada por usuario (`user_wearable_${currentUser.id}`).
+  /// Persiste localmente la telemetría de hoy aislada por usuario (`readiness_${userId}_${today}`).
   Future<void> saveCachedWearableTelemetry(
     WearableMetricRecord record, {
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
+    final String ymd = _todayYmd();
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final Map<String, dynamic> payload = <String, dynamic>{
       'date': record.date.toIso8601String(),
@@ -290,6 +342,7 @@ class SecureStorageService {
       'source_device': record.sourceDevice,
       'whoop_stress_level': record.whoopStressLevel,
       'stress_level': record.whoopStressLevel,
+      if (record.stressCategory != null) 'stress_category': record.stressCategory,
       'whoop_health_metrics_in_range': record.whoopHealthMetricsInRange,
       'huawei_stress_score': record.huaweiStressScore,
       'huawei_trusleep_score': record.huaweiTruSleepScore,
@@ -301,56 +354,55 @@ class SecureStorageService {
       'apple_exercise_minutes': record.appleExerciseMinutes,
       'apple_stand_hours': record.appleStandHours,
     };
-    await prefs.setString('$_userWearablePrefix$uid', jsonEncode(payload));
+    await prefs.setString('$_readinessPrefix${uid}_$ymd', jsonEncode(payload));
   }
 
-  /// Lee la telemetría de wearable aislada por usuario (`user_wearable_${currentUser.id}`).
-  Future<WearableMetricRecord> readCachedWearableTelemetry({
+  /// Lee la telemetría de hoy aislada por usuario (`readiness_${userId}_${today}`).
+  /// Si el usuario aún no ha escaneado o sincronizado hoy, retorna `null` (cero mocks).
+  Future<WearableMetricRecord?> readCachedWearableTelemetry({
     String defaultSource = 'WHOOP',
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString('$_userWearablePrefix$uid');
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final Map<String, dynamic> decoded =
-            jsonDecode(raw) as Map<String, dynamic>;
-        final WearableMetricRecord parsed =
-            WearableMetricRecord.fromJson(decoded);
-        if (!(parsed.recoveryScore.round() == 62 &&
-            parsed.sleepEfficiencyPct.round() == 90)) {
-          return parsed;
-        }
-      } catch (_) {}
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return null;
     }
+    final String ymd = _todayYmd();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? raw = prefs.getString('$_readinessPrefix${uid}_$ymd');
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    try {
+      final Map<String, dynamic> decoded =
+          jsonDecode(raw) as Map<String, dynamic>;
+      return WearableMetricRecord.fromJson(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
 
-    final WearableMetricRecord initial = WearableMetricRecord(
-      date: DateTime.now(),
-      strainScore: 7.4,
-      recoveryScore: 47.0,
-      hrvMs: 56.0,
-      restingHr: 58,
-      avgHr: 68,
-      maxHr: 155,
-      sleepHours: 7.7,
-      sleepEfficiencyPct: 80.0,
-      sourceDevice: defaultSource,
-      whoopStressLevel: 1.8,
-      whoopHealthMetricsInRange: 5,
-    );
-    await saveCachedWearableTelemetry(initial, userId: uid);
-    return initial;
+  Future<void> clearCachedWearableTelemetry({String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
+    final String ymd = _todayYmd();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_readinessPrefix${uid}_$ymd');
   }
 
   Future<void> saveCachedBiometrics(
     BiometricRecord record, {
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-      '$_userBiometricsPrefix$uid',
+      '$_biometricsPrefix$uid',
       jsonEncode(record.toJson()),
     );
   }
@@ -358,9 +410,12 @@ class SecureStorageService {
   Future<BiometricRecord?> readCachedBiometrics({
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return null;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? raw = prefs.getString('$_userBiometricsPrefix$uid');
+    final String? raw = prefs.getString('$_biometricsPrefix$uid');
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -373,37 +428,36 @@ class SecureStorageService {
     }
   }
 
-  /// Guarda el dispositivo Bluetooth BLE emparejado (`last_paired_ble_id_${currentUser.id}` y `last_paired_ble_name_${currentUser.id}`)
-  /// para reconexión automática Zero-Touch en segundo plano.
+  /// Guarda el dispositivo Bluetooth BLE emparejado (`last_paired_ble_id_${userId}` y `last_paired_ble_name_${userId}`)
+  /// estrictamente aislado por usuario.
   Future<void> savePairedBleDevice({
     required String deviceId,
     required String deviceName,
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final String idKey = '$_pairedBleIdPrefix$uid';
     final String nameKey = '$_pairedBleNamePrefix$uid';
     try {
       await _secureStorage.write(key: idKey, value: deviceId);
       await _secureStorage.write(key: nameKey, value: deviceName);
-      await _secureStorage.write(key: _globalPairedBleIdKey, value: deviceId);
-      await _secureStorage.write(
-        key: _globalPairedBleNameKey,
-        value: deviceName,
-      );
     } catch (_) {}
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(idKey, deviceId);
     await prefs.setString(nameKey, deviceName);
-    await prefs.setString(_globalPairedBleIdKey, deviceId);
-    await prefs.setString(_globalPairedBleNameKey, deviceName);
   }
 
   /// Lee el último dispositivo BLE emparejado para el usuario activo.
   Future<({String id, String name})?> readPairedBleDevice({
     String? userId,
   }) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return null;
+    }
     final String idKey = '$_pairedBleIdPrefix$uid';
     final String nameKey = '$_pairedBleNamePrefix$uid';
 
@@ -420,16 +474,6 @@ class SecureStorageService {
       savedName = prefs.getString(nameKey);
     }
     if (savedId == null || savedId.trim().isEmpty) {
-      try {
-        savedId = await _secureStorage.read(key: _globalPairedBleIdKey);
-        savedName = await _secureStorage.read(key: _globalPairedBleNameKey);
-      } catch (_) {}
-    }
-    if (savedId == null || savedId.trim().isEmpty) {
-      savedId = prefs.getString(_globalPairedBleIdKey);
-      savedName = prefs.getString(_globalPairedBleNameKey);
-    }
-    if (savedId == null || savedId.trim().isEmpty) {
       return null;
     }
     final String cleanName =
@@ -441,19 +485,18 @@ class SecureStorageService {
 
   /// Borra el dispositivo BLE emparejado cuando el usuario pulsa explícitamente "Olvidar / Desvincular".
   Future<void> clearPairedBleDevice({String? userId}) async {
-    final String uid = await _resolveActiveUserId(userId);
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
     final String idKey = '$_pairedBleIdPrefix$uid';
     final String nameKey = '$_pairedBleNamePrefix$uid';
     try {
       await _secureStorage.delete(key: idKey);
       await _secureStorage.delete(key: nameKey);
-      await _secureStorage.delete(key: _globalPairedBleIdKey);
-      await _secureStorage.delete(key: _globalPairedBleNameKey);
     } catch (_) {}
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.remove(idKey);
     await prefs.remove(nameKey);
-    await prefs.remove(_globalPairedBleIdKey);
-    await prefs.remove(_globalPairedBleNameKey);
   }
 }

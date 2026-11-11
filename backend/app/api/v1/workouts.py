@@ -43,6 +43,10 @@ from app.services.ai_routine_service import (
     ensure_ai_routine_tables,
     generate_and_persist_ai_routine,
 )
+from app.services.biometrics_service import (
+    get_athlete_biometrics,
+    get_today_athlete_readiness,
+)
 from app.schemas.workouts import (
     ExerciseCreateRequest,
     RoutineExerciseItemResponse,
@@ -662,47 +666,33 @@ async def start_workout_from_routine(
 
     routine_plan = await _build_routine_response(db, routine, current_user.id)
 
-    today_wearable = (
-        await db.execute(
-            select(WearableMetric)
-            .where(
-                WearableMetric.user_id == current_user.id,
-                WearableMetric.date == date.today(),
-            )
-            .order_by(WearableMetric.synced_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    recovery_pct = (
-        float(today_wearable.recovery_score) if today_wearable is not None else None
-    )
-    sleep_eff_pct = (
-        float(today_wearable.sleep_efficiency_pct)
-        if (today_wearable is not None and today_wearable.sleep_efficiency_pct is not None)
-        else 85.0
-    )
+    today_readiness = await get_today_athlete_readiness(db, current_user.id)
+    recovery_pct = today_readiness.get("recovery_score")
+    sleep_eff_pct = today_readiness.get("sleep_pct")
     overload_step = 2.5 if current_user.unit_system.value == "KG" else 2.27
-    is_red_deload = (recovery_pct is not None and recovery_pct < 40.0) or (sleep_eff_pct < 70.0)
+    is_red_deload = (recovery_pct is not None and recovery_pct < 34.0) or (
+        sleep_eff_pct is not None and sleep_eff_pct < 70.0
+    )
 
     if is_red_deload:
-        display_rec = recovery_pct if recovery_pct is not None else 35.0
+        rec_txt = f"{recovery_pct:.0f}%" if recovery_pct is not None else "baja"
         notes = (
-            f"Recuperación comprometida ({display_rec:.0f}%) y estrés elevado. "
-            "Redujimos el volumen prescrito para evitar fatiga del SNC."
+            f"Recuperación comprometida ({rec_txt}). "
+            "Descarga automática (-15%) activada para evitar fatiga del SNC."
         )
-    elif recovery_pct is not None and recovery_pct > 80.0:
+    elif recovery_pct is not None and recovery_pct >= 67.0:
+        src_dev = today_readiness.get("source_device") or current_user.preferred_wearable.value
         notes = (
-            f"Recuperación {today_wearable.source_device.value} en Zona Verde ({recovery_pct:.0f}%). "
+            f"Recuperación {src_dev} en Zona Verde ({recovery_pct:.0f}%). "
             f"Sobrecarga progresiva (+{overload_step:.1f} kg) activa."
         )
     else:
         notes = (
             f"Rutina activa: {routine.name}. "
             + (
-                f"Arrastrada por asistencia pendiente."
+                "Arrastrada por asistencia pendiente."
                 if is_rollover
-                else "Pesos calculados según tu última semana."
+                else "Cargas personalizadas según tu LBM y sesión previa."
             )
         )
 
@@ -724,15 +714,14 @@ async def start_workout_from_routine(
         working_rpe = ex_item.target_rpe
 
         if is_red_deload:
-            deload_factor = 0.80 if (recovery_pct is not None and recovery_pct < 40.0 and sleep_eff_pct < 75.0) else 0.83
-            working_w = round_to_plate_increment(working_w * deload_factor)
-            working_rpe = min(6.5, working_rpe)
+            working_w = round_to_plate_increment(working_w * 0.85)
+            working_rpe = min(7.0, max(6.5, working_rpe - 1.0))
         elif (
             recovery_pct is not None
-            and recovery_pct > 80.0
+            and recovery_pct >= 67.0
             and not ex_item.progressive_overload_applied
         ):
-            working_w = round_to_plate_increment(working_w + overload_step)
+            working_w = round_to_plate_increment(working_w * 1.04)
 
         for s_num in range(1, ex_item.target_sets + 1):
             db.add(
@@ -918,23 +907,8 @@ async def register_set_and_adapt(
     target_set.completed_at = datetime.now(timezone.utc)
     await db.flush()
 
-    latest_bio = (
-        await db.execute(
-            select(Biometric)
-            .where(Biometric.user_id == current_user.id)
-            .order_by(Biometric.captured_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    latest_wearable = (
-        await db.execute(
-            select(WearableMetric)
-            .where(WearableMetric.user_id == current_user.id)
-            .order_by(WearableMetric.date.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    bio = await get_athlete_biometrics(db, current_user.id)
+    today_readiness = await get_today_athlete_readiness(db, current_user.id)
 
     max_1rm_row = (
         await db.execute(
@@ -961,38 +935,54 @@ async def register_set_and_adapt(
         )
     ).scalars().all()
 
-    weight_kg = float(latest_bio.weight_kg) if latest_bio else 75.0
-    fat_pct = float(latest_bio.fat_percentage) if latest_bio else 15.0
-    muscle_kg = float(latest_bio.muscle_mass_kg) if latest_bio else 60.0
-    skeletal_pct = float(latest_bio.skeletal_muscle_pct) if latest_bio else 46.0
-    visceral = int(latest_bio.visceral_fat) if latest_bio else 5
-    bmr_val = int(latest_bio.bmr) if latest_bio else 1800
+    if bio.get("weight_kg") is None or bio.get("lbm_kg") is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Configura primero tu peso y estatura en tu perfil antes de registrar series calificadas.",
+        )
 
-    recovery_score = float(latest_wearable.recovery_score) if latest_wearable else 75.0
-    strain_score = float(latest_wearable.strain_score) if latest_wearable else 10.0
-    hrv_ms = (
-        float(latest_wearable.hrv_ms)
-        if (latest_wearable and latest_wearable.hrv_ms)
-        else 65.0
+    weight_kg = float(bio["weight_kg"])
+    lbm_kg = float(bio["lbm_kg"])
+    fat_pct = (
+        float(bio["body_fat_pct"])
+        if bio.get("body_fat_pct") is not None
+        else round(max(5.0, (1.0 - lbm_kg / max(1.0, weight_kg)) * 100.0), 2)
     )
-    resting_hr = (
-        int(latest_wearable.resting_hr)
-        if (latest_wearable and latest_wearable.resting_hr)
-        else 58
+    muscle_kg = (
+        float(bio["muscle_mass_kg"])
+        if bio.get("muscle_mass_kg") is not None
+        else round(lbm_kg * 0.94, 2)
     )
-    sleep_hours = float(latest_wearable.sleep_hours) if latest_wearable else 7.5
-    sleep_eff_val = (
-        float(latest_wearable.sleep_efficiency_pct)
-        if (latest_wearable and latest_wearable.sleep_efficiency_pct is not None)
-        else 85.0
+    skeletal_pct = (
+        float(bio["skeletal_muscle_pct"])
+        if bio.get("skeletal_muscle_pct") is not None
+        else round(((lbm_kg * 0.56) / max(1.0, weight_kg)) * 100.0, 2)
     )
-    body_water_pct = float(latest_bio.body_water_pct) if latest_bio else 58.0
+    visceral = int(bio["visceral_fat"]) if bio.get("visceral_fat") is not None else 5
+    bmr_val = (
+        int(bio["bmr"])
+        if bio.get("bmr") is not None
+        else int(round(370.0 + 21.6 * lbm_kg))
+    )
+    body_water_pct = (
+        float(bio["body_water_pct"])
+        if bio.get("body_water_pct") is not None
+        else round(((lbm_kg * 0.732) / max(1.0, weight_kg)) * 100.0, 2)
+    )
+
+    recovery_score = today_readiness.get("recovery_score")
+    strain_score = today_readiness.get("strain_score")
+    hrv_ms = today_readiness.get("hrv_ms")
+    resting_hr = today_readiness.get("resting_hr")
+    sleep_hours = today_readiness.get("sleep_hours")
+    sleep_eff_val = today_readiness.get("sleep_pct")
     hydration_ml_today = get_user_today_hydration_ml(current_user.id)
-    hydration_goal_ml = int(round(weight_kg * 35.0 + strain_score * 60.0, -1))
+    hydration_goal_ml = int(
+        round(weight_kg * 35.0 + float(strain_score or 0.0) * 60.0, -1)
+    )
     source_dev = (
-        latest_wearable.source_device.value
-        if latest_wearable
-        else current_user.preferred_wearable.value
+        today_readiness.get("source_device")
+        or current_user.preferred_wearable.value
     )
 
     gemini_input: dict[str, Any] = {
@@ -1122,8 +1112,8 @@ async def register_set_and_adapt(
         fat_percentage=fat_pct,
         skeletal_muscle_pct=skeletal_pct,
         sex=current_user.biological_sex,
-        recovery_score=recovery_score,
-        strain_score=strain_score,
+        recovery_score=float(recovery_score) if recovery_score is not None else 50.0,
+        strain_score=float(strain_score) if strain_score is not None else 0.0,
     )
     breakdown = calculate_session_metrics_and_elo(
         sets=completed_sets_domain,

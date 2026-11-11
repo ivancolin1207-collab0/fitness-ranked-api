@@ -2,13 +2,12 @@ from __future__ import annotations
 
 """
 Servicio de Inteligencia Artificial con Google GenAI SDK (`google-genai` / `google.generativeai`):
-1. OCR Biométrico Multimodal por Wearable (WHOOP, HUAWEI, SAMSUNG) y Fitdays.
+1. OCR Biométrico Multimodal por Wearable (WHOOP, HUAWEI, SAMSUNG, APPLE) y Fitdays (CERO MOCKS / CERO NÚMEROS DE EJEMPLO).
 2. Director de Rendimiento / Apex Coach en Tiempo Real (`POST /api/v1/ai/chat`).
 3. Prescripción Adaptativa de Series en Vivo (`temperature=0.2` + `response_schema`).
 """
 
 import asyncio
-import io
 import json
 import logging
 import os
@@ -44,9 +43,8 @@ def _invoke_gemini_vision_json(
     fallback_api_key: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Ejecuta Gemini 2.5 Flash Vision usando `google.generativeai` o `google.genai`
-    y devuelve el diccionario JSON parseado. Propaga `HTTPException(status_code=400)`
-    ante cualquier fallo real (cero diccionarios mock).
+    Cliente unificado Gemini 2.5 Flash Vision idéntico para Fitdays y Wearables (Whoop, Huawei, Samsung, Apple).
+    Devuelve el diccionario JSON parseado o propaga `HTTPException(status_code=400)` ante cualquier fallo real.
     """
     api_key = _resolve_gemini_api_key(fallback_api_key)
     if not api_key:
@@ -117,58 +115,94 @@ def _invoke_gemini_vision_json(
 
 
 WHOOP_OCR_SYSTEM_PROMPT = """
-Analiza minuciosamente esta captura de pantalla de la app oficial de WHOOP.
-Extrae con exactitud los valores numéricos correspondientes a:
-1. Círculo 'SUEÑO >': porcentaje numérico (ej. 80% -> 80.0)
-2. Círculo 'RECUPERACIÓN >': porcentaje numérico (ej. 47% -> 47.0)
-3. Círculo 'ESFUERZO >': valor decimal (ej. 7.4 -> 7.4)
-4. Tarjeta 'MONITOR DE ESTRÉS': valor decimal (ej. 1.8 -> 1.8) y estado ('BAJO', 'MEDIO', 'ALTO')
-5. Tarjeta 'ACTIVIDADES DE HOY' -> 'SUEÑO': duración en horas decimales (ej. si dice 7:42 -> 7.7)
+Analiza minuciosamente esta captura de pantalla real de la app WHOOP.
+Extrae ÚNICAMENTE los valores que aparecen visibles de forma explícita en la imagen subida (NO inventes ni estimes valores que no estén visibles; si un indicador secundario no aparece en pantalla, devuelve null en ese campo):
+1. Círculo 'SUEÑO' / 'SLEEP': porcentaje numérico sin el símbolo % (`sleep_pct`).
+2. Círculo 'RECUPERACIÓN' / 'RECOVERY': porcentaje numérico sin el símbolo % (`recovery_score`).
+3. Círculo 'ESFUERZO' / 'STRAIN': valor numérico decimal (`strain_score`).
+4. Tarjeta 'MONITOR DE ESTRÉS' / 'STRESS MONITOR' (si aparece visible): valor numérico decimal (`stress_level`) y categoría de texto visible en mayúsculas ('BAJO', 'MEDIO', 'ALTO', o null si no aparece).
+5. Indicador de VFC / HRV en ms si aparece visible (`hrv_ms`, o null si no aparece).
+6. Frecuencia cardíaca en reposo RHR / FCR en bpm si aparece visible (`resting_hr`, o null si no aparece).
+7. Duración de sueño en horas decimales si aparece visible en la actividad de sueño (`sleep_hours`, convirtiendo formato HH:MM a horas decimales, o null si no aparece).
 
-Devuelve EXCLUSIVAMENTE este JSON válido:
+Devuelve EXCLUSIVAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
 {
   "sleep_pct": float,
   "recovery_score": float,
   "strain_score": float,
-  "stress_level": float,
-  "stress_category": str,
-  "sleep_hours": float
+  "stress_level": float | null,
+  "stress_category": str | null,
+  "hrv_ms": float | null,
+  "resting_hr": int | null,
+  "sleep_hours": float | null
 }
 """.strip()
 
 HUAWEI_OCR_SYSTEM_PROMPT = """
-Analiza esta captura de pantalla de Huawei Health (Huawei GT / Watch).
+Analiza esta captura de pantalla real de Huawei Health (Huawei Watch / GT / Band).
+Extrae ÚNICAMENTE los valores visibles en la imagen (si alguno no aparece, usa null en campos opcionales):
+- Puntuación o porcentaje de sueño TruSleep (`trusleep_score`).
+- Nivel de estrés numérico (`stress_score`).
+- Frecuencia cardíaca media o en reposo (`avg_heart_rate`).
+- VO2Max si aparece visible (`vo2max`, o null si no aparece).
+
 Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
 {
   "trusleep_score": int,
   "stress_score": int,
   "avg_heart_rate": int,
-  "vo2max": float
+  "vo2max": float | null
 }
 """.strip()
 
 SAMSUNG_OCR_SYSTEM_PROMPT = """
-Analiza esta captura de pantalla de Samsung Health (Galaxy Watch).
+Analiza esta captura de pantalla real de Samsung Health (Galaxy Watch / Ring).
+Extrae ÚNICAMENTE los valores visibles en la imagen (usa null si un campo secundario no aparece):
+- Puntuación de energía / Energy Score (`energy_score`).
+- Duración de sueño en horas decimales (`sleep_duration_hours`).
+- Frecuencia cardíaca en reposo (`resting_hr`, o null si no aparece).
+- Porcentaje de músculo esquelético BIA si aparece (`bia_muscle_pct`, o null).
+- Porcentaje de grasa corporal BIA si aparece (`bia_fat_pct`, o null).
+
 Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
 {
   "energy_score": int,
   "sleep_duration_hours": float,
-  "resting_hr": int,
-  "bia_muscle_pct": float,
-  "bia_fat_pct": float
+  "resting_hr": int | null,
+  "bia_muscle_pct": float | null,
+  "bia_fat_pct": float | null
+}
+""".strip()
+
+APPLE_OCR_SYSTEM_PROMPT = """
+Analiza esta captura de pantalla real de Apple Salud / Fitness (Apple Watch).
+Extrae ÚNICAMENTE los valores visibles en la imagen (usa null si algún dato no aparece):
+- Porcentaje de sueño o eficiencia de sueño (`sleep_pct`, o calcula proporción sobre horas dormidas si solo muestra horas).
+- Duración de sueño en horas decimales (`sleep_hours`).
+- Recuperación / VFC HRV en ms (`hrv_ms`, o null).
+- Frecuencia cardíaca en reposo (`resting_hr`, o null).
+- Esfuerzo o calorías activas (`move_kcal`, o null).
+
+Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
+{
+  "sleep_pct": float | null,
+  "sleep_hours": float | null,
+  "hrv_ms": float | null,
+  "resting_hr": int | null,
+  "move_kcal": int | null
 }
 """.strip()
 
 FITDAYS_OCR_SYSTEM_PROMPT = """
-Analiza minuciosamente esta imagen del reporte de bioimpedancia de la app Fitdays.
-Extrae con absoluta precisión los siguientes indicadores numéricos observando la tabla:
-- "Peso": valor numérico en kg (ej. si dice 92.4kg -> 92.4)
-- "Grasa Corporal": porcentaje numérico (ej. si dice 32.1% -> 32.1)
-- "Masa Muscular": valor numérico en kg (ej. si dice 58.9kg -> 58.9)
-- "Músculo esquelético": porcentaje o valor numérico (ej. si dice 46.7% -> 46.7)
-- "Grasa Visceral": número entero o decimal (ej. si dice 12.6 -> 12.6)
-- "Agua Corporal": porcentaje numérico (ej. si dice 47.1% -> 47.1)
-- "BMR": valor numérico en kcal (ej. si dice 1827kcal -> 1827)
+Analiza minuciosamente esta imagen real del reporte de bioimpedancia de la app Fitdays.
+Extrae únicamente los valores numéricos visibles en la tabla del reporte sin símbolos de unidad:
+- Peso corporal en kilogramos (`weight_kg`, convirtiendo de lb a kg solo si la unidad impresa es lb).
+- Porcentaje de Grasa Corporal (`body_fat_pct`).
+- Masa Muscular en kilogramos (`muscle_mass_kg`).
+- Músculo esquelético en porcentaje (`skeletal_muscle_pct`).
+- Índice de Grasa Visceral (`visceral_fat`).
+- Porcentaje de Agua Corporal (`water_pct`).
+- Tasa Metabólica Basal BMR en kcal (`bmr_kcal`).
 
 Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicional:
 {
@@ -184,19 +218,19 @@ Responde ÚNICAMENTE un objeto JSON válido sin bloques markdown ni texto adicio
 
 COACH_ADAPTIVE_SYSTEM_PROMPT = """
 Eres un Fisiólogo del Ejercicio Clínico (CSCS) y Director de Rendimiento en Tiempo Real.
-Recibes en `athlete_context` el perfil biométrico completo del atleta:
+Recibes en `athlete_context` el perfil biométrico real del atleta:
 - Wearable específico (`source_device`: WHOOP, HUAWEI_GT, SAMSUNG_WATCH, APPLE_WATCH).
 - Sueño (`sleep_hours`, `sleep_efficiency_pct`), estrés/VFC (`hrv_ms`, `resting_hr`), `recovery_score` y `strain_score`.
-- Bioimpedancia Fitdays (`weight_kg`, `fat_percentage`, `muscle_mass_kg`, `body_water_pct`, `visceral_fat`, `bmr`).
+- Bioimpedancia (`weight_kg`, `fat_percentage`, `muscle_mass_kg`, `body_water_pct`, `visceral_fat`, `bmr`).
 - Hidratación diaria consumida hoy (`hydration_ml_today` vs `hydration_goal_ml`).
 
 Calcula de forma determinista y biomecánicamente segura las cargas (`prescribed_weight_kg`),
 repeticiones (`prescribed_reps`) y esfuerzo (`prescribed_rpe`) de las series restantes:
-1. ZONA ROJA (`recovery_score < 40.0` o `sleep_efficiency_pct < 70.0` o `sleep_hours < 5.8`): Reduce el volumen o carga planeada entre -15% y -25% de peso, cambia enfoque a hipertrofia moderada/movilidad (`prescribed_rpe <= 6.5`) y en `adjustment_rationale` explica cómo el sueño/estrés detectado por su wearable y su hidratación diaria motivaron la descarga para evitar fatiga del SNC.
-2. DÉFICIT DE HIDRATACIÓN (`hydration_ml_today < 1000`): Si el agua consumida hoy es baja (< 1.0 L), advierte brevemente en `adjustment_rationale` y modera el RPE objetivo (-0.5 RPE) para proteger el rendimiento neuromuscular.
-3. ZONA VERDE (`recovery_score > 80.0`): Si la serie previa fue exitosa (`completed_binary_ui == true` y `actual_rpe <= prescribed_rpe`), aplica sobrecarga progresiva (+2.5 kg en sistema KG o +2.27 kg / +5 lb en sistema LB).
-4. FALLO O FATIGA AGUDA (`completed_binary_ui == false` o `actual_reps < prescribed_reps` o `actual_rpe >= 9.5`): Reduce inmediatamente la carga entre -5% y -10% (mínimo -2.5 kg) en las series restantes.
-5. GUARDRAIL: Nunca prescribas un peso mayor al 95% de `historical_1rm_kg` y redondea siempre a múltiplos de 2.5 kg.
+1. ZONA ROJA (`recovery_score < 34.0` o `sleep_efficiency_pct < 70.0`): Reduce la carga planeada -15%, ajusta `prescribed_rpe` a 6.5-7.0 y en `adjustment_rationale` explica cómo la recuperación real motivó la descarga para evitar fatiga del SNC.
+2. DÉFICIT DE HIDRATACIÓN (`hydration_ml_today < 1000`): Advierte brevemente en `adjustment_rationale` y modera el RPE objetivo (-0.5 RPE).
+3. ZONA VERDE (`recovery_score >= 67.0`): Si la serie previa fue exitosa (`completed_binary_ui == true` y `actual_rpe <= prescribed_rpe`), aplica sobrecarga progresiva (+2.5 kg en barra/máquina).
+4. FALLO O FATIGA AGUDA (`completed_binary_ui == false` o `actual_reps < prescribed_reps` o `actual_rpe >= 9.5`): Reduce inmediatamente la carga entre -5% y -10% en las series restantes.
+5. GUARDRAIL: Nunca prescribas un peso mayor al 95% de `historical_1rm_kg` y redondea siempre a incrementos reales de gimnasio.
 """.strip()
 
 
@@ -214,9 +248,8 @@ def parse_fitdays_report(
     Envía la imagen capturada de Fitdays directamente a Gemini 2.5 Flash Vision
     con el prompt estricto y devuelve el diccionario JSON real sin mocks.
     """
-    prompt = FITDAYS_OCR_SYSTEM_PROMPT
     data = _invoke_gemini_vision_json(
-        prompt=prompt,
+        prompt=FITDAYS_OCR_SYSTEM_PROMPT,
         image_bytes=image_bytes,
         mime_type=mime_type,
         fallback_api_key=fallback_api_key,
@@ -268,18 +301,14 @@ def parse_fitdays_report(
     }
 
 
-def _coerce_whoop_float(raw_val: Any, default: Optional[float] = None) -> float:
+def _coerce_optional_float(raw_val: Any) -> Optional[float]:
     if raw_val is None:
-        if default is not None:
-            return default
-        raise ValueError("Valor numérico requerido ausente en la captura.")
+        return None
     if isinstance(raw_val, (int, float)):
         return float(raw_val)
     text_val = str(raw_val).strip().replace("%", "").replace(",", ".")
-    if not text_val or text_val.lower() in ("null", "none", "n/a"):
-        if default is not None:
-            return default
-        raise ValueError("Valor numérico vacío.")
+    if not text_val or text_val.lower() in ("null", "none", "n/a", "--", "-"):
+        return None
     if ":" in text_val:
         parts = text_val.split(":")
         hours = float(parts[0].strip() or 0)
@@ -288,19 +317,22 @@ def _coerce_whoop_float(raw_val: Any, default: Optional[float] = None) -> float:
     return float(text_val)
 
 
+def _coerce_required_float(raw_val: Any, field_label: str) -> float:
+    parsed = _coerce_optional_float(raw_val)
+    if parsed is None:
+        raise ValueError(f"El indicador '{field_label}' no es visible en la captura.")
+    return parsed
+
+
 def parse_whoop_screen(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
     fallback_api_key: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Extrae estrictamente la telemetría visible en la captura de la app de WHOOP:
-    - Círculo 'SUEÑO >': `sleep_pct`
-    - Círculo 'RECUPERACIÓN >': `recovery_score`
-    - Círculo 'ESFUERZO >': `strain_score`
-    - Tarjeta 'MONITOR DE ESTRÉS': `stress_level` y `stress_category`
-    - Tarjeta 'ACTIVIDADES DE HOY' -> 'SUEÑO': `sleep_hours`
-    Propaga `HTTPException(status_code=400)` ante cualquier error (cero mocks).
+    Extrae estrictamente la telemetría visible en la captura de la app de WHOOP
+    usando exactamente el mismo cliente `_invoke_gemini_vision_json` que Fitdays.
+    CERO valores de respaldo inventados si un campo secundario no aparece.
     """
     raw_json = _invoke_gemini_vision_json(
         prompt=WHOOP_OCR_SYSTEM_PROMPT,
@@ -315,10 +347,16 @@ def parse_whoop_screen(
             if raw_json.get("sleep_pct") is not None
             else raw_json.get("sleep_performance_pct")
         )
-        sleep_val = _coerce_whoop_float(raw_sleep)
-        rec_val = _coerce_whoop_float(raw_json.get("recovery_score"))
-        strain_val = _coerce_whoop_float(raw_json.get("strain_score"))
-        stress_val = _coerce_whoop_float(raw_json.get("stress_level"), default=1.8)
+        sleep_val = _coerce_required_float(raw_sleep, "sleep_pct")
+        rec_val = _coerce_required_float(
+            raw_json.get("recovery_score"), "recovery_score"
+        )
+        strain_val = _coerce_required_float(
+            raw_json.get("strain_score"), "strain_score"
+        )
+        stress_opt = _coerce_optional_float(raw_json.get("stress_level"))
+        stress_val = max(0.0, min(3.0, stress_opt)) if stress_opt is not None else 0.0
+
         raw_cat = str(raw_json.get("stress_category") or "").strip().upper()
         if "ALT" in raw_cat or "HIGH" in raw_cat:
             stress_cat = "ALTO"
@@ -326,43 +364,40 @@ def parse_whoop_screen(
             stress_cat = "MEDIO"
         elif "BAJ" in raw_cat or "LOW" in raw_cat:
             stress_cat = "BAJO"
-        else:
+        elif stress_opt is not None:
             stress_cat = (
                 "ALTO"
                 if stress_val >= 2.0
                 else ("MEDIO" if stress_val >= 1.0 else "BAJO")
             )
-        default_sleep_h = round(max(4.5, (sleep_val / 100.0) * 9.625), 1)
-        sleep_hours_val = _coerce_whoop_float(
-            raw_json.get("sleep_hours"),
-            default=default_sleep_h,
+        else:
+            stress_cat = "SIN DATO"
+
+        sleep_hours_opt = _coerce_optional_float(raw_json.get("sleep_hours"))
+        sleep_hours_val = (
+            max(0.0, min(24.0, sleep_hours_opt)) if sleep_hours_opt is not None else 0.0
         )
-        if sleep_hours_val <= 0.5:
-            sleep_hours_val = default_sleep_h
+
+        rhr_opt = _coerce_optional_float(raw_json.get("resting_hr"))
+        rhr_val = max(0, min(220, int(round(rhr_opt)))) if rhr_opt is not None else 0
+
+        hrv_opt = _coerce_optional_float(raw_json.get("hrv_ms"))
+        hrv_val = max(0.0, min(300.0, round(hrv_opt, 1))) if hrv_opt is not None else 0.0
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"No se pudieron extraer las métricas de la captura de WHOOP: {exc}",
+            detail=f"No se pudieron extraer las métricas reales de la captura de WHOOP: {exc}",
         ) from exc
-
-    rhr_val = int(
-        raw_json.get("resting_hr")
-        or max(42, min(95, round(64 - (rec_val - 40.0) * 0.18)))
-    )
-    hrv_val = float(
-        raw_json.get("hrv_ms")
-        or round(48.0 + (rec_val * 0.35), 1)
-    )
 
     return {
         "sleep_pct": max(0.0, min(100.0, sleep_val)),
         "sleep_performance_pct": max(0.0, min(100.0, sleep_val)),
         "recovery_score": max(0.0, min(100.0, rec_val)),
         "strain_score": max(0.0, min(21.0, strain_val)),
-        "stress_level": max(0.0, min(3.0, stress_val)),
+        "stress_level": stress_val,
         "stress_category": stress_cat,
-        "sleep_hours": max(0.5, min(24.0, sleep_hours_val)),
-        "sleep_duration_hours": max(0.5, min(24.0, sleep_hours_val)),
+        "sleep_hours": sleep_hours_val,
+        "sleep_duration_hours": sleep_hours_val,
         "resting_hr": rhr_val,
         "hrv_ms": hrv_val,
     }
@@ -375,9 +410,8 @@ async def scan_wearable_screen(
     fallback_api_key: Optional[str] = None,
 ) -> WhoopScreenExtractedMetrics:
     """
-    Escaneo polimórfico de capturas de pantalla por marca de wearable
-    ('WHOOP', 'HUAWEI', 'SAMSUNG', 'APPLE_WATCH', 'GARMIN') mediante Gemini 2.5 Flash Vision.
-    Sin diccionarios de prueba ni valores simulados.
+    Escaneo polimórfico asíncrono no bloqueante de capturas por marca de wearable
+    ('WHOOP', 'HUAWEI', 'SAMSUNG', 'APPLE_WATCH') mediante Gemini 2.5 Flash Vision.
     """
     normalized_source = (source_wearable or "WHOOP").upper().strip()
 
@@ -390,29 +424,31 @@ async def scan_wearable_screen(
             fallback_api_key,
         )
         try:
-            trusleep = int(raw_json["trusleep_score"])
-            stress_sc = int(raw_json["stress_score"])
-            avg_hr = int(raw_json["avg_heart_rate"])
-            vo2 = float(raw_json["vo2max"])
+            trusleep = int(_coerce_required_float(raw_json.get("trusleep_score"), "trusleep_score"))
+            stress_sc = int(_coerce_required_float(raw_json.get("stress_score"), "stress_score"))
+            avg_hr_opt = _coerce_optional_float(raw_json.get("avg_heart_rate"))
+            avg_hr = int(round(avg_hr_opt)) if avg_hr_opt is not None else 0
+            vo2_opt = _coerce_optional_float(raw_json.get("vo2max"))
+            vo2 = round(vo2_opt, 1) if vo2_opt is not None else 0.0
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
                 detail=f"Error al extraer métricas de Huawei Health: {exc}",
             ) from exc
 
-        rec_from_huawei = float(max(5, min(100, round(100 - stress_sc * 0.55))))
+        rec_from_huawei = float(max(0, min(100, round(trusleep * 0.6 + (100 - stress_sc) * 0.4))))
         return WhoopScreenExtractedMetrics(
-            sleep_pct=float(trusleep),
-            sleep_performance_pct=float(trusleep),
+            sleep_pct=float(max(0, min(100, trusleep))),
+            sleep_performance_pct=float(max(0, min(100, trusleep))),
             recovery_score=rec_from_huawei,
             strain_score=round(max(0.0, min(21.0, (stress_sc / 100.0) * 16.0)), 1),
             stress_level=round((stress_sc / 100.0) * 3.0, 1),
             stress_category="ALTO" if stress_sc >= 68 else ("MEDIO" if stress_sc >= 40 else "BAJO"),
-            resting_hr=max(35, min(120, avg_hr - 8)),
-            hrv_ms=round(max(20.0, 95.0 - stress_sc * 0.45), 1),
+            resting_hr=max(0, avg_hr),
+            hrv_ms=0.0,
             trusleep_score=trusleep,
             stress_score=stress_sc,
-            avg_heart_rate=avg_hr,
+            avg_heart_rate=max(0, avg_hr),
             vo2max=vo2,
         )
 
@@ -425,31 +461,72 @@ async def scan_wearable_screen(
             fallback_api_key,
         )
         try:
-            energy = int(raw_json["energy_score"])
-            sleep_h = float(raw_json["sleep_duration_hours"])
-            rhr = int(raw_json["resting_hr"])
-            bia_m = float(raw_json.get("bia_muscle_pct") or 0.0)
-            bia_f = float(raw_json.get("bia_fat_pct") or 0.0)
+            energy = int(_coerce_required_float(raw_json.get("energy_score"), "energy_score"))
+            sleep_h_opt = _coerce_optional_float(raw_json.get("sleep_duration_hours"))
+            sleep_h = round(sleep_h_opt, 2) if sleep_h_opt is not None else 0.0
+            rhr_opt = _coerce_optional_float(raw_json.get("resting_hr"))
+            rhr = int(round(rhr_opt)) if rhr_opt is not None else 0
+            bia_m = _coerce_optional_float(raw_json.get("bia_muscle_pct")) or 0.0
+            bia_f = _coerce_optional_float(raw_json.get("bia_fat_pct")) or 0.0
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
                 detail=f"Error al extraer métricas de Samsung Health: {exc}",
             ) from exc
 
-        sleep_pct = max(0.0, min(100.0, round((sleep_h / 8.0) * 100.0)))
+        sleep_pct = max(0.0, min(100.0, round((sleep_h / 8.0) * 100.0))) if sleep_h > 0 else float(energy)
         return WhoopScreenExtractedMetrics(
             sleep_pct=sleep_pct,
             sleep_performance_pct=sleep_pct,
             recovery_score=float(max(0, min(100, energy))),
-            strain_score=round(max(0.0, min(21.0, (100 - energy) * 0.18 + 4.5)), 1),
-            stress_level=round(max(0.0, min(3.0, (100 - energy) * 0.028)), 1),
-            stress_category="ALTO" if energy < 45 else ("MEDIO" if energy < 70 else "BAJO"),
-            resting_hr=rhr,
-            hrv_ms=round(40.0 + energy * 0.42, 1),
+            strain_score=0.0,
+            stress_level=0.0,
+            stress_category="ALTO" if energy < 34 else ("MEDIO" if energy < 67 else "BAJO"),
+            resting_hr=max(0, rhr),
+            hrv_ms=0.0,
+            sleep_hours=sleep_h,
             energy_score=energy,
             sleep_duration_hours=sleep_h,
             bia_muscle_pct=bia_m,
             bia_fat_pct=bia_f,
+        )
+
+    if "APPLE" in normalized_source:
+        raw_json = await asyncio.to_thread(
+            _invoke_gemini_vision_json,
+            APPLE_OCR_SYSTEM_PROMPT,
+            image_bytes,
+            mime_type,
+            fallback_api_key,
+        )
+        sleep_h = _coerce_optional_float(raw_json.get("sleep_hours")) or 0.0
+        sleep_pct_opt = _coerce_optional_float(raw_json.get("sleep_pct"))
+        sleep_pct = (
+            max(0.0, min(100.0, sleep_pct_opt))
+            if sleep_pct_opt is not None
+            else (max(0.0, min(100.0, round((sleep_h / 8.0) * 100.0))) if sleep_h > 0 else 0.0)
+        )
+        hrv_val = _coerce_optional_float(raw_json.get("hrv_ms")) or 0.0
+        rhr_opt = _coerce_optional_float(raw_json.get("resting_hr"))
+        rhr_val = int(round(rhr_opt)) if rhr_opt is not None else 0
+        move_kcal = _coerce_optional_float(raw_json.get("move_kcal")) or 0.0
+        rec_val = sleep_pct if sleep_pct > 0 else (min(100.0, round(hrv_val * 1.1)) if hrv_val > 0 else 0.0)
+        if rec_val <= 0 and sleep_h <= 0 and move_kcal <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No se detectaron métricas válidas de Apple Watch / Salud en la captura.",
+            )
+        return WhoopScreenExtractedMetrics(
+            sleep_pct=sleep_pct,
+            sleep_performance_pct=sleep_pct,
+            recovery_score=rec_val,
+            strain_score=round(min(21.0, (move_kcal / 75.0)), 1) if move_kcal > 0 else 0.0,
+            stress_level=0.0,
+            stress_category="SIN DATO",
+            sleep_hours=sleep_h,
+            sleep_duration_hours=sleep_h,
+            resting_hr=max(0, rhr_val),
+            hrv_ms=hrv_val,
         )
 
     parsed_whoop = await asyncio.to_thread(
@@ -482,19 +559,20 @@ async def extract_fitdays_biometrics_from_image(
     fallback_api_key: Optional[str] = None,
 ) -> FitdaysExtractedMetrics:
     """
-    Procesa una imagen de reporte Fitdays mediante `parse_fitdays_report` (Gemini 2.5 Flash Vision)
-    y devuelve las métricas biométricas estructuradas. Propaga HTTPException(400) si falla.
+    Procesa una imagen de reporte Fitdays de forma asíncrona no bloqueante mediante
+    `parse_fitdays_report` (mismo cliente Gemini Vision que Whoop/Wearables).
     """
-    parsed = parse_fitdays_report(
-        image_bytes=image_bytes,
-        mime_type=mime_type,
-        fallback_api_key=fallback_api_key,
+    parsed = await asyncio.to_thread(
+        parse_fitdays_report,
+        image_bytes,
+        mime_type,
+        fallback_api_key,
     )
     return FitdaysExtractedMetrics.model_validate(parsed)
 
 
 def deterministic_fallback_prescription(
-    recovery_score: float,
+    recovery_score: Optional[float],
     historical_1rm_kg: float,
     completed_binary: bool,
     prescribed_weight_kg: float,
@@ -505,23 +583,23 @@ def deterministic_fallback_prescription(
     actual_rpe: float,
     remaining_sets: list[int],
     unit_system: str = "KG",
-    sleep_efficiency_pct: float = 85.0,
-    hydration_ml_today: int = 2000,
+    sleep_efficiency_pct: Optional[float] = None,
+    hydration_ml_today: int = 0,
     source_device: str = "WHOOP",
 ) -> AdaptivePrescriptionResponse:
     """
-    Motor determinista de prescripción y guardrail biomecánico de respaldo.
+    Motor determinista de prescripción en vivo basado únicamente en las métricas reales de la sesión.
     """
     overload_step = 2.5 if unit_system == "KG" else 2.27
-    low_sleep_or_stress = sleep_efficiency_pct < 70.0
-    low_hydration = hydration_ml_today < 1000
+    low_sleep = sleep_efficiency_pct is not None and sleep_efficiency_pct < 70.0
+    low_hydration = 0 < hydration_ml_today < 1000
 
-    if recovery_score < 40.0 or low_sleep_or_stress:
+    if (recovery_score is not None and recovery_score < 34.0) or low_sleep:
         zone = "RED_DELOAD"
-        target_rpe = min(6.5, prescribed_rpe)
-    elif recovery_score > 80.0:
+        target_rpe = min(7.0, max(6.5, prescribed_rpe - 1.0))
+    elif recovery_score is not None and recovery_score >= 67.0:
         zone = "GREEN_OVERLOAD"
-        target_rpe = min(9.0, max(8.0, prescribed_rpe))
+        target_rpe = min(8.5, max(8.0, prescribed_rpe))
     else:
         zone = "YELLOW_MAINTENANCE"
         target_rpe = prescribed_rpe
@@ -530,13 +608,13 @@ def deterministic_fallback_prescription(
         target_rpe = max(6.5, round(target_rpe - 0.5, 1))
 
     hydration_suffix = (
-        f" Hidratación baja hoy ({hydration_ml_today} ml): hidrátate entre series."
+        f" Hidratación registrada hoy ({hydration_ml_today} ml): hidrátate entre series."
         if low_hydration
         else ""
     )
 
     if not completed_binary or actual_reps < prescribed_reps or actual_rpe >= 9.5:
-        next_weight = round_to_plate_increment(max(20.0, actual_weight_kg * 0.925))
+        next_weight = round_to_plate_increment(max(5.0, actual_weight_kg * 0.925))
         next_reps = max(
             1,
             prescribed_reps if actual_reps >= prescribed_reps - 1 else prescribed_reps - 1,
@@ -546,12 +624,12 @@ def deterministic_fallback_prescription(
             f"Carga ajustada a {next_weight} kg para proteger técnica y ELO.{hydration_suffix}"
         )
     elif zone == "RED_DELOAD":
-        deload_factor = 0.80 if (recovery_score < 40.0 and low_sleep_or_stress) else 0.85
-        next_weight = round_to_plate_increment(prescribed_weight_kg * deload_factor)
+        next_weight = round_to_plate_increment(max(5.0, prescribed_weight_kg * 0.85))
         next_reps = prescribed_reps
+        rec_txt = f"{recovery_score:.0f}%" if recovery_score is not None else "baja"
         rationale = (
-            f"Recuperación comprometida ({recovery_score:.0f}%) y estrés elevado ({source_device}). "
-            f"Redujimos el volumen prescrito para evitar fatiga del SNC.{hydration_suffix}"
+            f"Recuperación en Zona Roja ({rec_txt} en {source_device}). "
+            f"Descarga automática (-15%) activada para proteger el SNC.{hydration_suffix}"
         )
     elif zone == "GREEN_OVERLOAD" and actual_rpe <= prescribed_rpe and not low_hydration:
         next_weight = round_to_plate_increment(actual_weight_kg + overload_step)
@@ -607,11 +685,13 @@ async def generate_adaptive_prescription(
     feedback = payload["last_completed_set_feedback"]
     remaining = payload["remaining_sets_to_recalculate"]
 
+    rec_score: Optional[float] = wearable.get("recovery_score")
+
     if not remaining:
         zone = (
             "RED_DELOAD"
-            if wearable["recovery_score"] < 40.0
-            else ("GREEN_OVERLOAD" if wearable["recovery_score"] > 80.0 else "YELLOW_MAINTENANCE")
+            if (rec_score is not None and rec_score < 34.0)
+            else ("GREEN_OVERLOAD" if (rec_score is not None and rec_score >= 67.0) else "YELLOW_MAINTENANCE")
         )
         return AdaptivePrescriptionResponse(
             readiness_zone=zone,
@@ -622,7 +702,7 @@ async def generate_adaptive_prescription(
 
     if not api_key:
         return deterministic_fallback_prescription(
-            recovery_score=wearable["recovery_score"],
+            recovery_score=rec_score,
             historical_1rm_kg=exercise["historical_1rm_kg"],
             completed_binary=feedback["completed_binary_ui"],
             prescribed_weight_kg=feedback["prescribed_weight_kg"],
@@ -633,8 +713,8 @@ async def generate_adaptive_prescription(
             actual_rpe=feedback["actual_rpe"],
             remaining_sets=remaining,
             unit_system=athlete.get("unit_system", "KG"),
-            sleep_efficiency_pct=wearable.get("sleep_efficiency_pct", 85.0),
-            hydration_ml_today=athlete.get("hydration_ml_today", 2000),
+            sleep_efficiency_pct=wearable.get("sleep_efficiency_pct"),
+            hydration_ml_today=athlete.get("hydration_ml_today", 0),
             source_device=wearable.get("source_device", "WHOOP"),
         )
 
@@ -642,22 +722,26 @@ async def generate_adaptive_prescription(
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=json.dumps(payload, ensure_ascii=False),
-            config=types.GenerateContentConfig(
-                system_instruction=COACH_ADAPTIVE_SYSTEM_PROMPT,
-                temperature=0.2,
-                top_p=0.8,
-                top_k=20,
-                max_output_tokens=2048,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-                response_mime_type="application/json",
-                response_schema=AdaptivePrescriptionResponse,
-            ),
-        )
-        parsed = AdaptivePrescriptionResponse.model_validate_json(response.text)
+        def _call_sync() -> str:
+            client = genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=json.dumps(payload, ensure_ascii=False),
+                config=types.GenerateContentConfig(
+                    system_instruction=COACH_ADAPTIVE_SYSTEM_PROMPT,
+                    temperature=0.2,
+                    top_p=0.8,
+                    top_k=20,
+                    max_output_tokens=2048,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    response_mime_type="application/json",
+                    response_schema=AdaptivePrescriptionResponse,
+                ),
+            )
+            return resp.text or ""
+
+        raw_resp_text = await asyncio.to_thread(_call_sync)
+        parsed = AdaptivePrescriptionResponse.model_validate_json(raw_resp_text)
 
         max_safe = round_to_plate_increment(exercise["historical_1rm_kg"] * 0.95)
         guardrail_triggered = parsed.safety_guardrail_triggered
@@ -686,10 +770,10 @@ async def generate_adaptive_prescription(
         )
     except Exception as exc:
         logger.warning(
-            "Fallback al motor determinista local tras error en Gemini API: %s", exc
+            "Fallback al motor determinista tras error en Gemini API: %s", exc
         )
         return deterministic_fallback_prescription(
-            recovery_score=wearable["recovery_score"],
+            recovery_score=rec_score,
             historical_1rm_kg=exercise["historical_1rm_kg"],
             completed_binary=feedback["completed_binary_ui"],
             prescribed_weight_kg=feedback["prescribed_weight_kg"],
@@ -700,40 +784,53 @@ async def generate_adaptive_prescription(
             actual_rpe=feedback["actual_rpe"],
             remaining_sets=remaining,
             unit_system=athlete.get("unit_system", "KG"),
-            sleep_efficiency_pct=wearable.get("sleep_efficiency_pct", 85.0),
-            hydration_ml_today=athlete.get("hydration_ml_today", 2000),
+            sleep_efficiency_pct=wearable.get("sleep_efficiency_pct"),
+            hydration_ml_today=athlete.get("hydration_ml_today", 0),
             source_device=wearable.get("source_device", "WHOOP"),
         )
 
 
 def _build_director_system_instruction(ctx: dict[str, Any]) -> str:
     athlete_name = str(ctx.get("athlete_name") or "Atleta")
-    weight_kg = float(ctx.get("weight_kg") or 78.0)
-    lbm_kg = float(ctx.get("lean_body_mass_kg") or 65.0)
-    fat_pct = float(ctx.get("fat_percentage") or round(max(6.0, (1.0 - lbm_kg / max(1.0, weight_kg)) * 100.0), 1))
-    rec = float(ctx.get("recovery_score") or 47.0)
-    sleep_pct = float(ctx.get("sleep_performance_pct") or 80.0)
-    strain = float(ctx.get("strain_score") or 7.2)
-    stress_lvl = float(ctx.get("stress_level") or 2.4)
-    stress_cat = str(ctx.get("stress_category") or ("ALTO" if stress_lvl >= 2.0 else "MEDIO"))
+    sex = str(ctx.get("sex") or "male")
+    weight_kg = ctx.get("weight_kg")
+    lbm_kg = ctx.get("lean_body_mass_kg")
+    fat_pct = ctx.get("fat_percentage")
+    rec = ctx.get("recovery_score")
+    sleep_pct = ctx.get("sleep_performance_pct")
+    strain = ctx.get("strain_score")
+    stress_lvl = ctx.get("stress_level")
+    stress_cat = str(ctx.get("stress_category") or "SIN DATO")
     hyd_ml = int(ctx.get("hydration_ml") or 0)
-    hyd_goal = int(ctx.get("hydration_goal_ml") or 2800)
+    hyd_goal = int(ctx.get("hydration_goal_ml") or 2500)
     routine_name = str(ctx.get("routine_name") or "Sesión Principal de Fuerza")
+
+    bio_line = (
+        f"Peso corporal: {float(weight_kg):.1f} kg | Masa magra: {float(lbm_kg):.1f} kg"
+        + (f" | Grasa: {float(fat_pct):.1f}%" if fat_pct is not None else "")
+        + f" | Sexo: {sex}"
+        if (weight_kg is not None and lbm_kg is not None)
+        else f"Biometría corporal pendiente de registro | Sexo: {sex}"
+    )
+
+    telemetry_line = (
+        f"Recuperación {float(rec):.0f}%, Esfuerzo {float(strain or 0.0):.1f}, "
+        f"Sueño {float(sleep_pct or 0.0):.0f}%, Estrés {float(stress_lvl or 0.0):.1f} ({stress_cat})"
+        if rec is not None
+        else "Sin telemetría de wearable sincronizada hoy (--)"
+    )
 
     return (
         "Eres el Director de Rendimiento de ApexMetrix (Apex Coach), un entrenador de fuerza, "
         "acondicionamiento y nutricionista deportivo de élite. Hablas con tono técnico, conciso, "
-        "empático y motivador (sin saludos corporativos ni disculpas). "
-        "PROHIBIDO responder únicamente con el nombre o peso del atleta; debes responder directamente "
-        "a su pregunta con recomendaciones accionables.\n"
-        "Tienes acceso a la telemetría en tiempo real del atleta:\n"
+        "empático y motivador (sin saludos corporativos ni disculpas).\n"
+        "Tienes acceso a los datos reales verificados del atleta:\n"
         f"- Nombre: {athlete_name}\n"
-        f"- Peso corporal: {weight_kg:.1f} kg | Masa magra: {lbm_kg:.1f} kg | Grasa: {fat_pct:.1f}%\n"
-        f"- Telemetría de hoy: Recuperación {rec:.0f}%, Esfuerzo {strain:.1f}, Sueño {sleep_pct:.0f}%, "
-        f"Estrés {stress_lvl:.1f} ({stress_cat}), Hidratación consumida {hyd_ml}/{hyd_goal} ml.\n"
+        f"- Composición: {bio_line}\n"
+        f"- Telemetría de hoy: {telemetry_line} | Hidratación: {hyd_ml}/{hyd_goal} ml.\n"
         f"- Rutina programada: {routine_name}\n"
-        "Responde con recomendaciones tácticas directas sobre nutrición (superávit calórico, macros, timing), "
-        "ajustes de RPE y series para el entreno según su recuperación, suplementación y protocolos de descanso."
+        "Responde directamente con recomendaciones accionables sobre nutrición, ajustes de RPE/cargas "
+        "y recuperación sin inventar métricas que no hayan sido sincronizadas."
     )
 
 
@@ -741,77 +838,58 @@ def _build_tactical_coach_fallback_reply(
     user_message: str,
     ctx: dict[str, Any],
 ) -> tuple[str, str, list[str]]:
-    athlete_name = str(ctx.get("athlete_name") or "Atleta")
-    weight_kg = float(ctx.get("weight_kg") or 78.0)
-    lbm_kg = float(ctx.get("lean_body_mass_kg") or 65.0)
-    rec = float(ctx.get("recovery_score") or 47.0)
-    sleep_pct = float(ctx.get("sleep_performance_pct") or 80.0)
-    strain = float(ctx.get("strain_score") or 7.2)
-    stress_lvl = float(ctx.get("stress_level") or 2.4)
-    stress_cat = str(ctx.get("stress_category") or ("ALTO" if stress_lvl >= 2.0 else "MEDIO"))
+    weight_opt = ctx.get("weight_kg")
+    lbm_opt = ctx.get("lean_body_mass_kg")
+    rec_opt = ctx.get("recovery_score")
+    sleep_opt = ctx.get("sleep_performance_pct")
+    strain_opt = ctx.get("strain_score")
     hyd_ml = int(ctx.get("hydration_ml") or 0)
-    hyd_goal = int(ctx.get("hydration_goal_ml") or 2800)
+    hyd_goal = int(ctx.get("hydration_goal_ml") or 2500)
     routine_name = str(ctx.get("routine_name") or "Sesión Principal de Fuerza")
-    wearable_src = str(ctx.get("wearable_source") or "WHOOP")
 
-    zone = (
-        "RED_DELOAD"
-        if (rec < 40.0 or sleep_pct < 70.0)
-        else ("GREEN_OVERLOAD" if rec >= 80.0 else "YELLOW_MAINTENANCE")
-    )
+    if rec_opt is not None and float(rec_opt) < 34.0:
+        zone = "RED_DELOAD"
+    elif rec_opt is not None and float(rec_opt) >= 67.0:
+        zone = "GREEN_OVERLOAD"
+    else:
+        zone = "YELLOW_MAINTENANCE"
+
     missing_ml = max(0, hyd_goal - hyd_ml)
     msg_low = user_message.lower()
 
-    # Cálculos nutricionales precisos basados en el peso y LBM del atleta
-    tdee_kcal = int(round((lbm_kg * 21.6 + 370) * (1.55 + (strain / 45.0))))
-    surplus_kcal = tdee_kcal + 350
-    protein_g = int(round(weight_kg * 2.2))
-    fats_g = int(round(weight_kg * 1.0))
-    carbs_g = int(round((surplus_kcal - (protein_g * 4 + fats_g * 9)) / 4))
-
-    if any(k in msg_low for k in ("subir de peso", "volumen", "masa", "hipertrofia", "calor", "macro", "ganar peso", "bulking")):
+    if any(k in msg_low for k in ("agua", "hidrat", "ml", "litro", "beber", "electrolit")):
         reply = (
-            f"Para subir de peso maximizando masa magra (actual: {weight_kg:.1f} kg | {lbm_kg:.1f} kg LBM) con tu gasto por Strain ({strain:.1f}):\n"
-            f"1. Superávit Calórico Limpio: Apunta a {surplus_kcal} kcal/día (+350 kcal sobre tu mantenimiento de {tdee_kcal} kcal).\n"
-            f"2. Distribución de Macros: Proteína {protein_g} g (2.2 g/kg), Carbohidratos {carbs_g} g (prioriza 90 g pre/post {routine_name}) y Grasas {fats_g} g.\n"
-            f"3. Timing & Suplementación: Creatina monohidratada 5 g/día + batido líquido (avena, plátano, whey, crema de maní) si tienes saciedad alta."
+            f"Estado hídrico hoy: {hyd_ml} / {hyd_goal} ml (restante: {missing_ml} ml).\n"
+            f"• Protocolo pre-sesión: Ingiere 500 ml de agua con electrolitos 30 min antes de {routine_name}.\n"
+            "• Intra-entreno: 250 ml cada 20 min para sostener rendimiento neuromuscular."
         )
-    elif any(k in msg_low for k in ("agua", "hidrat", "ml", "litro", "beber", "electrolit")):
-        reply = (
-            f"Estado hídrico hoy: {hyd_ml} / {hyd_goal} ml (déficit actual: {missing_ml} ml para compensar tu Strain de {strain:.1f} en {wearable_src}).\n"
-            f"• Protocolo pre-sesión: Ingiere 500 ml de agua con 500 mg de sodio 30 min antes de {routine_name}.\n"
-            f"• Intra-entreno: 250 ml cada 20 min para sostener el volumen plasmático y evitar deriva cardiovascular."
+    elif weight_opt is not None and lbm_opt is not None:
+        w_val = float(weight_opt)
+        lbm_val = float(lbm_opt)
+        strain_val = float(strain_opt) if strain_opt is not None else 8.0
+        tdee_kcal = int(round((lbm_val * 21.6 + 370) * (1.50 + (strain_val / 50.0))))
+        protein_g = int(round(w_val * 2.0))
+        rec_label = (
+            f"Recuperación {float(rec_opt):.0f}% (Sueño {float(sleep_opt or 0.0):.0f}%)"
+            if rec_opt is not None
+            else "Sin wearable sincronizado hoy (--)"
         )
-    elif any(k in msg_low for k in ("cena", "comer", "nutri", "estrés", "estres", "dormir", "sueño", "sueno")):
         reply = (
-            f"Con Estrés en {stress_lvl:.1f} ({stress_cat}), Sueño en {sleep_pct:.0f}% y Recuperación en {rec:.0f}%, la cena debe reducir el cortisol nocturno:\n"
-            f"1. Composición: 45 g de proteína de fácil digestión (salmón, pescado blanco o pechuga) + 75 g de carbohidratos de índice glucémico medio (arroz jazmín o papa horneada) para facilitar el paso de triptófano.\n"
-            f"2. Micronutrientes: 400 mg de bisglicinato de magnesio + evitar pantallas e ingesta pesada 90 min antes de dormir."
+            f"Directriz táctica para {routine_name} ({rec_label} • {lbm_val:.1f} kg LBM):\n"
+            f"• Intensidad sugerida: Trabaja en RPE {'6.5–7.0 (-15% carga)' if zone == 'RED_DELOAD' else ('8.5 (sobrecarga +2.5–5%)' if zone == 'GREEN_OVERLOAD' else '7.5–8.0 (carga base)')}.\n"
+            f"• Nutrición e Hidratación: Asegura ~{protein_g} g de proteína ({tdee_kcal} kcal mantenimiento estimado) y completa los {missing_ml} ml de agua restantes."
         )
     else:
-        if rec < 50.0 or stress_lvl >= 2.0:
-            reply = (
-                f"Directriz táctica para {routine_name} (Recuperación {rec:.0f}%, Sueño {sleep_pct:.0f}%, Strain {strain:.1f}, Estrés {stress_lvl:.1f} {stress_cat}):\n"
-                f"• Ajuste de Carga: Mantén cargas de trabajo base sin buscar récords hoy; fija el tope en RPE 7.5–8.0 (RIR 2) y recorta 1 serie accesoria por grupo muscular.\n"
-                f"• Descanso e Hidratación: Amplía pausas a 150–180 s entre series compuestas e ingiere 500 ml de agua con electrolitos antes de iniciar."
-            )
-        elif rec >= 67.0:
-            reply = (
-                f"Directriz táctica para {routine_name} (Zona Verde: Recuperación {rec:.0f}%, Sueño {sleep_pct:.0f}%):\n"
-                f"• Sobrecarga Progresiva: Aplica +2.5 kg en el levantamiento principal trabajando en RPE 8.0–8.5.\n"
-                f"• Nutrición & Agua: Asegura 60 g de carbohidratos rápidos pre-entreno y completa los {missing_ml} ml de agua restantes hoy."
-            )
-        else:
-            reply = (
-                f"Directriz táctica para {routine_name} (Zona Amarilla: Recuperación {rec:.0f}%, Sueño {sleep_pct:.0f}%, Strain {strain:.1f}):\n"
-                f"• Ejecución: Mantén el 100% del volumen prescrito @ RPE 8.0 controlando la fase excéntrica.\n"
-                f"• Recuperación: Completa tu meta hídrica ({hyd_ml}/{hyd_goal} ml) y asegura {protein_g} g de proteína total hoy."
-            )
+        reply = (
+            f"Directriz táctica para {routine_name}:\n"
+            "• Configura tu peso, estatura y sexo biológico en tu Perfil (o escanea Fitdays) y sube tu captura diaria de wearable para activar cálculos exactos de LBM y cargas.\n"
+            f"• Hidratación actual: {hyd_ml}/{hyd_goal} ml."
+        )
 
     suggestions = [
-        "¿Qué puedo hacer para subir de peso limpio?",
-        f"Ajusta mis series y RPE con {rec:.0f}% de recuperación",
-        "¿Qué me recomiendas cenar para bajar mi estrés?",
+        "¿Cómo ajusto mis series de hoy según mi recuperación?",
+        "¿Cuánta proteína y calorías necesito según mi LBM?",
+        "¿Qué cenar para mejorar mi recuperación nocturna?",
         "¿Cuánta agua y electrolitos me faltan hoy?",
     ]
     return reply, zone, suggestions
@@ -835,7 +913,6 @@ async def generate_coach_chat_reply(
 
     system_instruction = _build_director_system_instruction(athlete_context)
 
-    # Construir conversación clara para Gemini
     history_lines: list[str] = []
     for item in history[-6:]:
         role_label = "Atleta" if item.get("role") == "user" else "Apex Coach"
@@ -847,28 +924,30 @@ async def generate_coach_chat_reply(
     full_prompt = (
         f"Historial reciente:\n{history_block}\n\n"
         f"Consulta actual del atleta: {message.strip()}\n\n"
-        "Responde directamente con el protocolo táctico completo (en español, entre 3 y 6 puntos o líneas claras):"
+        "Responde directamente con el protocolo táctico completo (en español, entre 3 y 6 puntos claros):"
         if history_block
-        else f"Consulta actual del atleta: {message.strip()}\n\nResponde directamente con el protocolo táctico completo (en español, entre 3 y 6 puntos o líneas claras):"
+        else f"Consulta actual del atleta: {message.strip()}\n\nResponde directamente con el protocolo táctico completo (en español, entre 3 y 6 puntos claros):"
     )
 
     try:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=full_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.35,
-                max_output_tokens=2048,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
-        )
-        text_out = (response.text or "").strip()
-        # Verificar que nunca sea un fragmento truncado con solo el nombre/peso
+        def _invoke_chat() -> str:
+            client = genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.35,
+                    max_output_tokens=2048,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            return (resp.text or "").strip()
+
+        text_out = await asyncio.to_thread(_invoke_chat)
         if len(text_out) >= 45 and not text_out.endswith("LBM"):
             return text_out, zone, suggestions
     except Exception as exc:

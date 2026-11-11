@@ -3,17 +3,23 @@ import '../../../../core/services/ble_heart_rate_service.dart';
 import '../../../../core/services/exercise_media_service.dart';
 import '../../../../data/models/workout_models.dart';
 import '../../../core/app_theme.dart';
+import '../../auth/view_models/auth_view_model.dart';
+import '../../auth/views/profile_setup_screen.dart';
 import '../view_models/live_workout_view_model.dart';
 import 'set_binary_feedback_sheet.dart';
 
 class LiveWorkoutScreen extends StatefulWidget {
   final LiveWorkoutViewModel viewModel;
+  final AuthViewModel? authViewModel;
   final VoidCallback? onOpenTacticalCenter;
+  final VoidCallback? onProfileOrBiometricsUpdated;
 
   const LiveWorkoutScreen({
     super.key,
     required this.viewModel,
+    this.authViewModel,
     this.onOpenTacticalCenter,
+    this.onProfileOrBiometricsUpdated,
   });
 
   @override
@@ -23,10 +29,37 @@ class LiveWorkoutScreen extends StatefulWidget {
 class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
   LiveWorkoutViewModel get viewModel => widget.viewModel;
 
+  String get _resolvedAthleteGender {
+    final String raw =
+        (widget.authViewModel?.currentUser?.sex ?? viewModel.athleteGender)
+            .toLowerCase();
+    return raw.contains('fem') ? 'female' : 'male';
+  }
+
   @override
   void initState() {
     super.initState();
-    viewModel.bleService.autoReconnectSavedDevice();
+    viewModel.bleService.autoReconnectSavedDevice(
+      userId: widget.authViewModel?.currentUser?.id,
+    );
+  }
+
+  void _openCompleteBiometricsFlow(BuildContext context) {
+    final AuthViewModel? authVm = widget.authViewModel;
+    if (authVm == null) {
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext ctx) => ProfileSetupScreen(
+          viewModel: authVm,
+          onCompleted: () {
+            Navigator.of(ctx).pop();
+            widget.onProfileOrBiometricsUpdated?.call();
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _handleRegenerateAiRoutine(BuildContext context) async {
@@ -62,7 +95,10 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: viewModel,
+      listenable: Listenable.merge(<Listenable>[
+        viewModel,
+        if (widget.authViewModel != null) widget.authViewModel!,
+      ]),
       builder: (BuildContext context, _) {
         final WorkoutSetModel? activeSet = viewModel.currentActiveSet;
         final bool hasStartedSession = viewModel.activeWorkoutId != null;
@@ -220,7 +256,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                   ),
                 )
               : RefreshIndicator(
-                  onRefresh: viewModel.initializeWorkoutPlan,
+                  onRefresh: () => viewModel.initializeWorkoutPlan(),
                   child: SingleChildScrollView(
                     physics: const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
@@ -243,20 +279,24 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                               ),
                             _buildLiveTelemetryHeader(context),
                             const SizedBox(height: 10),
-                            _buildWeeklyRoutinesSelector(context),
-                            const SizedBox(height: 10),
-                            _buildGeminiAdaptiveBanner(),
-                            const SizedBox(height: 10),
-                            if (!hasStartedSession)
-                              _buildStartRoutineCard(context)
-                            else if (activeSet != null)
-                              _buildActiveSetCard(context, activeSet)
-                            else
-                              _buildSessionCompletedCard(),
-                            if (hasStartedSession &&
-                                viewModel.sets.isNotEmpty) ...<Widget>[
+                            if (viewModel.requiresBiometrics) ...<Widget>[
+                              _buildRequiresBiometricsCard(context),
+                            ] else ...<Widget>[
+                              _buildWeeklyRoutinesSelector(context),
                               const SizedBox(height: 10),
-                              _buildSetProgressionList(),
+                              _buildGeminiAdaptiveBanner(),
+                              const SizedBox(height: 10),
+                              if (!hasStartedSession)
+                                _buildStartRoutineCard(context)
+                              else if (activeSet != null)
+                                _buildActiveSetCard(context, activeSet)
+                              else
+                                _buildSessionCompletedCard(),
+                              if (hasStartedSession &&
+                                  viewModel.sets.isNotEmpty) ...<Widget>[
+                                const SizedBox(height: 10),
+                                _buildSetProgressionList(),
+                              ],
                             ],
                             const SizedBox(height: 130),
                           ],
@@ -267,6 +307,65 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                 ),
         );
       },
+    );
+  }
+
+  Widget _buildRequiresBiometricsCard(BuildContext context) {
+    final List<String> missing = viewModel.missingBiometricFields;
+    final String missingText = missing.isEmpty
+        ? 'Peso corporal (kg), Estatura (cm) y Sexo biológico'
+        : missing.join(', ');
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: ApexTheme.warningAmber, width: 1.4),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          children: <Widget>[
+            const Icon(
+              Icons.monitor_weight_outlined,
+              color: ApexTheme.warningAmber,
+              size: 40,
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'COMPLETA TU BIOMETRÍA REAL PARA CALCULAR TUS CARGAS',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'ApexMetrix no asigna rutinas ni pesos genéricos. Registra tu peso actual, estatura y sexo biológico ($missingText) para que Gemini 2.5 Flash prescriba tus 5 días × 6 ejercicios según tu Masa Magra (LBM).',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                color: ApexTheme.textMuted,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (widget.authViewModel != null)
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: ApexTheme.voltAccent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 12,
+                  ),
+                ),
+                onPressed: () => _openCompleteBiometricsFlow(context),
+                icon: const Icon(Icons.manage_accounts_rounded, size: 18),
+                label: const Text(
+                  'COMPLETAR PESO, ESTATURA Y SEXO',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -602,14 +701,14 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
             const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
               key: ValueKey<String>(
-                'preview_${safeIndex}_${currentExercise?.exerciseKey ?? ""}_${currentExercise?.exerciseName ?? ""}_${viewModel.athleteGender}',
+                'preview_${safeIndex}_${currentExercise?.exerciseKey ?? ""}_${currentExercise?.exerciseName ?? ""}_$_resolvedAthleteGender',
               ),
               exerciseName: currentExercise != null
                   ? currentExercise.exerciseName
                   : routine.focusGroup,
               exerciseKey: currentExercise?.exerciseKey,
-              athleteGender: viewModel.athleteGender,
-              onGenderChanged: viewModel.setAthleteGender,
+              athleteGender: _resolvedAthleteGender,
+              onGenderChanged: null,
               lbmKg: viewModel.lbmKg,
               recoveryScore: viewModel.recoveryScore,
               targetReps: currentExercise?.targetReps ?? 10,
@@ -842,7 +941,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      '${viewModel.liveHeartRate} BPM',
+                      '${viewModel.liveHeartRate ?? "--"} BPM',
                       style: const TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w900,
@@ -1166,12 +1265,12 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
             const SizedBox(height: 10),
             BiomechanicalExerciseAvatarModule(
               key: ValueKey<String>(
-                'active_${exIdx}_${boundExerciseKey}_${boundExerciseName}_${viewModel.athleteGender}',
+                'active_${exIdx}_${boundExerciseKey}_${boundExerciseName}_$_resolvedAthleteGender',
               ),
               exerciseName: boundExerciseName,
               exerciseKey: boundExerciseKey,
-              athleteGender: viewModel.athleteGender,
-              onGenderChanged: viewModel.setAthleteGender,
+              athleteGender: _resolvedAthleteGender,
+              onGenderChanged: null,
               lbmKg: viewModel.lbmKg,
               recoveryScore: viewModel.recoveryScore,
               targetReps: activeSet.prescribedReps,
@@ -1583,6 +1682,7 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
       builder: (BuildContext sheetContext) {
         return _BleHeartRateScannerModalSheet(
           bleService: viewModel.bleService,
+          userId: widget.authViewModel?.currentUser?.id,
         );
       },
     ).whenComplete(() {
@@ -1641,9 +1741,11 @@ class _LiveWorkoutScreenState extends State<LiveWorkoutScreen> {
 
 class _BleHeartRateScannerModalSheet extends StatelessWidget {
   final BleHeartRateService bleService;
+  final String? userId;
 
   const _BleHeartRateScannerModalSheet({
     required this.bleService,
+    this.userId,
   });
 
   @override
@@ -1751,7 +1853,10 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                       ),
                     ),
                     trailing: TextButton(
-                      onPressed: () => bleService.disconnect(forgetDevice: true),
+                      onPressed: () => bleService.disconnect(
+                        forgetDevice: true,
+                        userId: userId,
+                      ),
                       child: const Text(
                         'Desconectar',
                         style: TextStyle(color: ApexTheme.deloadCrimson),
@@ -1821,7 +1926,10 @@ class _BleHeartRateScannerModalSheet extends StatelessWidget {
                                 ? null
                                 : () async {
                                     final bool ok =
-                                        await bleService.connectToDevice(d);
+                                        await bleService.connectToDevice(
+                                      d,
+                                      userId: userId,
+                                    );
                                     if (ok && context.mounted) {
                                       Navigator.of(context).pop();
                                     }
@@ -1894,11 +2002,11 @@ class _RoutineBuilderModalSheetState extends State<_RoutineBuilderModalSheet> {
     } else {
       _drafts.add(
         _EditableExerciseDraft(
-          name: 'Barbell Bench Press',
-          muscleGroup: 'Pecho',
-          sets: 4,
-          reps: 8,
-          weightKg: 80.0,
+          name: '',
+          muscleGroup: '',
+          sets: 3,
+          reps: 10,
+          weightKg: 0.0,
         ),
       );
     }
@@ -1920,19 +2028,19 @@ class _RoutineBuilderModalSheetState extends State<_RoutineBuilderModalSheet> {
         .where((_EditableExerciseDraft d) => d.nameCtrl.text.trim().isNotEmpty)
         .map((_EditableExerciseDraft d) {
       final double weightKg =
-          double.tryParse(d.weightCtrl.text.trim()) ?? 60.0;
+          double.tryParse(d.weightCtrl.text.trim().replaceAll(',', '.')) ?? 0.0;
       return <String, dynamic>{
         'exercise_name': d.nameCtrl.text.trim(),
         'muscle_group': d.muscleCtrl.text.trim().isEmpty
             ? 'General'
             : d.muscleCtrl.text.trim(),
         'category': 'hipertrofia',
-        'target_sets': int.tryParse(d.setsCtrl.text.trim()) ?? 4,
-        'target_reps': int.tryParse(d.repsCtrl.text.trim()) ?? 8,
+        'target_sets': int.tryParse(d.setsCtrl.text.trim()) ?? 3,
+        'target_reps': int.tryParse(d.repsCtrl.text.trim()) ?? 10,
         'base_weight_kg': weightKg,
         'target_weight_kg': weightKg,
         'target_rpe': 8.0,
-        'rest_seconds': 150,
+        'rest_seconds': 120,
       };
     }).toList();
 
@@ -2100,11 +2208,11 @@ class _RoutineBuilderModalSheetState extends State<_RoutineBuilderModalSheet> {
                   setState(() {
                     _drafts.add(
                       _EditableExerciseDraft(
-                        name: 'Nuevo Ejercicio',
+                        name: '',
                         muscleGroup: _focusCtrl.text.trim(),
-                        sets: 4,
+                        sets: 3,
                         reps: 10,
-                        weightKg: 50.0,
+                        weightKg: 0.0,
                       ),
                     );
                   });

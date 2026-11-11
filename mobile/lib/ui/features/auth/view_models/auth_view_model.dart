@@ -140,6 +140,11 @@ class AuthViewModel extends ChangeNotifier {
     required String username,
     required String email,
     required String password,
+    String? fullName,
+    required String biologicalSex,
+    required double heightCm,
+    required double weightKg,
+    double? bodyFatPct,
   }) async {
     _isSubmitting = true;
     _errorMessage = null;
@@ -158,6 +163,11 @@ class AuthViewModel extends ChangeNotifier {
         username: username,
         email: email,
         password: password,
+        fullName: fullName,
+        biologicalSex: biologicalSex,
+        heightCm: heightCm,
+        weightKg: weightKg,
+        bodyFatPct: bodyFatPct,
       );
       return true;
     } catch (e) {

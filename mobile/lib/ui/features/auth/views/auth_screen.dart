@@ -18,17 +18,26 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _usernameCtrl = TextEditingController();
+  final TextEditingController _fullNameCtrl = TextEditingController();
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passwordCtrl = TextEditingController();
+  final TextEditingController _weightCtrl = TextEditingController();
+  final TextEditingController _heightCtrl = TextEditingController();
+  final TextEditingController _bodyFatCtrl = TextEditingController();
 
+  String _biologicalSex = 'MALE';
   bool _isRegisterMode = false;
   bool _obscurePassword = true;
 
   @override
   void dispose() {
     _usernameCtrl.dispose();
+    _fullNameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
+    _weightCtrl.dispose();
+    _heightCtrl.dispose();
+    _bodyFatCtrl.dispose();
     super.dispose();
   }
 
@@ -38,10 +47,24 @@ class _AuthScreenState extends State<AuthScreen> {
     }
 
     if (_isRegisterMode) {
+      final double weightKg =
+          double.parse(_weightCtrl.text.trim().replaceAll(',', '.'));
+      final double heightCm =
+          double.parse(_heightCtrl.text.trim().replaceAll(',', '.'));
+      final String rawFat = _bodyFatCtrl.text.trim().replaceAll(',', '.');
+      final double? bodyFatPct =
+          rawFat.isEmpty ? null : double.tryParse(rawFat);
+      final String fullName = _fullNameCtrl.text.trim();
+
       await widget.viewModel.register(
         username: _usernameCtrl.text.trim(),
         email: _emailCtrl.text.trim(),
         password: _passwordCtrl.text,
+        fullName: fullName.isEmpty ? null : fullName,
+        biologicalSex: _biologicalSex,
+        heightCm: heightCm,
+        weightKg: weightKg,
+        bodyFatPct: bodyFatPct,
       );
     } else {
       await widget.viewModel.login(
@@ -160,7 +183,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               TextFormField(
                                 controller: _usernameCtrl,
                                 decoration: InputDecoration(
-                                  labelText: 'Username (ej. cesar_lifts)',
+                                  labelText: 'Username (ej. atleta_ranked)',
                                   prefixIcon: const Icon(
                                     Icons.alternate_email_rounded,
                                   ),
@@ -178,6 +201,147 @@ class _AuthScreenState extends State<AuthScreen> {
                                   if (!RegExp(r'^[a-zA-Z0-9_]+$')
                                       .hasMatch(val)) {
                                     return 'Usa solo letras, números o guion bajo (_)';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              const SizedBox(height: 14),
+                              TextFormField(
+                                controller: _fullNameCtrl,
+                                decoration: InputDecoration(
+                                  labelText: 'Nombre completo (opcional)',
+                                  prefixIcon: const Icon(Icons.badge_outlined),
+                                  filled: true,
+                                  fillColor: ApexTheme.obsidianBg,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              const Text(
+                                'SEXO BIOLÓGICO (CALIBRA CARGAS Y BIOMECÁNICA)',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: ApexTheme.textMuted,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              SegmentedButton<String>(
+                                segments: const <ButtonSegment<String>>[
+                                  ButtonSegment<String>(
+                                    value: 'MALE',
+                                    icon: Icon(Icons.male_rounded, size: 17),
+                                    label: Text('Hombre'),
+                                  ),
+                                  ButtonSegment<String>(
+                                    value: 'FEMALE',
+                                    icon: Icon(Icons.female_rounded, size: 17),
+                                    label: Text('Mujer'),
+                                  ),
+                                ],
+                                selected: <String>{_biologicalSex},
+                                onSelectionChanged: (Set<String> s) {
+                                  setState(() => _biologicalSex = s.first);
+                                },
+                              ),
+                              const SizedBox(height: 14),
+                              Row(
+                                children: <Widget>[
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: _weightCtrl,
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                      decoration: InputDecoration(
+                                        labelText: 'Peso actual (kg)',
+                                        suffixText: 'kg',
+                                        filled: true,
+                                        fillColor: ApexTheme.obsidianBg,
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                      ),
+                                      validator: (String? v) {
+                                        final double? parsed = double.tryParse(
+                                          (v ?? '').trim().replaceAll(',', '.'),
+                                        );
+                                        if (parsed == null ||
+                                            parsed < 30 ||
+                                            parsed > 280) {
+                                          return '30 - 280 kg';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: _heightCtrl,
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                      decoration: InputDecoration(
+                                        labelText: 'Estatura (cm)',
+                                        suffixText: 'cm',
+                                        filled: true,
+                                        fillColor: ApexTheme.obsidianBg,
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                      ),
+                                      validator: (String? v) {
+                                        final double? parsed = double.tryParse(
+                                          (v ?? '').trim().replaceAll(',', '.'),
+                                        );
+                                        if (parsed == null ||
+                                            parsed < 120 ||
+                                            parsed > 240) {
+                                          return '120 - 240 cm';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              TextFormField(
+                                controller: _bodyFatCtrl,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: '% Grasa corporal (opcional)',
+                                  suffixText: '%',
+                                  prefixIcon: const Icon(
+                                    Icons.monitor_weight_outlined,
+                                  ),
+                                  filled: true,
+                                  fillColor: ApexTheme.obsidianBg,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                validator: (String? v) {
+                                  final String raw =
+                                      (v ?? '').trim().replaceAll(',', '.');
+                                  if (raw.isEmpty) {
+                                    return null;
+                                  }
+                                  final double? parsed = double.tryParse(raw);
+                                  if (parsed == null ||
+                                      parsed < 2.5 ||
+                                      parsed > 65) {
+                                    return 'Ingresa entre 2.5% y 65% (o déjalo vacío)';
                                   }
                                   return null;
                                 },

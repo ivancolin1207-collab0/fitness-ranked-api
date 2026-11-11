@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/services/ble_heart_rate_service.dart';
+import '../../../../data/models/auth_models.dart';
+import '../../../../data/models/biometric_models.dart';
 import '../../../../data/models/workout_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
 
@@ -47,11 +49,23 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   String _athleteGender = 'male';
   String get athleteGender => _athleteGender;
 
-  double _lbmKg = 62.74;
-  double get lbmKg => _lbmKg;
+  double? _lbmKg;
+  double? get lbmKg => _lbmKg;
 
-  double _weightKg = 92.4;
-  double get weightKg => _weightKg;
+  double? _weightKg;
+  double? get weightKg => _weightKg;
+
+  double? _recoveryScore;
+  double? get recoveryScore => _recoveryScore;
+
+  String? _biometricSignature;
+  String? get biometricSignature => _biometricSignature;
+
+  bool _requiresBiometrics = false;
+  bool get requiresBiometrics => _requiresBiometrics;
+
+  List<String> _missingBiometricFields = <String>[];
+  List<String> get missingBiometricFields => _missingBiometricFields;
 
   /// Purga inmediatamente el estado en memoria cuando se cierra sesión o se cambia de cuenta
   /// para evitar que un usuario nuevo vea rutinas, series o cargas del usuario anterior.
@@ -70,6 +84,14 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     _rolloverBanner = null;
     _projectedEloDelta = 0;
     _sessionLbmScore = 0.0;
+    _lbmKg = null;
+    _weightKg = null;
+    _recoveryScore = null;
+    _biometricSignature = null;
+    _requiresBiometrics = false;
+    _missingBiometricFields = <String>[];
+    _liveHeartRate = null;
+    _readinessZone = 'SIN TELEMETRÍA HOY • CARGA BASE';
     notifyListeners();
   }
 
@@ -82,8 +104,9 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   int _remainingRestSeconds = 0;
   int get remainingRestSeconds => _remainingRestSeconds;
 
-  int _liveHeartRate = 118;
-  int get liveHeartRate => _bleService.latestBpm ?? _liveHeartRate;
+  int? _liveHeartRate;
+  int? get liveHeartRate =>
+      _bleService.isConnected ? (_bleService.latestBpm ?? _liveHeartRate) : null;
 
   int _projectedEloDelta = 0;
   int get projectedEloDelta => _projectedEloDelta;
@@ -91,22 +114,11 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   double _sessionLbmScore = 0.0;
   double get sessionLbmScore => _sessionLbmScore;
 
-  String _readinessZone = 'YELLOW_MAINTENANCE';
+  String _readinessZone = 'SIN TELEMETRÍA HOY • CARGA BASE';
   String get readinessZone => _readinessZone;
 
-  double get recoveryScore {
-    final String z = _readinessZone.toUpperCase();
-    if (z.contains('RED') || z.contains('ROJA') || z.contains('DELOAD')) {
-      return 30.0;
-    }
-    if (z.contains('GREEN') || z.contains('VERDE') || z.contains('SOBRECARGA')) {
-      return 78.0;
-    }
-    return 56.0;
-  }
-
   String _geminiRationale =
-      'Gemini Coach adaptará las cargas y repeticiones de tus series según tu RPE real y recuperación diaria.';
+      'Gemini Coach adapta tus 5 días × 6 ejercicios y pesos exactos a tu sexo biológico, masa magra (LBM) y recuperación diaria.';
   String get geminiRationale => _geminiRationale;
 
   String? _rolloverBanner;
@@ -130,12 +142,10 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   bool _isGeneratingAiRoutine = false;
   bool get isGeneratingAiRoutine => _isGeneratingAiRoutine;
 
-  String _aiRoutineTitle =
-      'Hipertrofia Adaptativa Personalizada (Gemini 2.5 Flash)';
+  String _aiRoutineTitle = '';
   String get aiRoutineTitle => _aiRoutineTitle;
 
-  String _aiWeeklyFocus =
-      'Periodización de 5 días × 6 ejercicios adaptada a tu LBM y recuperación';
+  String _aiWeeklyFocus = '';
   String get aiWeeklyFocus => _aiWeeklyFocus;
 
   String? _errorMessage;
@@ -150,10 +160,27 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   String? get selectedSetId => _selectedSetId;
 
   void _onBleServiceChanged() {
-    if (_bleService.latestBpm != null) {
-      _liveHeartRate = _bleService.latestBpm!;
+    if (_bleService.isConnected && _bleService.latestBpm != null) {
+      _liveHeartRate = _bleService.latestBpm;
+    } else if (!_bleService.isConnected) {
+      _liveHeartRate = null;
     }
     notifyListeners();
+  }
+
+  void _applyReadinessZoneFromRecovery(double? rec) {
+    _recoveryScore = rec;
+    if (rec == null) {
+      _readinessZone = 'SIN TELEMETRÍA HOY • CARGA BASE (1.0x)';
+    } else if (rec < 34.0) {
+      _readinessZone = 'ZONA ROJA (${rec.toStringAsFixed(0)}%) • DESCARGA -15%';
+    } else if (rec >= 67.0) {
+      _readinessZone =
+          'ZONA VERDE (${rec.toStringAsFixed(0)}%) • SOBRECARGA +4%';
+    } else {
+      _readinessZone =
+          'ZONA AMARILLA (${rec.toStringAsFixed(0)}%) • MANTENIMIENTO';
+    }
   }
 
   /// Lista de los ejercicios (6 por día) disponibles en la rutina activa,
@@ -164,7 +191,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     if (routineEx.isNotEmpty) {
       return routineEx;
     }
-    // Fallback si solo hay sets cargados desde servidor
     final Map<String, RoutineExerciseItemModel> distinct =
         <String, RoutineExerciseItemModel>{};
     int order = 1;
@@ -211,7 +237,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     return false;
   }
 
-  /// Devuelve todas las series pertenecientes al ejercicio en `exerciseIndex`.
   List<WorkoutSetModel> setsForExercise(int exerciseIndex) {
     final List<RoutineExerciseItemModel> exercises = activeDayExercises;
     if (exercises.isEmpty) {
@@ -224,14 +249,11 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         .toList();
   }
 
-  /// Indica si todas las series de un ejercicio ya fueron completadas.
   bool isExerciseCompleted(int exerciseIndex) {
     final List<WorkoutSetModel> exSets = setsForExercise(exerciseIndex);
     return exSets.isNotEmpty && exSets.every((WorkoutSetModel s) => s.completed);
   }
 
-  /// Cambia libremente al ejercicio indicado (sin bloqueo lineal) y selecciona
-  /// su primera serie pendiente (o la última si ya está completado para permitir edición/vista).
   void selectExercise(int index) {
     final List<RoutineExerciseItemModel> exercises = activeDayExercises;
     if (exercises.isEmpty) {
@@ -254,8 +276,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Permite tocar cualquier serie de "Progresión de series en tiempo real"
-  /// para saltar de inmediato a ese ejercicio y serie.
   void selectSet(WorkoutSetModel set) {
     _selectedSetId = set.id;
     final List<RoutineExerciseItemModel> exercises = activeDayExercises;
@@ -268,8 +288,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Devuelve la serie actualmente activa según el ejercicio/serie seleccionado por el usuario.
-  /// Nunca bloquea el acceso a otros ejercicios ni oculta el visor si un ejercicio ya se completó.
   WorkoutSetModel? get currentActiveSet {
     if (_sets.isEmpty) {
       return null;
@@ -298,8 +316,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     return _sets.first;
   }
 
-  /// Garantiza que `_sets` contenga las series de los 6 ejercicios del día seleccionado,
-  /// preservando el progreso de series ya registradas en el servidor o localmente.
   void _syncSetsWithSelectedRoutine({
     List<WorkoutSetModel>? incomingSets,
     bool resetSelection = false,
@@ -411,124 +427,214 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _resolveUserBiometricsBaseline() async {
-    _athleteGender = await _repository.getAthleteGender();
-    final profile = await _repository.getCurrentUserProfileCache();
-    final String ident =
-        '${profile?.username ?? ''} ${profile?.maskedEmail ?? ''}'.toLowerCase();
-    final bool isCesarProfile =
-        ident.contains('ivancolin') || ident.contains('cesar');
-    final bool isFemale = _athleteGender == 'female';
-    final double heightCm =
-        (profile != null && profile.heightCm > 100)
-            ? profile.heightCm
-            : (isFemale ? 163.0 : 175.0);
-
-    final double defaultWeight = isCesarProfile
-        ? 92.4
-        : double.parse(
-            ((isFemale ? 21.2 : 22.8) *
-                    ((heightCm / 100.0) * (heightCm / 100.0)))
-                .toStringAsFixed(1),
-          );
-    final double defaultFat = isCesarProfile
-        ? 32.1
-        : (isFemale ? 24.5 : 18.5);
-    final double defaultLbm = double.parse(
-      (defaultWeight * (1.0 - defaultFat / 100.0)).toStringAsFixed(2),
+  double _computeBoerLbm({
+    required String sex,
+    required double weightKg,
+    required double heightCm,
+  }) {
+    final double raw = sex == 'female'
+        ? (0.252 * weightKg) + (0.473 * heightCm) - 48.3
+        : (0.407 * weightKg) + (0.267 * heightCm) - 19.2;
+    return double.parse(
+      raw.clamp(weightKg * 0.42, weightKg * 0.94).toStringAsFixed(2),
     );
-
-    _weightKg = defaultWeight;
-    _lbmKg = defaultLbm;
-
-    try {
-      final cachedBio =
-          await _repository.readCachedBiometrics() ??
-          await _repository.loadLatestBiometrics();
-      if (cachedBio != null && cachedBio.weightKg > 25) {
-        _weightKg = cachedBio.weightKg;
-        _lbmKg = cachedBio.leanBodyMassKg > 20
-            ? cachedBio.leanBodyMassKg
-            : double.parse(
-                (_weightKg * (1.0 - (cachedBio.fatPercentage / 100.0)))
-                    .toStringAsFixed(2),
-              );
-      }
-    } catch (_) {}
   }
 
-  Future<void> initializeWorkoutPlan() async {
+  Future<void> _resolveUserBiometricsBaseline() async {
+    final UserProfileModel? profile =
+        await _repository.getCurrentUserProfileCache();
+
+    if (profile != null) {
+      final bool isFem = profile.sex.toLowerCase() == 'female' ||
+          profile.biologicalSex.toUpperCase() == 'FEMALE';
+      _athleteGender = isFem ? 'female' : 'male';
+      await _repository.setAthleteGender(_athleteGender);
+      _weightKg = profile.weightKg;
+      _lbmKg = profile.lbmKg;
+      _biometricSignature = profile.biometricSignature;
+    } else {
+      _athleteGender = await _repository.getAthleteGender();
+    }
+
+    try {
+      final BiometricRecord? cachedBio =
+          await _repository.readCachedBiometrics() ??
+              await _repository.loadLatestBiometrics();
+      if (cachedBio != null && cachedBio.weightKg > 25) {
+        _weightKg = cachedBio.weightKg;
+        if (cachedBio.leanBodyMassKg > 15) {
+          _lbmKg = cachedBio.leanBodyMassKg;
+        } else if (cachedBio.fatPercentage > 0) {
+          _lbmKg = double.parse(
+            (cachedBio.weightKg * (1.0 - (cachedBio.fatPercentage / 100.0)))
+                .toStringAsFixed(2),
+          );
+        }
+      }
+    } catch (_) {}
+
+    if (_lbmKg == null &&
+        _weightKg != null &&
+        profile?.heightCm != null &&
+        profile!.heightCm! > 100) {
+      _lbmKg = _computeBoerLbm(
+        sex: _athleteGender,
+        weightKg: _weightKg!,
+        heightCm: profile.heightCm!,
+      );
+    }
+
+    if (_weightKg != null && _lbmKg != null) {
+      _biometricSignature =
+          '${_athleteGender}_${_weightKg!.round()}_${_lbmKg!.round()}';
+    }
+
+    try {
+      final WearableMetricRecord? todayWearable =
+          await _repository.readCachedWearableTelemetry();
+      _applyReadinessZoneFromRecovery(todayWearable?.recoveryScore);
+    } catch (_) {
+      _applyReadinessZoneFromRecovery(null);
+    }
+  }
+
+  void _applyAiPlanToState(
+    AiGeneratedRoutinePlanModel plan, {
+    bool resetSelection = false,
+  }) {
+    if (plan.sex != null && plan.sex!.isNotEmpty) {
+      _athleteGender =
+          plan.sex!.toLowerCase().contains('fem') ? 'female' : 'male';
+    }
+    if (plan.weightKg != null) {
+      _weightKg = plan.weightKg;
+    }
+    if (plan.lbmKg != null) {
+      _lbmKg = plan.lbmKg;
+    }
+    if (plan.biometricSignature != null &&
+        plan.biometricSignature!.isNotEmpty) {
+      _biometricSignature = plan.biometricSignature;
+    }
+    if (plan.recoveryScore != null) {
+      _applyReadinessZoneFromRecovery(plan.recoveryScore);
+    }
+
+    _weeklyRoutines = plan.days;
+    _aiRoutineTitle = plan.routineName;
+    _aiWeeklyFocus = plan.weeklyFocus;
+    final String lbmLabel =
+        _lbmKg != null ? '${_lbmKg!.toStringAsFixed(1)} kg LBM' : 'LBM real';
+    _geminiRationale =
+        '${plan.routineName} • ${plan.weeklyFocus} ($lbmLabel).';
+
+    if (_weeklyRoutines.isNotEmpty) {
+      final int preferredDay =
+          _selectedRoutine?.dayOfWeek ?? DateTime.now().weekday.clamp(1, 5);
+      RoutineTemplateModel? matchedDay;
+      for (final RoutineTemplateModel r in _weeklyRoutines) {
+        if (r.dayOfWeek == preferredDay) {
+          matchedDay = r;
+          break;
+        }
+      }
+      _selectedRoutine = matchedDay ?? _weeklyRoutines.first;
+      if (resetSelection) {
+        _sets = <WorkoutSetModel>[];
+      }
+      _syncSetsWithSelectedRoutine(resetSelection: resetSelection);
+    }
+  }
+
+  Future<void> initializeWorkoutPlan({bool forceRefresh = false}) async {
     _errorMessage = null;
 
     try {
       _unitSystem = await _repository.getPreferredUnitSystem();
       await _resolveUserBiometricsBaseline();
 
-      // 1. Carga instantánea (0ms) desde SharedPreferences aislada por user_routine_${currentUser.id}
+      if (forceRefresh) {
+        await _repository.clearCachedAiRoutinePlan();
+      }
+
+      // 1. Carga instantánea desde caché local aislada `routine_${userId}` solo si coincide la firma biométrica
       AiGeneratedRoutinePlanModel? cachedPlan =
-          await _repository.readCachedAiRoutinePlan();
-      final bool hadUserCachedPlan =
-          cachedPlan != null && cachedPlan.days.length >= 5;
+          forceRefresh ? null : await _repository.readCachedAiRoutinePlan();
 
-      if (!hadUserCachedPlan) {
-        cachedPlan = _buildInstantLocalLbmFiveDayPlan(
-          lbmKg: _lbmKg,
-          weightKg: _weightKg,
+      if (cachedPlan != null &&
+          _biometricSignature != null &&
+          cachedPlan.biometricSignature != null &&
+          cachedPlan.biometricSignature != _biometricSignature) {
+        await _repository.clearCachedAiRoutinePlan();
+        cachedPlan = null;
+      }
+
+      if (cachedPlan != null &&
+          cachedPlan.hasRoutine &&
+          cachedPlan.days.length >= 5) {
+        _requiresBiometrics = false;
+        _missingBiometricFields = <String>[];
+        _applyAiPlanToState(cachedPlan);
+        _isLoadingPlan = false;
+        notifyListeners();
+      } else {
+        _isLoadingPlan = _weeklyRoutines.isEmpty;
+        notifyListeners();
+      }
+
+      // 2. Consultar PostgreSQL (`GET /api/v1/routines/current`) filtrado por current_user.id
+      AiGeneratedRoutinePlanModel cloudPlan =
+          await _repository.loadCurrentAiRoutine();
+
+      if (cloudPlan.requiresBiometrics) {
+        _requiresBiometrics = true;
+        _missingBiometricFields = cloudPlan.missingFields;
+        _weeklyRoutines = <RoutineTemplateModel>[];
+        _selectedRoutine = null;
+        _sets = <WorkoutSetModel>[];
+        _geminiRationale = cloudPlan.weeklyFocus.isNotEmpty
+            ? cloudPlan.weeklyFocus
+            : 'Completa peso, estatura y sexo biológico para calcular tus cargas personalizadas.';
+        await _repository.clearCachedAiRoutinePlan();
+        return;
+      }
+
+      _requiresBiometrics = false;
+      _missingBiometricFields = <String>[];
+
+      final bool signatureMismatch = _biometricSignature != null &&
+          cloudPlan.biometricSignature != null &&
+          cloudPlan.biometricSignature != _biometricSignature;
+
+      if (forceRefresh ||
+          signatureMismatch ||
+          !cloudPlan.hasRoutine ||
+          cloudPlan.days.length < 5) {
+        _isGeneratingAiRoutine = true;
+        notifyListeners();
+        try {
+          cloudPlan = await _repository.generateAiRoutine();
+        } finally {
+          _isGeneratingAiRoutine = false;
+        }
+      }
+
+      if (cloudPlan.requiresBiometrics) {
+        _requiresBiometrics = true;
+        _missingBiometricFields = cloudPlan.missingFields;
+        _weeklyRoutines = <RoutineTemplateModel>[];
+        _selectedRoutine = null;
+        _sets = <WorkoutSetModel>[];
+        await _repository.clearCachedAiRoutinePlan();
+        return;
+      }
+
+      if (cloudPlan.hasRoutine && cloudPlan.days.isNotEmpty) {
+        _applyAiPlanToState(
+          cloudPlan,
+          resetSelection: forceRefresh || signatureMismatch,
         );
-      }
-
-      _weeklyRoutines = cachedPlan.days;
-      _aiRoutineTitle = cachedPlan.routineName;
-      _aiWeeklyFocus = cachedPlan.weeklyFocus;
-      _geminiRationale =
-          '${cachedPlan.routineName} • ${cachedPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
-
-      if (_weeklyRoutines.isNotEmpty && _selectedRoutine == null) {
-        final int todayIso = DateTime.now().weekday.clamp(1, 5);
-        RoutineTemplateModel? matchedDay;
-        for (final RoutineTemplateModel r in _weeklyRoutines) {
-          if (r.dayOfWeek == todayIso) {
-            matchedDay = r;
-            break;
-          }
-        }
-        _selectedRoutine = matchedDay ?? _weeklyRoutines.first;
-      }
-
-      _syncSetsWithSelectedRoutine();
-      _isLoadingPlan = false;
-      notifyListeners();
-
-      // 2. Consultar GET /api/v1/routines/current filtrado exclusivamente por current_user.id.
-      // Si el usuario no tiene rutina registrada en PostgreSQL, dispara automáticamente POST /api/v1/routines/generate-ai.
-      try {
-        AiGeneratedRoutinePlanModel cloudPlan =
-            await _repository.loadCurrentAiRoutine();
-        if (!cloudPlan.hasRoutine || cloudPlan.days.length < 5) {
-          _isGeneratingAiRoutine = true;
-          notifyListeners();
-          try {
-            cloudPlan = await _repository.generateAiRoutine();
-          } catch (_) {
-            cloudPlan = await _buildAndPersistLbmFiveDayPlanFallback();
-          } finally {
-            _isGeneratingAiRoutine = false;
-          }
-        }
-        if (cloudPlan.hasRoutine && cloudPlan.days.length >= 5) {
-          _weeklyRoutines = cloudPlan.days;
-          _aiRoutineTitle = cloudPlan.routineName;
-          _aiWeeklyFocus = cloudPlan.weeklyFocus;
-          _geminiRationale =
-              '${cloudPlan.routineName} • ${cloudPlan.weeklyFocus}. 5 días × 6 ejercicios con cargas reales en KG.';
-          await _repository.saveCachedAiRoutinePlan(cloudPlan);
-        } else if (!hadUserCachedPlan) {
-          await _repository.saveCachedAiRoutinePlan(cachedPlan);
-        }
-      } catch (_) {
-        if (!hadUserCachedPlan) {
-          await _repository.saveCachedAiRoutinePlan(cachedPlan);
-        }
+        await _repository.saveCachedAiRoutinePlan(cloudPlan);
       }
 
       TodayWorkoutPlanModel? plan;
@@ -541,21 +647,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       _isRolloverActive = plan?.isRollover ?? false;
       _rolloverBanner = plan?.coachRolloverBanner;
 
-      if (_weeklyRoutines.isNotEmpty) {
-        final int currentDay =
-            _selectedRoutine?.dayOfWeek ?? DateTime.now().weekday.clamp(1, 5);
-        RoutineTemplateModel? matchedDay;
-        for (final RoutineTemplateModel r in _weeklyRoutines) {
-          if (r.dayOfWeek == currentDay) {
-            matchedDay = r;
-            break;
-          }
-        }
-        _selectedRoutine = matchedDay ?? _weeklyRoutines.first;
-      } else {
-        _selectedRoutine = plan?.activeRoutine;
-      }
-
       if (plan?.activeWorkout != null) {
         _activeWorkoutId = plan!.activeWorkout!.id;
         _syncSetsWithSelectedRoutine(
@@ -565,12 +656,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
         final String? notes = plan.activeWorkout!.aiPrescriptionNotes;
         if (notes != null && notes.isNotEmpty) {
           _geminiRationale = notes;
-          if (notes.contains('Recuperación comprometida') ||
-              notes.contains('Zona Roja')) {
-            _readinessZone = 'RED_DELOAD';
-          } else if (notes.contains('Zona Verde')) {
-            _readinessZone = 'GREEN_OVERLOAD';
-          }
         }
       } else {
         _syncSetsWithSelectedRoutine();
@@ -587,7 +672,7 @@ class LiveWorkoutViewModel extends ChangeNotifier {
     }
   }
 
-  /// Dispara `POST /api/v1/routines/generate-ai` para regenerar la rutina con la biometría del usuario actual.
+  /// Dispara `POST /api/v1/routines/generate-ai` para regenerar la rutina con la biometría real del usuario actual.
   Future<void> regenerateRoutineWithAi() async {
     _isGeneratingAiRoutine = true;
     _errorMessage = null;
@@ -595,23 +680,30 @@ class LiveWorkoutViewModel extends ChangeNotifier {
 
     try {
       await _resolveUserBiometricsBaseline();
-      AiGeneratedRoutinePlanModel aiPlan;
-      try {
-        aiPlan = await _repository.generateAiRoutine();
-      } catch (_) {
-        aiPlan = await _buildAndPersistLbmFiveDayPlanFallback();
+      await _repository.clearCachedAiRoutinePlan();
+      final AiGeneratedRoutinePlanModel aiPlan =
+          await _repository.generateAiRoutine();
+
+      if (aiPlan.requiresBiometrics) {
+        _requiresBiometrics = true;
+        _missingBiometricFields = aiPlan.missingFields;
+        _weeklyRoutines = <RoutineTemplateModel>[];
+        _selectedRoutine = null;
+        _sets = <WorkoutSetModel>[];
+        _geminiRationale = aiPlan.weeklyFocus.isNotEmpty
+            ? aiPlan.weeklyFocus
+            : 'Completa peso, estatura y sexo biológico antes de generar tu rutina IA.';
+        return;
       }
+
+      _requiresBiometrics = false;
+      _missingBiometricFields = <String>[];
+
       if (aiPlan.days.isNotEmpty) {
         await _repository.saveCachedAiRoutinePlan(aiPlan);
-        _weeklyRoutines = aiPlan.days;
-        _aiRoutineTitle = aiPlan.routineName;
-        _aiWeeklyFocus = aiPlan.weeklyFocus;
         _selectedRoutine = aiPlan.days.first;
         _activeWorkoutId = 'local_session_day_${_selectedRoutine!.dayOfWeek}';
-        _sets = <WorkoutSetModel>[];
-        _syncSetsWithSelectedRoutine(resetSelection: true);
-        _geminiRationale =
-            '${aiPlan.routineName} • ${aiPlan.weeklyFocus}. Cargas recalculadas por Gemini 2.5 Flash.';
+        _applyAiPlanToState(aiPlan, resetSelection: true);
       }
     } catch (e) {
       _errorMessage = ApiErrorSanitizer.sanitizeRawErrorString(e);
@@ -619,569 +711,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       _isGeneratingAiRoutine = false;
       notifyListeners();
     }
-  }
-
-  double _roundPlate(double rawKg) {
-    return (rawKg / 2.5).round() * 2.5;
-  }
-
-  AiGeneratedRoutinePlanModel _buildInstantLocalLbmFiveDayPlan({
-    required double lbmKg,
-    required double weightKg,
-  }) {
-    final bool isFemale = _athleteGender == 'female';
-    final double strengthScale =
-        isFemale ? 0.82 : (lbmKg < 52.0 ? 0.86 : 1.0);
-    final double floorScale = (isFemale || lbmKg < 54.0) ? 0.45 : 1.0;
-
-    double scale(double coeff, double minKg) {
-      final double effectiveMin =
-          _roundPlate((minKg * floorScale) < 5.0 ? 5.0 : (minKg * floorScale));
-      final double v = lbmKg * coeff * strengthScale * 0.96;
-      return _roundPlate(v < effectiveMin ? effectiveMin : v);
-    }
-
-    final List<Map<String, dynamic>> rawDaysSpec =
-        _rawFiveDaySpec(scale: scale);
-    final List<RoutineTemplateModel> localDays = <RoutineTemplateModel>[];
-    for (final Map<String, dynamic> d in rawDaysSpec) {
-      final int dayNum = d['day'] as int;
-      final String dayName = d['name'] as String;
-      final String focus = d['focus'] as String;
-      final List<Map<String, dynamic>> exList =
-          (d['exercises'] as List<Map<String, dynamic>>);
-      final List<RoutineExerciseItemModel> localItems =
-          <RoutineExerciseItemModel>[];
-      for (int i = 0; i < exList.length; i++) {
-        final Map<String, dynamic> spec = exList[i];
-        localItems.add(
-          RoutineExerciseItemModel(
-            id: 'day_${dayNum}_ex_${i + 1}',
-            exerciseId: 'day_${dayNum}_ex_${i + 1}',
-            exerciseName: spec['exercise_name'] as String,
-            exerciseKey: spec['exercise_key'] as String,
-            muscleGroup: spec['muscle_group'] as String,
-            displayOrder: i + 1,
-            targetSets: spec['target_sets'] as int,
-            targetReps: spec['target_reps'] as int,
-            targetRepsRange: spec['target_reps_range'] as String,
-            targetWeightKg: (spec['base_weight_kg'] as num).toDouble(),
-            targetRpe: (spec['target_rpe'] as num).toDouble(),
-            restSeconds: spec['rest_seconds'] as int,
-            tempo: spec['tempo'] as String,
-            coachingCue: spec['coaching_cue'] as String,
-          ),
-        );
-      }
-      localDays.add(
-        RoutineTemplateModel(
-          id: 'local_day_$dayNum',
-          dayOfWeek: dayNum,
-          name: dayName,
-          focusGroup: focus,
-          isActive: true,
-          exercises: localItems,
-        ),
-      );
-    }
-    return AiGeneratedRoutinePlanModel(
-      hasRoutine: true,
-      routineName: 'Hipertrofia 5 Días - ${lbmKg.toStringAsFixed(2)}kg LBM',
-      weeklyFocus:
-          'Periodización biomecánica adaptada a ${lbmKg.toStringAsFixed(2)} kg LBM (${weightKg.toStringAsFixed(1)} kg)',
-      days: localDays,
-    );
-  }
-
-  Future<AiGeneratedRoutinePlanModel> _buildAndPersistLbmFiveDayPlanFallback() async {
-    await _resolveUserBiometricsBaseline();
-    final double lbmKg = _lbmKg;
-    final double weightKg = _weightKg;
-    final bool isFemale = _athleteGender == 'female';
-    final double strengthScale =
-        isFemale ? 0.82 : (lbmKg < 52.0 ? 0.86 : 1.0);
-    final double floorScale = (isFemale || lbmKg < 54.0) ? 0.45 : 1.0;
-
-    double scale(double coeff, double minKg) {
-      final double effectiveMin =
-          _roundPlate((minKg * floorScale) < 5.0 ? 5.0 : (minKg * floorScale));
-      final double v = lbmKg * coeff * strengthScale * 0.96;
-      return _roundPlate(v < effectiveMin ? effectiveMin : v);
-    }
-
-    final List<Map<String, dynamic>> rawDaysSpec =
-        _rawFiveDaySpec(scale: scale);
-    final AiGeneratedRoutinePlanModel instantPlan =
-        _buildInstantLocalLbmFiveDayPlan(lbmKg: lbmKg, weightKg: weightKg);
-    await _repository.saveCachedAiRoutinePlan(instantPlan);
-
-    // Sincronizar plantillas al servidor en segundo plano sin bloquear la UI
-    unawaited(
-      Future<void>(() async {
-        for (final Map<String, dynamic> d in rawDaysSpec) {
-          try {
-            final int dayNum = d['day'] as int;
-            final String dayName = d['name'] as String;
-            final String focus = d['focus'] as String;
-            final List<Map<String, dynamic>> exList =
-                (d['exercises'] as List<Map<String, dynamic>>);
-            await _repository.saveRoutineForDay(
-              dayOfWeek: dayNum,
-              name: dayName,
-              focusGroup: focus,
-              exercises: exList
-                  .map(
-                    (Map<String, dynamic> ex) => <String, dynamic>{
-                      'exercise_name': ex['exercise_name'],
-                      'muscle_group': ex['muscle_group'],
-                      'category': 'hipertrofia',
-                      'target_sets': ex['target_sets'],
-                      'target_reps': ex['target_reps'],
-                      'base_weight_kg': ex['base_weight_kg'],
-                      'target_rpe': ex['target_rpe'],
-                    },
-                  )
-                  .toList(),
-            );
-          } catch (_) {}
-        }
-      }),
-    );
-
-    return instantPlan;
-  }
-
-  List<Map<String, dynamic>> _rawFiveDaySpec({
-    required double Function(double coeff, double minKg) scale,
-  }) {
-    final List<Map<String, dynamic>> rawDaysSpec = <Map<String, dynamic>>[
-      <String, dynamic>{
-        'day': 1,
-        'name': 'Día 1: Empuje (Pecho & Tríceps)',
-        'focus': 'Pectoral • Tríceps',
-        'exercises': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'exercise_name': 'Press de Banca Plano con Barra',
-            'exercise_key': 'bench_press_barbell',
-            'muscle_group': 'Pectoral',
-            'target_sets': 4,
-            'target_reps': 8,
-            'target_reps_range': '6-8',
-            'base_weight_kg': scale(1.04, 40.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 120,
-            'tempo': '3-0-1-0',
-            'coaching_cue': 'Retracción escapular activa y codos a 45°',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Press Inclinado con Mancuernas (30°)',
-            'exercise_key': 'incline_dumbbell_press',
-            'muscle_group': 'Pectoral',
-            'target_sets': 4,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.38, 17.5),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-1-1-0',
-            'coaching_cue': 'Pausa de 1s en estiramiento pectoral',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Fondos en Paralelas / Cruce en Polea',
-            'exercise_key': 'chest_dip_weighted',
-            'muscle_group': 'Pectoral',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.45, 22.5),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Torso inclinado 20° al frente',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Press Francés con Barra EZ',
-            'exercise_key': 'tricep_french_press',
-            'muscle_group': 'Tríceps',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.48, 22.5),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-0',
-            'coaching_cue': 'Húmeros fijos en ligera flexión',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Extensión de Tríceps en Polea con Cuerda',
-            'exercise_key': 'tricep_rope_pushdown',
-            'muscle_group': 'Tríceps',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(0.40, 20.0),
-            'target_rpe': 8.5,
-            'rest_seconds': 75,
-            'tempo': '2-0-1-1',
-            'coaching_cue': 'Bloquea codos junto al torso y abre la cuerda',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Extensión Overhead en Polea (Cabeza Larga)',
-            'exercise_key': 'overhead_tricep_extension',
-            'muscle_group': 'Tríceps',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.36, 17.5),
-            'target_rpe': 8.5,
-            'rest_seconds': 75,
-            'tempo': '3-1-1-0',
-            'coaching_cue': 'Máximo estiramiento de la cabeza larga del tríceps',
-          },
-        ],
-      },
-      <String, dynamic>{
-        'day': 2,
-        'name': 'Día 2: Tracción (Espalda & Bíceps)',
-        'focus': 'Dorsal • Bíceps',
-        'exercises': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'exercise_name': 'Remo con Barra Prono (Pendlay Row)',
-            'exercise_key': 'barbell_row',
-            'muscle_group': 'Dorsal',
-            'target_sets': 4,
-            'target_reps': 8,
-            'target_reps_range': '6-8',
-            'base_weight_kg': scale(1.00, 42.5),
-            'target_rpe': 8.0,
-            'rest_seconds': 120,
-            'tempo': '2-0-1-1',
-            'coaching_cue': 'Torso a 45° estable, tracciona hacia el abdomen',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Jalón al Pecho Prono Ancho',
-            'exercise_key': 'lat_pulldown',
-            'muscle_group': 'Dorsal',
-            'target_sets': 4,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.92, 40.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Depresión escapular antes de flexionar codos',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Remo en Polea Baja Agarre Neutro',
-            'exercise_key': 'seated_cable_row',
-            'muscle_group': 'Dorsal',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(0.88, 37.5),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Aprieta romboides 1 segundo en máxima contracción',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Curl de Bíceps con Barra Recta',
-            'exercise_key': 'bicep_curl_barbell',
-            'muscle_group': 'Bíceps',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.46, 20.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 75,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Codos fijos a las costillas sin balancear torso',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Curl Inclinado con Mancuernas',
-            'exercise_key': 'incline_dumbbell_curl',
-            'muscle_group': 'Bíceps',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(0.20, 10.0),
-            'target_rpe': 8.5,
-            'rest_seconds': 75,
-            'tempo': '3-1-1-0',
-            'coaching_cue': 'Hombros en extensión y supinación completa al subir',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Curl Martillo Cruzado (Braquiorradial)',
-            'exercise_key': 'hammer_curl_dumbbell',
-            'muscle_group': 'Bíceps',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(0.24, 12.5),
-            'target_rpe': 8.5,
-            'rest_seconds': 60,
-            'tempo': '2-0-1-1',
-            'coaching_cue': 'Agarre neutro firme y descenso controlado en 2s',
-          },
-        ],
-      },
-      <String, dynamic>{
-        'day': 3,
-        'name': 'Día 3: Tren Inferior A (Cuádriceps & Gemelos)',
-        'focus': 'Cuádriceps • Gemelos',
-        'exercises': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'exercise_name': 'Sentadilla Libre con Barra (Back Squat)',
-            'exercise_key': 'squat_barbell',
-            'muscle_group': 'Cuádriceps',
-            'target_sets': 4,
-            'target_reps': 8,
-            'target_reps_range': '6-8',
-            'base_weight_kg': scale(1.28, 55.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 150,
-            'tempo': '3-1-1-0',
-            'coaching_cue': 'Bracing 360° y rodillas alineadas con punteras',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Prensa Inclinada 45° Profunda',
-            'exercise_key': 'leg_press',
-            'muscle_group': 'Cuádriceps',
-            'target_sets': 4,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(2.20, 100.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 120,
-            'tempo': '3-0-1-0',
-            'coaching_cue': 'Sacro pegado al respaldo y flexión >95°',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Zancadas Búlgaras con Mancuernas',
-            'exercise_key': 'bulgarian_split_squat',
-            'muscle_group': 'Cuádriceps',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.32, 15.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-1-1-0',
-            'coaching_cue': 'Empuja con toda la planta del pie delantero',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Extensión de Cuádriceps en Máquina',
-            'exercise_key': 'leg_extension',
-            'muscle_group': 'Cuádriceps',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.82, 35.0),
-            'target_rpe': 8.5,
-            'rest_seconds': 75,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Sostén 1s arriba exprimiendo el vasto medial',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Elevación de Talones de Pie en Máquina',
-            'exercise_key': 'standing_calf_raise',
-            'muscle_group': 'Gemelos',
-            'target_sets': 4,
-            'target_reps': 12,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(1.15, 50.0),
-            'target_rpe': 8.5,
-            'rest_seconds': 60,
-            'tempo': '2-2-1-1',
-            'coaching_cue': 'Pausa de 2s en dorsiflexión profunda',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Elevación de Talones Sentado (Sóleo)',
-            'exercise_key': 'seated_calf_raise',
-            'muscle_group': 'Gemelos',
-            'target_sets': 3,
-            'target_reps': 15,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.75, 32.5),
-            'target_rpe': 8.5,
-            'rest_seconds': 60,
-            'tempo': '3-1-1-1',
-            'coaching_cue': 'Rango completo sobre el metatarso',
-          },
-        ],
-      },
-      <String, dynamic>{
-        'day': 4,
-        'name': 'Día 4: Hombros & Trapecio / Core',
-        'focus': 'Deltoides • Trapecio',
-        'exercises': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'exercise_name': 'Press Militar Overhead con Barra (OHP)',
-            'exercise_key': 'overhead_press',
-            'muscle_group': 'Deltoides',
-            'target_sets': 4,
-            'target_reps': 8,
-            'target_reps_range': '6-8',
-            'base_weight_kg': scale(0.68, 30.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 120,
-            'tempo': '2-0-1-1',
-            'coaching_cue': 'Glúteos y abdomen firmes, antebrazos verticales',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Elevaciones Laterales en Plano Escapular',
-            'exercise_key': 'lateral_raise',
-            'muscle_group': 'Deltoides',
-            'target_sets': 4,
-            'target_reps': 12,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.18, 10.0),
-            'target_rpe': 8.5,
-            'rest_seconds': 75,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Eleva a 30° en plano escapular guiando con codos',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Face Pull / Pájaros en Polea',
-            'exercise_key': 'rear_delt_fly',
-            'muscle_group': 'Deltoides',
-            'target_sets': 3,
-            'target_reps': 15,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.38, 15.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 75,
-            'tempo': '2-0-1-1',
-            'coaching_cue': 'Tracciona hacia la frente con rotación externa',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Press de Hombros Sentado con Mancuernas',
-            'exercise_key': 'seated_dumbbell_shoulder_press',
-            'muscle_group': 'Deltoides',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(0.34, 15.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-0',
-            'coaching_cue': 'Desciende hasta la línea de las orejas',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Encogimientos con Barra (Trapecio)',
-            'exercise_key': 'barbell_shrug',
-            'muscle_group': 'Trapecio',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(1.20, 50.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 75,
-            'tempo': '2-0-1-2',
-            'coaching_cue': 'Sostén 2 segundos arriba en contracción máxima',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Elevación Lateral Unilateral en Polea',
-            'exercise_key': 'cable_lateral_raise',
-            'muscle_group': 'Deltoides',
-            'target_sets': 3,
-            'target_reps': 15,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.16, 7.5),
-            'target_rpe': 8.5,
-            'rest_seconds': 60,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Tensión constante desde los primeros 15°',
-          },
-        ],
-      },
-      <String, dynamic>{
-        'day': 5,
-        'name': 'Día 5: Tren Inferior B (Cadena Posterior & Glúteo)',
-        'focus': 'Isquiosurales • Glúteo',
-        'exercises': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'exercise_name': 'Peso Muerto Rumano con Barra (RDL)',
-            'exercise_key': 'deadlift_barbell',
-            'muscle_group': 'Isquiosurales',
-            'target_sets': 4,
-            'target_reps': 8,
-            'target_reps_range': '6-8',
-            'base_weight_kg': scale(1.32, 55.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 150,
-            'tempo': '3-1-1-0',
-            'coaching_cue': 'Barra pegada a los muslos y bisagra de cadera',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Hip Thrust Pesado con Barra',
-            'exercise_key': 'hip_thrust',
-            'muscle_group': 'Glúteo',
-            'target_sets': 4,
-            'target_reps': 10,
-            'target_reps_range': '8-10',
-            'base_weight_kg': scale(1.55, 65.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 120,
-            'tempo': '2-0-1-2',
-            'coaching_cue': 'Mentón recogido y retroversión pélvica 2s arriba',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Curl Femoral Sentado / Tumbado',
-            'exercise_key': 'seated_leg_curl',
-            'muscle_group': 'Isquiosurales',
-            'target_sets': 4,
-            'target_reps': 12,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(0.76, 35.0),
-            'target_rpe': 8.5,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-1',
-            'coaching_cue': 'Dorsiflexión activa y excéntrica de 3 segundos',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Zancadas Caminando Largas (Glúteo)',
-            'exercise_key': 'lunge_dumbbell',
-            'muscle_group': 'Glúteo',
-            'target_sets': 3,
-            'target_reps': 10,
-            'target_reps_range': '10-12',
-            'base_weight_kg': scale(0.32, 15.0),
-            'target_rpe': 8.0,
-            'rest_seconds': 90,
-            'tempo': '3-0-1-0',
-            'coaching_cue': 'Zancada larga e inclinación de 15° en el torso',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Extensión de Cadera 45° Lastrada',
-            'exercise_key': 'hyperextension_weighted',
-            'muscle_group': 'Glúteo',
-            'target_sets': 3,
-            'target_reps': 12,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.28, 12.5),
-            'target_rpe': 8.0,
-            'rest_seconds': 75,
-            'tempo': '2-0-1-1',
-            'coaching_cue': 'Aísla glúteo e isquios sin hiperextender lumbar',
-          },
-          <String, dynamic>{
-            'exercise_name': 'Prensa de Gemelos / Abducción de Cadera',
-            'exercise_key': 'calf_press_leg_press',
-            'muscle_group': 'Glúteo',
-            'target_sets': 3,
-            'target_reps': 15,
-            'target_reps_range': '12-15',
-            'base_weight_kg': scale(0.95, 42.5),
-            'target_rpe': 8.5,
-            'rest_seconds': 60,
-            'tempo': '3-1-1-1',
-            'coaching_cue': 'Control total en ambos extremos del rango',
-          },
-        ],
-      },
-    ];
-    return rawDaysSpec;
   }
 
   void selectRoutineTemplate(RoutineTemplateModel routine) {
@@ -1217,14 +746,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       final String? notes = session.aiPrescriptionNotes;
       if (notes != null && notes.isNotEmpty) {
         _geminiRationale = notes;
-        if (notes.contains('Recuperación comprometida') ||
-            notes.contains('Zona Roja')) {
-          _readinessZone = 'RED_DELOAD';
-        } else if (notes.contains('Zona Verde')) {
-          _readinessZone = 'GREEN_OVERLOAD';
-        } else {
-          _readinessZone = 'YELLOW_MAINTENANCE';
-        }
       } else {
         _geminiRationale =
             'Sesión "${routine.name}" iniciada con sobrecarga progresiva semanal calculada desde PostgreSQL.';
@@ -1289,24 +810,13 @@ class LiveWorkoutViewModel extends ChangeNotifier {
   void _startRestCountdown(int seconds) {
     _restTimer?.cancel();
     _remainingRestSeconds = seconds;
-    if (!isBleConnected) {
-      _liveHeartRate = 154;
-    }
     notifyListeners();
 
     _restTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       if (_remainingRestSeconds <= 0) {
         timer.cancel();
-        if (!isBleConnected) {
-          _liveHeartRate = 114;
-        }
       } else {
         _remainingRestSeconds--;
-        if (!isBleConnected &&
-            _liveHeartRate > 112 &&
-            _remainingRestSeconds % 4 == 0) {
-          _liveHeartRate--;
-        }
       }
       notifyListeners();
     });
@@ -1327,7 +837,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       (actualWeightKg * (1.0 + (actualReps / 30.0))).toStringAsFixed(1),
     );
 
-    // 1. Actualización local inmediata sobre el ejercicio actualmente seleccionado (sin bloqueos)
     _sets = _sets.map((WorkoutSetModel s) {
       if (s.id == targetSet.id) {
         return s.copyWith(
@@ -1341,7 +850,6 @@ class LiveWorkoutViewModel extends ChangeNotifier {
       return s;
     }).toList();
 
-    // Avanza a la siguiente serie pendiente del MISMO ejercicio seleccionado
     final List<WorkoutSetModel> currentExSets =
         setsForExercise(_selectedExerciseIndex);
     WorkoutSetModel? nextPendingInSameEx;

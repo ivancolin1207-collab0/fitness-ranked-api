@@ -17,7 +17,7 @@ class PrescribedSetModel {
     return PrescribedSetModel(
       setNumber: (json['set_number'] as num?)?.toInt() ?? 1,
       prescribedWeightKg:
-          (json['prescribed_weight_kg'] as num?)?.toDouble() ?? 60.0,
+          (json['prescribed_weight_kg'] as num?)?.toDouble() ?? 0.0,
       prescribedReps: (json['prescribed_reps'] as num?)?.toInt() ?? 8,
       prescribedRpe: (json['prescribed_rpe'] as num?)?.toDouble() ?? 8.0,
       restSeconds: (json['rest_seconds'] as num?)?.toInt() ?? 150,
@@ -150,7 +150,7 @@ class WorkoutSetModel {
       exerciseKey:
           (json['exercise_key'] as String?) ?? 'bench_press_barbell',
       setNumber: (json['set_number'] as num?)?.toInt() ?? 1,
-      prescribedWeightKg: rawPrescribedWeight?.toDouble() ?? 60.0,
+      prescribedWeightKg: rawPrescribedWeight?.toDouble() ?? 0.0,
       prescribedReps: (json['prescribed_reps'] as num?)?.toInt() ?? 8,
       prescribedRpe: (json['prescribed_rpe'] as num?)?.toDouble() ?? 8.0,
       restSeconds: (json['rest_seconds'] as num?)?.toInt() ?? 90,
@@ -241,7 +241,7 @@ class RoutineExerciseItemModel {
       targetSets: (json['target_sets'] as num?)?.toInt() ?? 4,
       targetReps: parsedReps,
       targetRepsRange: repsRange,
-      targetWeightKg: weightNum?.toDouble() ?? 60.0,
+      targetWeightKg: weightNum?.toDouble() ?? 0.0,
       targetRpe:
           ((json['target_rpe'] ?? json['rpe_target']) as num?)?.toDouble() ??
               8.0,
@@ -373,12 +373,30 @@ class RoutineTemplateModel {
 
 class AiGeneratedRoutinePlanModel {
   final bool hasRoutine;
+  final bool requiresBiometrics;
+  final List<String> missingFields;
+  final String? biometricSignature;
+  final String? sex;
+  final double? weightKg;
+  final double? heightCm;
+  final double? bodyFatPct;
+  final double? lbmKg;
+  final double? recoveryScore;
   final String routineName;
   final String weeklyFocus;
   final List<RoutineTemplateModel> days;
 
   const AiGeneratedRoutinePlanModel({
     required this.hasRoutine,
+    this.requiresBiometrics = false,
+    this.missingFields = const <String>[],
+    this.biometricSignature,
+    this.sex,
+    this.weightKg,
+    this.heightCm,
+    this.bodyFatPct,
+    this.lbmKg,
+    this.recoveryScore,
     required this.routineName,
     required this.weeklyFocus,
     required this.days,
@@ -394,10 +412,30 @@ class AiGeneratedRoutinePlanModel {
         .whereType<Map<String, dynamic>>()
         .map(RoutineTemplateModel.fromJson)
         .toList();
+    final List<dynamic> rawMissing = (root['missing_fields'] ??
+            json['missing_fields']) as List<dynamic>? ??
+        <dynamic>[];
+    final bool requiresBio =
+        (root['requires_biometrics'] as bool?) ??
+            (json['requires_biometrics'] as bool?) ??
+            false;
     final bool hasRoutineFlag =
         (root['has_routine'] as bool?) ?? parsedDays.isNotEmpty;
     return AiGeneratedRoutinePlanModel(
       hasRoutine: hasRoutineFlag && parsedDays.isNotEmpty,
+      requiresBiometrics: requiresBio,
+      missingFields: rawMissing.map((dynamic e) => e.toString()).toList(),
+      biometricSignature: (root['biometric_signature'] as String?) ??
+          (json['biometric_signature'] as String?),
+      sex: (root['sex'] as String?) ?? (json['sex'] as String?),
+      weightKg: ((root['weight_kg'] ?? json['weight_kg']) as num?)?.toDouble(),
+      heightCm: ((root['height_cm'] ?? json['height_cm']) as num?)?.toDouble(),
+      bodyFatPct:
+          ((root['body_fat_pct'] ?? json['body_fat_pct']) as num?)?.toDouble(),
+      lbmKg: ((root['lbm_kg'] ?? json['lbm_kg']) as num?)?.toDouble(),
+      recoveryScore:
+          ((root['recovery_score'] ?? json['recovery_score']) as num?)
+              ?.toDouble(),
       routineName: (root['routine_name'] as String?) ??
           'Hipertrofia Adaptativa Personalizada (Gemini IA)',
       weeklyFocus: (root['weekly_focus'] as String?) ??
@@ -409,6 +447,15 @@ class AiGeneratedRoutinePlanModel {
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'has_routine': hasRoutine,
+      'requires_biometrics': requiresBiometrics,
+      'missing_fields': missingFields,
+      if (biometricSignature != null) 'biometric_signature': biometricSignature,
+      if (sex != null) 'sex': sex,
+      if (weightKg != null) 'weight_kg': weightKg,
+      if (heightCm != null) 'height_cm': heightCm,
+      if (bodyFatPct != null) 'body_fat_pct': bodyFatPct,
+      if (lbmKg != null) 'lbm_kg': lbmKg,
+      if (recoveryScore != null) 'recovery_score': recoveryScore,
       'routine_name': routineName,
       'weekly_focus': weeklyFocus,
       'days': days.map((RoutineTemplateModel d) => d.toJson()).toList(),

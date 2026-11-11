@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../data/models/auth_models.dart';
 import '../../../../data/models/biometric_models.dart';
 import '../../../../data/repositories/fitness_repository.dart';
 import '../../../../data/services/health_connect_service.dart';
@@ -23,39 +24,46 @@ class HomeViewModel extends ChangeNotifier {
   WearableMetricRecord? _wearable;
   WearableMetricRecord? get wearable => _wearable;
 
-  bool hasWhoopData = true;
-  double recoveryScore = 47.0;
-  double strainScore = 7.4;
-  double sleepPct = 80.0;
-  double stressScore = 1.8;
-  String stressCategory = 'MEDIO';
-  double sleepHours = 7.7;
+  bool hasWhoopData = false;
+  double? recoveryScore;
+  double? strainScore;
+  double? sleepPct;
+  double? stressScore;
+  String? stressCategory;
+  double? sleepHours;
 
-  double? recovery = 47.0;
-  double? strain = 7.4;
-  double? sleep = 80.0;
-  double? stress = 1.8;
+  double? recovery;
+  double? strain;
+  double? sleep;
+  double? stress;
 
-  double? whoopRecovery = 47.0;
-  double? whoopStrain = 7.4;
-  double? whoopSleep = 80.0;
-  double? whoopStress = 1.8;
-  String? whoopStressCategory = 'MEDIO';
-  double? whoopSleepHours = 7.7;
+  double? whoopRecovery;
+  double? whoopStrain;
+  double? whoopSleep;
+  double? whoopStress;
+  String? whoopStressCategory;
+  double? whoopSleepHours;
 
-  /// Recuperación efectiva actual (fuente única de verdad para el semáforo de Whoop).
-  double get effectiveRecovery => whoopRecovery ?? recoveryScore;
+  /// Recuperación efectiva real hoy (`null` si el usuario no ha sincronizado su banda hoy).
+  double? get effectiveRecovery {
+    if (!hasWhoopData) {
+      return null;
+    }
+    return whoopRecovery ?? recoveryScore ?? _wearable?.recoveryScore;
+  }
 
   /// Semáforo dinámico de Whoop recalculado en cada cambio de `whoopRecovery`.
   Color get recoveryColor {
-    final double rec = effectiveRecovery;
+    final double? rec = effectiveRecovery;
+    if (rec == null) return const Color(0xFF6B7280); // SIN SINCRONIZAR HOY
     if (rec >= 67.0) return const Color(0xFF10B981); // VERDE ÓPTIMO
     if (rec >= 34.0) return const Color(0xFFF59E0B); // AMARILLO MANTENIMIENTO
     return const Color(0xFFEF4444); // ROJO RECUPERACIÓN BAJA
   }
 
   String get recoveryStatusText {
-    final double rec = effectiveRecovery;
+    final double? rec = effectiveRecovery;
+    if (rec == null) return 'SIN SINCRONIZAR HOY';
     if (rec >= 67.0) return 'ZONA VERDE • RENDIMIENTO ÓPTIMO';
     if (rec >= 34.0) return 'ZONA AMARILLA • MANTENIMIENTO';
     return 'ZONA ROJA • DESCANSO ACTIVO';
@@ -99,9 +107,30 @@ class HomeViewModel extends ChangeNotifier {
   String? _statusBanner;
   String? get statusBanner => _statusBanner;
 
-  /// Purga el estado en memoria de biometría, hidratación y telemetría al cambiar de usuario.
-  void resetForUserSwitch() {
+  void _clearWearableMetricsInMemory() {
     _wearable = null;
+    hasWhoopData = false;
+    recoveryScore = null;
+    strainScore = null;
+    sleepPct = null;
+    stressScore = null;
+    stressCategory = null;
+    sleepHours = null;
+    recovery = null;
+    strain = null;
+    sleep = null;
+    stress = null;
+    whoopRecovery = null;
+    whoopStrain = null;
+    whoopSleep = null;
+    whoopStress = null;
+    whoopStressCategory = null;
+    whoopSleepHours = null;
+  }
+
+  /// Purga el estado en memoria de biometría, hidratación y telemetría al cambiar de usuario o cerrar sesión.
+  void resetForUserSwitch() {
+    _clearWearableMetricsInMemory();
     _biometrics = null;
     _biometricsHistory = <BiometricRecord>[];
     _hydration = null;
@@ -117,27 +146,24 @@ class HomeViewModel extends ChangeNotifier {
       _unitSystem = await _repository.getPreferredUnitSystem();
       _preferredWearable = await _repository.getPreferredWearable();
 
-      // 1. Carga local instantánea (0ms) desde SharedPreferences para pintar los 3 diales de Whoop de inmediato
-      final WearableMetricRecord cachedWearable =
-          await _repository.readCachedWearableTelemetry(
-        defaultSource: _preferredWearable,
-      );
-      _wearable = cachedWearable;
-      setMetrics(cachedWearable);
+      // 1. Carga local aislada por usuario y día (`readiness_${uid}_${today}`)
+      final WearableMetricRecord? cachedWearable =
+          await _repository.readCachedWearableTelemetry();
+      if (cachedWearable != null) {
+        _wearable = cachedWearable;
+        setMetrics(cachedWearable, persistToCache: false);
+      } else {
+        _clearWearableMetricsInMemory();
+      }
 
       final BiometricRecord? cachedBio =
           await _repository.readCachedBiometrics();
-      if (cachedBio != null &&
-          !(cachedBio.weightKg == 78.4 &&
-              (cachedBio.fatPercentage == 14.6 ||
-                  cachedBio.fatPercentage == 14.8))) {
-        _biometrics = cachedBio;
-      }
+      _biometrics = cachedBio;
 
       _isLoading = false;
       notifyListeners();
 
-      // 2. Sincronización asíncrona no bloqueante con la nube (Render)
+      // 2. Sincronización asíncrona no bloqueante con PostgreSQL (Render)
       final List<Object?> results = await Future.wait<Object?>(<Future<Object?>>[
         _repository
             .syncTodayWearableData(sourceDevice: _preferredWearable)
@@ -146,41 +172,33 @@ class HomeViewModel extends ChangeNotifier {
         _repository
             .loadBiometricsHistory()
             .catchError((_) => <BiometricRecord>[]),
+        _repository.getCurrentUserProfileCache().catchError((_) => null),
       ]);
 
       final WearableMetricRecord? loadedWearable =
           results[0] as WearableMetricRecord?;
-      if (loadedWearable != null &&
-          !(loadedWearable.recoveryScore.round() == 62 &&
-              loadedWearable.sleepEfficiencyPct.round() == 90 &&
-              loadedWearable.restingHr == 62)) {
+      if (loadedWearable != null) {
         _wearable = loadedWearable;
         setMetrics(loadedWearable);
       }
 
       final BiometricRecord? loadedBio = results[1] as BiometricRecord?;
-      if (loadedBio != null &&
-          !(loadedBio.weightKg == 78.4 &&
-              (loadedBio.fatPercentage == 14.6 ||
-                  loadedBio.fatPercentage == 14.8))) {
+      if (loadedBio != null) {
         _biometrics = loadedBio;
       }
 
       final List<BiometricRecord> historyList =
-          ((results[2] as List<BiometricRecord>?) ?? <BiometricRecord>[])
-              .where(
-                (BiometricRecord b) =>
-                    !(b.weightKg == 78.4 &&
-                        (b.fatPercentage == 14.6 || b.fatPercentage == 14.8)),
-              )
-              .toList();
-      if (historyList.isNotEmpty) {
-        _biometricsHistory = historyList;
-      }
+          (results[2] as List<BiometricRecord>?) ?? <BiometricRecord>[];
+      _biometricsHistory = historyList;
+
+      final UserProfileModel? profile = results[3] as UserProfileModel?;
+      final double? realWeight = _biometrics?.weightKg ?? profile?.weightKg;
+      final double? realStrain =
+          hasWhoopData ? (_wearable?.strainScore ?? strainScore) : null;
 
       _hydration = await _repository.loadTodayHydration(
-        weightKg: _biometrics?.weightKg ?? 92.4,
-        strainScore: _wearable?.strainScore ?? 7.4,
+        weightKg: realWeight,
+        strainScore: realStrain,
       );
     } catch (e) {
       final String clean = ApiErrorSanitizer.sanitizeRawErrorString(e);
@@ -220,9 +238,9 @@ class HomeViewModel extends ChangeNotifier {
           await _repository.forcePollHealthConnectAndSync(
         sourceDevice: _preferredWearable,
       );
-      _wearable = result.record;
-      if (_wearable != null) {
-        setMetrics(_wearable!);
+      if (result.record != null) {
+        _wearable = result.record;
+        setMetrics(result.record!);
       }
       _statusBanner = result.statusMessage;
     } catch (e) {
@@ -257,8 +275,9 @@ class HomeViewModel extends ChangeNotifier {
         appleStandHours: record.appleStandHours,
       );
       setMetrics(_wearable!);
-      final bool isLowReadiness = _wearable!.recoveryScore < 40.0 ||
-          _wearable!.sleepEfficiencyPct < 70.0 ||
+      final bool isLowReadiness = _wearable!.recoveryScore < 34.0 ||
+          (_wearable!.sleepEfficiencyPct > 0 &&
+              _wearable!.sleepEfficiencyPct < 70.0) ||
           (_preferredWearable == 'WHOOP' && _wearable!.whoopStressLevel >= 2.0);
       _statusBanner = isLowReadiness
           ? 'Recuperación comprometida (${_wearable!.recoveryScore.toStringAsFixed(0)}%) y estrés elevado. Redujimos el volumen prescrito para evitar fatiga del SNC.'
@@ -281,16 +300,23 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   /// Actualiza de forma reactiva las métricas del wearable activo y notifica a la UI.
-  void setMetrics(WearableMetricRecord updated) {
+  void setMetrics(
+    WearableMetricRecord updated, {
+    bool persistToCache = true,
+  }) {
     hasWhoopData = true;
     recoveryScore = updated.recoveryScore;
     strainScore = updated.strainScore;
     sleepPct = updated.sleepEfficiencyPct;
     stressScore = updated.whoopStressLevel;
     sleepHours = updated.sleepHours;
-    stressCategory = updated.whoopStressLevel >= 2.0
-        ? 'ALTO'
-        : (updated.whoopStressLevel >= 1.0 ? 'MEDIO' : 'BAJO');
+    final String resolvedCategory = (updated.stressCategory != null &&
+            updated.stressCategory!.trim().isNotEmpty)
+        ? updated.stressCategory!.trim().toUpperCase()
+        : (updated.whoopStressLevel >= 2.0
+            ? 'ALTO'
+            : (updated.whoopStressLevel >= 1.0 ? 'MEDIO' : 'BAJO'));
+    stressCategory = resolvedCategory;
 
     recovery = updated.recoveryScore;
     strain = updated.strainScore;
@@ -301,14 +327,16 @@ class HomeViewModel extends ChangeNotifier {
     whoopSleep = updated.sleepEfficiencyPct;
     whoopStress = updated.whoopStressLevel;
     whoopSleepHours = updated.sleepHours;
-    whoopStressCategory = stressCategory;
+    whoopStressCategory = resolvedCategory;
     _wearable = updated;
-    unawaited(_repository.saveCachedWearableTelemetry(updated));
+    if (persistToCache) {
+      unawaited(_repository.saveCachedWearableTelemetry(updated));
+    }
     notifyListeners();
   }
 
   /// Asigna directamente los datos extraídos del escaneo de WHOOP al ViewModel,
-  /// activa `hasWhoopData = true` y dispara `notifyListeners()` para reconstruir la UI al instante.
+  /// activa `hasWhoopData = true`, persiste en `readiness_${userId}_${today}` y dispara `notifyListeners()`.
   void setWhoopData({
     required bool hasData,
     required double recovery,
@@ -324,7 +352,9 @@ class HomeViewModel extends ChangeNotifier {
   }) {
     final String cleanCat = stressCategory.trim().isNotEmpty
         ? stressCategory.trim().toUpperCase()
-        : (stressLevel >= 2.0 ? 'ALTO' : (stressLevel >= 1.0 ? 'MEDIO' : 'BAJO'));
+        : (stressLevel >= 2.0
+            ? 'ALTO'
+            : (stressLevel >= 1.0 ? 'MEDIO' : 'BAJO'));
 
     hasWhoopData = hasData;
     recoveryScore = recovery;
@@ -351,25 +381,29 @@ class HomeViewModel extends ChangeNotifier {
         WearableMetricRecord(
           date: now,
           sourceDevice: sourceDevice ?? _preferredWearable,
-          hrvMs: (hrvMs ?? 56).toDouble(),
-          restingHr: restingHr ?? 58,
-          avgHr: 68,
-          maxHr: 155,
+          hrvMs: (hrvMs ?? 0).toDouble(),
+          restingHr: restingHr ?? 0,
+          avgHr: 0,
+          maxHr: 0,
           sleepHours: sleepHours,
           sleepEfficiencyPct: sleep,
           strainScore: strain,
           recoveryScore: recovery,
           whoopStressLevel: stressLevel,
-          whoopHealthMetricsInRange: healthMetricsInRange ?? 5,
+          stressCategory: cleanCat,
+          whoopHealthMetricsInRange: healthMetricsInRange ?? 0,
         );
 
     _wearable = base.copyWith(
       sourceDevice: sourceDevice ?? _preferredWearable,
+      hrvMs: hrvMs != null ? hrvMs.toDouble() : base.hrvMs,
+      restingHr: restingHr ?? base.restingHr,
       sleepEfficiencyPct: sleep,
       sleepHours: sleepHours,
       recoveryScore: recovery,
       strainScore: strain,
       whoopStressLevel: stressLevel,
+      stressCategory: cleanCat,
       whoopHealthMetricsInRange:
           healthMetricsInRange ?? base.whoopHealthMetricsInRange,
     );
@@ -397,11 +431,9 @@ class HomeViewModel extends ChangeNotifier {
     String? sourceDevice,
   }) {
     final double resolvedStress =
-        stressScore ?? whoopStress ?? _wearable?.whoopStressLevel ?? 1.8;
-    final double resolvedSleepHours = sleepHours ??
-        whoopSleepHours ??
-        _wearable?.sleepHours ??
-        double.parse((sleepScore * 0.09625).toStringAsFixed(1));
+        stressScore ?? whoopStress ?? _wearable?.whoopStressLevel ?? 0.0;
+    final double resolvedSleepHours =
+        sleepHours ?? whoopSleepHours ?? _wearable?.sleepHours ?? 0.0;
     final String resolvedCategory =
         (stressCategory != null && stressCategory.trim().isNotEmpty)
             ? stressCategory.trim().toUpperCase()
@@ -424,8 +456,8 @@ class HomeViewModel extends ChangeNotifier {
     );
   }
 
-  /// Sobrescribe de inmediato TODAS las variables en memoria (y la caché local por usuario)
-  /// con la respuesta del escáner (`{status, data:{...}}` o JSON plano) y notifica a la UI.
+  /// Sobrescribe de inmediato TODAS las variables en memoria y `readiness_${userId}_${today}`
+  /// con la respuesta JSON de Gemini Vision (`{status, data:{...}}` o JSON plano).
   void applyScanResponse(
     Map<String, dynamic> response, {
     String? sourceDevice,
@@ -434,7 +466,7 @@ class HomeViewModel extends ChangeNotifier {
         ? Map<String, dynamic>.from(response['data'] as Map)
         : response;
 
-    double num0(List<String> keys, double fallback) {
+    double? tryNum(List<String> keys) {
       for (final String k in keys) {
         final Object? v = data[k] ?? response[k];
         if (v is num) {
@@ -447,28 +479,35 @@ class HomeViewModel extends ChangeNotifier {
           }
         }
       }
-      return fallback;
+      return null;
     }
 
-    final double rec = num0(<String>['recovery_score'], whoopRecovery ?? recoveryScore);
-    final double str = num0(<String>['strain_score'], whoopStrain ?? strainScore);
-    final double slp = num0(
-      <String>['sleep_pct', 'sleep_performance_pct', 'sleep_efficiency_pct'],
-      whoopSleep ?? sleepPct,
-    );
-    final double stl = num0(
-      <String>['stress_level', 'whoop_stress_level'],
-      whoopStress ?? stressScore,
-    );
-    final double slh = num0(<String>['sleep_hours'], whoopSleepHours ?? sleepHours);
-    final String? cat = (data['stress_category'] ?? response['stress_category']) as String?;
+    final double rec =
+        tryNum(<String>['recovery_score']) ?? whoopRecovery ?? 0.0;
+    final double str =
+        tryNum(<String>['strain_score']) ?? whoopStrain ?? 0.0;
+    final double slp = tryNum(<String>[
+          'sleep_pct',
+          'sleep_performance_pct',
+          'sleep_efficiency_pct',
+        ]) ??
+        whoopSleep ??
+        0.0;
+    final double stl =
+        tryNum(<String>['stress_level', 'whoop_stress_level']) ??
+            whoopStress ??
+            0.0;
+    final double slh =
+        tryNum(<String>['sleep_hours']) ?? whoopSleepHours ?? 0.0;
+    final String? cat =
+        (data['stress_category'] ?? response['stress_category']) as String?;
 
     updateFromWhoopScan(
       recoveryScore: rec,
       strainScore: str,
       sleepScore: slp,
       stressScore: stl,
-      stressCategory: (cat != null && cat.trim().isNotEmpty) ? cat : 'MEDIO',
+      stressCategory: (cat != null && cat.trim().isNotEmpty) ? cat : null,
       sleepHours: slh,
       hrvMs: (data['hrv_ms'] as num?)?.toInt(),
       restingHr: ((data['rhr_bpm'] ?? data['resting_hr']) as num?)?.toInt(),
@@ -478,12 +517,12 @@ class HomeViewModel extends ChangeNotifier {
       sourceDevice: sourceDevice,
     );
     _statusBanner =
-        'Whoop Sincronizado: Recuperación ${rec.toStringAsFixed(0)}% | Esfuerzo ${str.toStringAsFixed(1)}';
+        'Banda sincronizada: Recuperación ${rec.toStringAsFixed(0)}% | Esfuerzo ${str.toStringAsFixed(1)}';
     notifyListeners();
   }
 
-  /// Envía los bytes de la captura de pantalla de WHOOP a Gemini Vision (`POST /api/v1/wearables/scan-whoop`),
-  /// actualiza el estado reactivo con `updateFromWhoopScan` y devuelve el mapa de resultados.
+  /// Envía los bytes comprimidos de la captura de WHOOP a Gemini Vision (`POST /api/v1/wearables/scan-whoop`),
+  /// actualiza el estado reactivo con `applyScanResponse` y devuelve el mapa de resultados.
   Future<Map<String, dynamic>?> scanWhoopScreenshotBytes(
     Uint8List bytes, {
     String? sourceDevice,
@@ -506,8 +545,10 @@ class HomeViewModel extends ChangeNotifier {
 
       applyScanResponse(result, sourceDevice: targetSource);
 
+      final UserProfileModel? profile =
+          await _repository.getCurrentUserProfileCache();
       _hydration = await _repository.loadTodayHydration(
-        weightKg: _biometrics?.weightKg ?? 78.0,
+        weightKg: _biometrics?.weightKg ?? profile?.weightKg,
         strainScore: _wearable?.strainScore ?? strainScore,
       );
       return result;
@@ -522,7 +563,7 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   /// Escanea una captura de pantalla del wearable activo (`POST /api/v1/wearables/scan-screen`)
-  /// y actualiza los diales en pantalla de forma reactiva e inmediata (`setMetrics` + `notifyListeners()`).
+  /// con compresión obligatoria (<200 KB: 1080x1920, JPEG 75) para evitar Error 502 en Render.
   Future<WearableMetricRecord?> scanWhoopScreenshot(
     ImageSource source, {
     String? sourceDevice,
@@ -533,8 +574,9 @@ class HomeViewModel extends ChangeNotifier {
 
     final XFile? picked = await _imagePicker.pickImage(
       source: source,
-      imageQuality: 90,
-      maxWidth: 1600,
+      maxWidth: 1080,
+      maxHeight: 1920,
+      imageQuality: 75,
     );
     if (picked == null) {
       return null;
@@ -553,9 +595,11 @@ class HomeViewModel extends ChangeNotifier {
       _preferredWearable = targetSource;
       await _repository.setPreferredWearable(targetSource);
       setMetrics(scanned.copyWith(sourceDevice: targetSource));
+      final UserProfileModel? profile =
+          await _repository.getCurrentUserProfileCache();
       _hydration = await _repository.loadTodayHydration(
-        weightKg: _biometrics?.weightKg ?? 78.0,
-        strainScore: _wearable?.strainScore ?? 10.0,
+        weightKg: _biometrics?.weightKg ?? profile?.weightKg,
+        strainScore: _wearable?.strainScore,
       );
       if (targetSource == 'WHOOP') {
         _statusBanner =
@@ -581,8 +625,8 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  /// Sube el screenshot de Fitdays y devuelve los campos extraídos por Gemini Vision
-  /// para autocompletar el formulario modal antes de confirmar.
+  /// Sube el screenshot comprimido de Fitdays (`1080x1920`, `imageQuality: 75`) y devuelve los campos
+  /// extraídos por Gemini Vision para autocompletar el formulario modal antes de confirmar.
   Future<FitdaysExtractedMetricsModel?> scanFitdaysForFormPrefill(
     ImageSource source,
   ) async {
@@ -591,8 +635,9 @@ class HomeViewModel extends ChangeNotifier {
 
     final XFile? picked = await _imagePicker.pickImage(
       source: source,
-      imageQuality: 90,
-      maxWidth: 1600,
+      maxWidth: 1080,
+      maxHeight: 1920,
+      imageQuality: 75,
     );
     if (picked == null) {
       return null;
@@ -618,7 +663,8 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  /// Guarda las métricas de bioimpedancia (manuales o revisadas tras OCR) en Render PostgreSQL.
+  /// Guarda las métricas de bioimpedancia (manuales o revisadas tras OCR) en Render PostgreSQL
+  /// e invalida la caché de rutina para regenerar cargas con el nuevo LBM.
   Future<bool> saveBiometricsRecord(
     FitdaysExtractedMetricsModel payload,
   ) async {
@@ -630,6 +676,11 @@ class HomeViewModel extends ChangeNotifier {
       final BiometricRecord saved = await _repository.saveBiometrics(payload);
       _biometrics = saved;
       _biometricsHistory = await _repository.loadBiometricsHistory();
+      await _repository.clearCachedAiRoutinePlan();
+      _hydration = await _repository.loadTodayHydration(
+        weightKg: saved.weightKg,
+        strainScore: hasWhoopData ? _wearable?.strainScore : null,
+      );
       _statusBanner =
           'Composición corporal guardada en Render (LBM: ${saved.leanBodyMassKg} kg)';
       return true;
@@ -646,10 +697,12 @@ class HomeViewModel extends ChangeNotifier {
   Future<void> addWaterIntake(int amountMl) async {
     _errorMessage = null;
     try {
+      final UserProfileModel? profile =
+          await _repository.getCurrentUserProfileCache();
       _hydration = await _repository.addWaterIntakeMl(
         amountMl: amountMl,
-        weightKg: _biometrics?.weightKg ?? 78.0,
-        strainScore: _wearable?.strainScore ?? 10.0,
+        weightKg: _biometrics?.weightKg ?? profile?.weightKg,
+        strainScore: hasWhoopData ? _wearable?.strainScore : null,
       );
       final double liters = _hydration!.totalMl / 1000.0;
       _statusBanner =
@@ -662,22 +715,32 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   String get aiCoachAthletePrescriptionSummary {
-    final double rec = _wearable?.recoveryScore ?? 78.0;
-    final double sleepH = _wearable?.sleepHours ?? 7.4;
-    final double sleepEff = _wearable?.sleepEfficiencyPct ?? 85.0;
-    final double lbm = _biometrics?.leanBodyMassKg ?? 65.0;
+    final WearableMetricRecord? w = hasWhoopData ? _wearable : null;
+    final double? rec = effectiveRecovery;
+    final double? lbm = _biometrics?.leanBodyMassKg;
+    final String lbmText =
+        lbm != null ? 'LBM ${lbm.toStringAsFixed(1)} kg' : 'LBM del perfil';
     final int waterMl = _hydration?.totalMl ?? 0;
-    final int goalMl = _hydration?.recommendedGoalMl ?? 2800;
+    final int? goalMl = _hydration?.recommendedGoalMl;
+    final String goalText = goalMl != null
+        ? '${(goalMl / 1000.0).toStringAsFixed(1)} L'
+        : '-- L';
 
-    if (rec < 40.0 || sleepEff < 70.0 || sleepH < 6.0) {
-      return 'Readiness en Zona Roja (${rec.toStringAsFixed(0)}%) y sueño/estrés comprometidos en $_preferredWearable. Gemini Coach reduce volumen (-15% a -20%) y limita a RPE 6.5 (enfoque movilidad/técnica). Hidratación actual: ${(waterMl / 1000.0).toStringAsFixed(2)} L / ${(goalMl / 1000.0).toStringAsFixed(1)} L.';
+    if (w == null || rec == null) {
+      return 'Sin telemetría de $_preferredWearable sincronizada hoy (--). Escanea tu captura del día o registra métricas para ajustar el volumen y RPE dinámico sobre tu $lbmText. Hidratación actual: ${(waterMl / 1000.0).toStringAsFixed(2)} L / $goalText.';
     }
-    if (waterMl < 1000) {
-      return 'Alerta de Hidratación ($waterMl ml / $goalMl ml): registra al menos +500 ml antes de tus series principales para sostener tu fuerza alométrica (LBM ${lbm.toStringAsFixed(1)} kg) sin fatiga prematura.';
+
+    if (rec < 34.0 ||
+        (w.sleepEfficiencyPct > 0 && w.sleepEfficiencyPct < 70.0) ||
+        (w.sleepHours > 0 && w.sleepHours < 6.0)) {
+      return 'Readiness en Zona Roja (${rec.toStringAsFixed(0)}%) en $_preferredWearable. Gemini Coach aplica descarga activa (-15% carga, RPE 6.5-7.0). Hidratación actual: ${(waterMl / 1000.0).toStringAsFixed(2)} L / $goalText.';
     }
-    if (rec >= 80.0) {
-      return 'Zona Verde ($_preferredWearable ${rec.toStringAsFixed(0)}%) + Hidratación óptima (${(waterMl / 1000.0).toStringAsFixed(2)} L). Gemini Coach habilita sobrecarga progresiva (+2.5 kg) escalada a tu LBM (${lbm.toStringAsFixed(1)} kg).';
+    if (waterMl < 1000 && goalMl != null) {
+      return 'Alerta de Hidratación ($waterMl ml / $goalMl ml): registra al menos +500 ml antes de tus series principales para sostener tu fuerza alométrica ($lbmText).';
     }
-    return 'Zona Amarilla ($_preferredWearable ${rec.toStringAsFixed(0)}%). Mantén cargas objetivo @ RPE 8.0 con hidratación constante (${(waterMl / 1000.0).toStringAsFixed(2)} L / ${(goalMl / 1000.0).toStringAsFixed(1)} L).';
+    if (rec >= 67.0) {
+      return 'Zona Verde ($_preferredWearable ${rec.toStringAsFixed(0)}%) + Hidratación ${(waterMl / 1000.0).toStringAsFixed(2)} L. Gemini Coach habilita sobrecarga progresiva (+4% carga @ RPE 8.5) escalada a tu $lbmText.';
+    }
+    return 'Zona Amarilla ($_preferredWearable ${rec.toStringAsFixed(0)}%). Mantén cargas objetivo (100% base @ RPE 7.5-8.0) con hidratación constante (${(waterMl / 1000.0).toStringAsFixed(2)} L / $goalText).';
   }
 }
