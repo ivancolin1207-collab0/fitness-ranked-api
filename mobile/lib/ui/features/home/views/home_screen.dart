@@ -893,44 +893,44 @@ class _HomeScreenState extends State<HomeScreen> {
     final bool hasData = wearable != null && viewModel.hasWhoopData;
     final bool hasBleLive =
         bleService.isConnected && (bleService.latestBpm ?? 0) > 0;
-    final double activeSleepPct = hasData
-        ? (viewModel.whoopSleep ?? wearable.sleepEfficiencyPct).clamp(0.0, 100.0)
-        : 0.0;
-    final double recovery = hasData
-        ? (viewModel.whoopRecovery ?? wearable.recoveryScore).clamp(0.0, 100.0)
-        : 0.0;
+    final double? validSleepPct = viewModel.effectiveSleepPct;
+    final double? validRecovery = viewModel.effectiveRecovery;
+    final bool hasValidSleep = validSleepPct != null && validSleepPct >= 1.0;
+    final bool hasValidRecovery = validRecovery != null && validRecovery >= 1.0;
+    final double activeSleepPct = hasValidSleep ? validSleepPct.clamp(1.0, 100.0) : 0.0;
+    final double recovery = hasValidRecovery ? validRecovery.clamp(1.0, 100.0) : 0.0;
     final double baseStrain = hasData
         ? (viewModel.whoopStrain ?? wearable.strainScore).clamp(0.0, 21.0)
         : 0.0;
     final double? combinedStrain =
-        bleService.combineWithDailyStrain(hasData ? baseStrain : null);
+        bleService.combineWithDailyStrain(baseStrain > 0 ? baseStrain : null);
     final bool hasEffectiveStrain =
-        hasData || (hasBleLive && (combinedStrain ?? 0.0) > 0.0);
+        baseStrain > 0.0 || (hasBleLive && (combinedStrain ?? 0.0) > 0.0);
     final double strain =
         (combinedStrain ?? baseStrain).clamp(0.0, 21.0);
 
     final double? bleStress = bleService.liveStressScore;
+    final double scannedStress = hasData
+        ? (viewModel.whoopStress ?? wearable.whoopStressLevel)
+        : 0.0;
     final bool hasEffectiveStress =
-        (hasData && (viewModel.whoopStress ?? wearable.whoopStressLevel) > 0) ||
-            (hasBleLive && bleStress != null) ||
-            hasData;
-    final double stress = (hasData &&
-            (viewModel.whoopStress ?? wearable.whoopStressLevel) > 0)
-        ? (viewModel.whoopStress ?? wearable.whoopStressLevel).clamp(0.0, 3.0)
+        scannedStress > 0.0 || (hasBleLive && bleStress != null);
+    final double stress = scannedStress > 0.0
+        ? scannedStress.clamp(0.0, 3.0)
         : ((hasBleLive && bleStress != null) ? bleStress.clamp(0.0, 3.0) : 0.0);
     final double activeSleepHours = hasData
         ? (viewModel.whoopSleepHours ?? wearable.sleepHours)
         : 0.0;
 
-    final bool isCompromised = hasData && recovery < 34.0;
+    final bool isCompromised = viewModel.isRedZoneDeload;
     final Color recColor = viewModel.recoveryColor;
     final String zoneLabel = viewModel.recoveryStatusText;
 
     final String activeStressCategory = !hasEffectiveStress
         ? 'SIN DATOS'
-        : ((hasData &&
-                (viewModel.whoopStress ?? wearable.whoopStressLevel) > 0 &&
-                viewModel.whoopStressCategory != null)
+        : ((scannedStress > 0.0 &&
+                viewModel.whoopStressCategory != null &&
+                viewModel.whoopStressCategory != 'SIN DATOS')
             ? viewModel.whoopStressCategory!
             : (stress >= 2.0 ? 'ALTO' : (stress >= 1.0 ? 'MEDIO' : 'BAJO')));
     final Color stressColor = !hasEffectiveStress
@@ -941,21 +941,27 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? ApexTheme.readinessGreen
                 : ApexTheme.cyanElectric));
 
-    final String sleepSummaryText = activeSleepHours > 0
-        ? '${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%)'
-        : '${activeSleepPct.toStringAsFixed(0)}%';
+    final String sleepSummaryText = !hasValidSleep
+        ? '--'
+        : (activeSleepHours > 0
+            ? '${activeSleepHours.toStringAsFixed(1)} h (${activeSleepPct.toStringAsFixed(0)}%)'
+            : '${activeSleepPct.toStringAsFixed(0)}%');
 
-    final String geminiRationale = !hasData
+    final String geminiRationale = !hasValidRecovery
         ? (hasBleLive
-            ? 'Pulso BLE en vivo (${bleService.latestBpm} BPM • Zona Z${bleService.currentHrZone} • Estrés ${stress.toStringAsFixed(1)} $activeStressCategory). Escanea tu captura de WHOOP o sincroniza Health Connect / WHOOP Cloud para cargar Sueño y Recuperación.'
-            : 'Sin telemetría de WHOOP sincronizada hoy. Pulsa "ESCANEAR CAPTURA DE WHOOP" (compresión automática <200 KB) o "Forzar Sync" para extraer tus métricas reales del día.')
+            ? 'Pulso BLE en vivo (${bleService.latestBpm} BPM • Zona Z${bleService.currentHrZone} • Estrés ${stress.toStringAsFixed(1)} $activeStressCategory). Pulsa "ESCANEAR CAPTURA DE WHOOP" para extraer tu Sueño y Recuperación real.'
+            : 'Sin telemetría de WHOOP sincronizada hoy. Pulsa "ESCANEAR CAPTURA DE WHOOP" o "Registrar Métricas" para cargar tus diales reales del día.')
         : (isCompromised
             ? 'Recuperación en Zona Roja (${recovery.toStringAsFixed(0)}%). Redujimos la carga prescrita (-15% • RPE 6.5-7.0) para proteger tu SNC.'
             : (recovery >= 67.0
                 ? 'Recuperación óptima (${recovery.toStringAsFixed(0)}%) • Esfuerzo ${strain.toStringAsFixed(1)} • Sueño $sleepSummaryText • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach activa sobrecarga progresiva (+4% • RPE 8.5).'
                 : 'Recuperación en Zona Amarilla (${recovery.toStringAsFixed(0)}%) • Sueño $sleepSummaryText • Estrés ${stress.toStringAsFixed(1)} ($activeStressCategory). Gemini Coach mantiene volumen e intensidad base (RPE 7.5-8.0).'));
 
-    final int healthMetrics = hasData ? wearable.whoopHealthMetricsInRange : 0;
+    final int healthMetrics = hasValidRecovery
+        ? (wearable != null && wearable.whoopHealthMetricsInRange > 0
+            ? wearable.whoopHealthMetricsInRange
+            : 5)
+        : 0;
 
     return Card(
       child: Padding(
@@ -1013,15 +1019,15 @@ class _HomeScreenState extends State<HomeScreen> {
               children: <Widget>[
                 _WhoopCircleGauge(
                   label: 'SUEÑO >',
-                  valueText: hasData ? '${activeSleepPct.toStringAsFixed(0)}%' : '--',
-                  progress: hasData ? (activeSleepPct / 100.0).clamp(0.0, 1.0) : 0.0,
-                  color: hasData ? const Color(0xFF75A8D3) : const Color(0xFF4B5563),
+                  valueText: hasValidSleep ? '${activeSleepPct.toStringAsFixed(0)}%' : '--',
+                  progress: hasValidSleep ? (activeSleepPct / 100.0).clamp(0.0, 1.0) : 0.0,
+                  color: hasValidSleep ? const Color(0xFF75A8D3) : const Color(0xFF4B5563),
                 ),
                 _WhoopCircleGauge(
                   label: 'RECUPERACIÓN >',
-                  valueText: hasData ? '${recovery.toStringAsFixed(0)}%' : '--',
-                  progress: hasData ? (recovery / 100.0).clamp(0.0, 1.0) : 0.0,
-                  color: hasData ? recColor : const Color(0xFF4B5563),
+                  valueText: hasValidRecovery ? '${recovery.toStringAsFixed(0)}%' : '--',
+                  progress: hasValidRecovery ? (recovery / 100.0).clamp(0.0, 1.0) : 0.0,
+                  color: hasValidRecovery ? recColor : const Color(0xFF4B5563),
                   isFeatured: true,
                 ),
                 _WhoopCircleGauge(
@@ -1696,125 +1702,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-        if (activeSource == 'WHOOP') ...<Widget>[
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-              backgroundColor: viewModel.whoopCloudLinked
-                  ? const Color(0xFF10B981).withValues(alpha: 0.12)
-                  : ApexTheme.obsidianBg,
-              foregroundColor: viewModel.whoopCloudLinked
-                  ? const Color(0xFF10B981)
-                  : ApexTheme.cyanElectric,
-              side: BorderSide(
-                color: viewModel.whoopCloudLinked
-                    ? const Color(0xFF10B981)
-                    : ApexTheme.cyanElectric.withValues(alpha: 0.65),
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            onPressed: viewModel.isSyncingWhoopCloud
-                ? null
-                : () => _handleWhoopCloudOAuthButton(context),
-            icon: viewModel.isSyncingWhoopCloud
-                ? const SizedBox(
-                    width: 13,
-                    height: 13,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: ApexTheme.cyanElectric,
-                    ),
-                  )
-                : Icon(
-                    viewModel.whoopCloudLinked
-                        ? Icons.cloud_done_rounded
-                        : Icons.cloud_sync_rounded,
-                    size: 15,
-                  ),
-            label: Text(
-              viewModel.whoopCloudLinked
-                  ? 'Sincronizar WHOOP Cloud API (OAuth Activo)'
-                  : 'Vincular WHOOP Cloud (Auto-Sync API)',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
       ],
     );
-  }
-
-  Future<void> _handleWhoopCloudOAuthButton(BuildContext context) async {
-    try {
-      final Map<String, dynamic> result =
-          await viewModel.syncOrLinkWhoopCloud();
-      if (!context.mounted) {
-        return;
-      }
-      final String action = (result['action'] ?? '').toString();
-      if (action == 'synced') {
-        widget.onProfileOrBiometricsUpdated?.call();
-        if (mounted) {
-          setState(() {});
-        }
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: viewModel.recoveryColor,
-            content: const Text(
-              'WHOOP Cloud API sincronizada automáticamente (developer.whoop.com)',
-              style: TextStyle(
-                color: Colors.black,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        );
-        return;
-      }
-      if (action == 'oauth_launched') {
-        final bool configured = result['oauth_configured'] == true;
-        if (!configured) {
-          _showErrorAlertDialog(
-            context,
-            title: 'WHOOP Cloud OAuth 2.0 (developer.whoop.com)',
-            detail:
-                'Se abrió el portal OAuth de WHOOP. Para sincronización automática directa en producción, verifica que WHOOP_CLIENT_ID y WHOOP_CLIENT_SECRET estén configurados en las variables de entorno de Render.\n\nMientras tanto, puedes usar "ESCANEAR CAPTURA DE WHOOP" o "Forzar Sync" (Health Connect) al instante.',
-          );
-        }
-        return;
-      }
-      _showErrorAlertDialog(
-        context,
-        title: 'WHOOP Cloud OAuth 2.0',
-        detail: (result['message'] ?? 'No se pudo iniciar OAuth 2.0 con WHOOP.')
-            .toString(),
-      );
-    } on WearableScanException catch (err) {
-      if (context.mounted) {
-        _showErrorAlertDialog(
-          context,
-          title: 'Error HTTP ${err.statusCode} en WHOOP Cloud',
-          detail: err.message,
-        );
-      }
-    } catch (err) {
-      if (context.mounted) {
-        _showErrorAlertDialog(
-          context,
-          title: 'Error al conectar con WHOOP Cloud API',
-          detail: err.toString(),
-        );
-      }
-    }
   }
 
   void _showErrorAlertDialog(
@@ -1886,12 +1775,12 @@ class _HomeScreenState extends State<HomeScreen> {
       sourceOverride ?? viewModel.preferredWearable,
     );
     final ImagePicker picker = ImagePicker();
-    // Compresión obligatoria antes de subir (< 200 KB) para evitar Error 502 en Render
+    // Compresión igual a Fitdays (`maxWidth: 1080, imageQuality: 80`) para evitar Error 502 en Render
     final XFile? pickedFile = await picker.pickImage(
       source: ImageSource.gallery,
       maxWidth: 1080,
       maxHeight: 1920,
-      imageQuality: 75,
+      imageQuality: 80,
     );
     if (pickedFile == null) {
       return;
@@ -1959,34 +1848,25 @@ class _HomeScreenState extends State<HomeScreen> {
         dialogOpen = false;
       }
 
-      // 1. Sobrescribir inmediatamente TODAS las variables del ViewModel (+ caché local por usuario/día)
+      // 1. Pre-cargar las variables del ViewModel y activar bloqueo `isLockedByScan = true`
       final Map<String, dynamic> payload = (response['data'] is Map)
           ? Map<String, dynamic>.from(response['data'] as Map)
           : response;
       viewModel.applyScanResponse(payload, sourceDevice: activeSource);
       widget.onProfileOrBiometricsUpdated?.call();
 
-      // 2. Forzar reconstrucción inmediata
       if (mounted) {
         setState(() {});
       }
 
+      // 2. Abrir de inmediato el BottomSheet de Confirmación Visual ("TELEMETRÍA EXTRAÍDA DE TU BANDA")
+      // idéntico al flujo exitoso de Fitdays, para que el usuario revise y pulse "APLICAR Y GUARDAR EN RENDER".
       if (context.mounted) {
-        final double? rec = viewModel.effectiveRecovery;
-        final double? str = viewModel.whoopStrain ?? viewModel.strainScore;
-        final double? slp = viewModel.sleepPct ?? viewModel.whoopSleep;
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: viewModel.recoveryColor,
-            content: Text(
-              'Sincronizado: Sueño ${slp != null ? "${slp.toStringAsFixed(0)}%" : "--"} | Recuperación ${rec != null ? "${rec.toStringAsFixed(0)}%" : "--"} | Esfuerzo ${str != null ? str.toStringAsFixed(1) : "--"}',
-              style: const TextStyle(
-                color: Colors.black,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
+        _openWearableManualSyncModal(
+          context,
+          activeSource,
+          prefilledRecord: viewModel.wearable,
+          isOcrConfirmation: true,
         );
       }
     } on WearableScanException catch (err) {
@@ -2025,13 +1905,7 @@ class _HomeScreenState extends State<HomeScreen> {
         viewModel.hrvMs ?? (hasData ? wearable.hrvMs : 0.0);
     final int syncedRhr =
         viewModel.restingHr ?? (hasData ? wearable.restingHr : 0);
-    final int effectiveRhr = syncedRhr > 0
-        ? syncedRhr
-        : (bleService.isConnected && (bleService.latestBpm ?? 0) > 0
-            ? bleService.effectiveRestingHr
-            : 0);
-    final double effectiveSleepPct =
-        viewModel.sleepPct ?? viewModel.whoopSleep ?? (hasData ? wearable.sleepEfficiencyPct : 0.0);
+    final double? validSleepPct = viewModel.effectiveSleepPct;
     final double effectiveSleepHours =
         viewModel.sleepHours ?? viewModel.whoopSleepHours ?? (hasData ? wearable.sleepHours : 0.0);
 
@@ -2051,8 +1925,8 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _MetricTile(
             label: 'FC REPOSO',
-            value: effectiveRhr > 0
-                ? '$effectiveRhr bpm'
+            value: syncedRhr > 0
+                ? '$syncedRhr bpm'
                 : '--',
             accent: ApexTheme.cyanElectric,
             icon: Icons.favorite_border_rounded,
@@ -2061,11 +1935,13 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _MetricTile(
             label: activeSource == 'WHOOP' ? 'SUEÑO (%)' : 'SUEÑO (H)',
-            value: !hasData
-                ? '--'
-                : (activeSource == 'WHOOP'
-                    ? '${effectiveSleepPct.toStringAsFixed(0)}%'
-                    : '${effectiveSleepHours.toStringAsFixed(1)} h'),
+            value: activeSource == 'WHOOP'
+                ? (validSleepPct != null && validSleepPct >= 1.0
+                    ? '${validSleepPct.toStringAsFixed(0)}%'
+                    : '--')
+                : (effectiveSleepHours > 0
+                    ? '${effectiveSleepHours.toStringAsFixed(1)} h'
+                    : '--'),
             accent: ApexTheme.readinessGreen,
             icon: Icons.bedtime_outlined,
           ),
@@ -2725,7 +2601,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openWearableManualSyncModal(BuildContext context, String activeSource) {
+  void _openWearableManualSyncModal(
+    BuildContext context,
+    String activeSource, {
+    WearableMetricRecord? prefilledRecord,
+    bool isOcrConfirmation = false,
+  }) {
     showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -2737,11 +2618,31 @@ class _HomeScreenState extends State<HomeScreen> {
         return _WearablePolymorphicSyncModalSheet(
           viewModel: viewModel,
           activeSource: activeSource,
+          prefilledRecord: prefilledRecord,
+          isOcrConfirmation: isOcrConfirmation,
         );
       },
     ).then((bool? saved) {
       if (saved == true) {
         widget.onProfileOrBiometricsUpdated?.call();
+        if (context.mounted) {
+          final double? rec = viewModel.effectiveRecovery;
+          final double? str = viewModel.whoopStrain ?? viewModel.strainScore;
+          final double? slp = viewModel.effectiveSleepPct;
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: viewModel.recoveryColor,
+              content: Text(
+                'Guardado en Render: Sueño ${slp != null ? "${slp.toStringAsFixed(0)}%" : "--"} | Recuperación ${rec != null ? "${rec.toStringAsFixed(0)}%" : "--"} | Esfuerzo ${str != null ? str.toStringAsFixed(1) : "--"}',
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          );
+        }
       }
       if (mounted) {
         setState(() {});
@@ -3173,15 +3074,19 @@ class _BiometricCaptureModalSheetState
   }
 }
 
-/// Modal Polimórfico de Captura Rápida de Métricas según el Wearable activo
+/// Modal Polimórfico de Confirmación OCR y Captura Rápida de Métricas según el Wearable activo
 /// (WHOOP 4.0, HUAWEI GT, SAMSUNG GALAXY WATCH, APPLE WATCH).
 class _WearablePolymorphicSyncModalSheet extends StatefulWidget {
   final HomeViewModel viewModel;
   final String activeSource;
+  final WearableMetricRecord? prefilledRecord;
+  final bool isOcrConfirmation;
 
   const _WearablePolymorphicSyncModalSheet({
     required this.viewModel,
     required this.activeSource,
+    this.prefilledRecord,
+    this.isOcrConfirmation = false,
   });
 
   @override
@@ -3198,6 +3103,10 @@ class _WearablePolymorphicSyncModalSheetState
   late double _strainSlider;
   late double _whoopSleepPctSlider;
   late double _whoopStressSlider;
+  late final TextEditingController _recoveryCtrl;
+  late final TextEditingController _sleepPctCtrl;
+  late final TextEditingController _strainCtrl;
+  late final TextEditingController _stressCtrl;
   late final TextEditingController _hrvCtrl;
   late final TextEditingController _rhrCtrl;
   late final TextEditingController _sleepHoursCtrl;
@@ -3221,13 +3130,30 @@ class _WearablePolymorphicSyncModalSheetState
   @override
   void initState() {
     super.initState();
-    final WearableMetricRecord? w =
-        widget.viewModel.hasWhoopData ? widget.viewModel.wearable : null;
-    // Sin constantes quemadas: solo pre-llena si el usuario ya sincronizó su banda hoy.
+    final WearableMetricRecord? w = widget.prefilledRecord ??
+        (widget.viewModel.hasWhoopData ? widget.viewModel.wearable : null);
+    // Sin constantes quemadas: solo pre-llena si el usuario ya sincronizó o escaneó su banda hoy.
     _recoverySlider = (w?.recoveryScore ?? 0.0).clamp(0.0, 100.0);
     _strainSlider = (w?.strainScore ?? 0.0).clamp(0.0, 21.0);
     _whoopSleepPctSlider = (w?.sleepEfficiencyPct ?? 0.0).clamp(0.0, 100.0);
     _whoopStressSlider = (w?.whoopStressLevel ?? 0.0).clamp(0.0, 3.0);
+
+    _recoveryCtrl = TextEditingController(
+      text: _recoverySlider >= 1.0 ? _recoverySlider.toStringAsFixed(0) : '',
+    );
+    _sleepPctCtrl = TextEditingController(
+      text: _whoopSleepPctSlider >= 1.0
+          ? _whoopSleepPctSlider.toStringAsFixed(0)
+          : '',
+    );
+    _strainCtrl = TextEditingController(
+      text: _strainSlider > 0.0 ? _strainSlider.toStringAsFixed(1) : '',
+    );
+    _stressCtrl = TextEditingController(
+      text: _whoopStressSlider > 0.0
+          ? _whoopStressSlider.toStringAsFixed(1)
+          : '',
+    );
 
     _hrvCtrl = TextEditingController(
       text: (w != null && w.hrvMs > 0) ? w.hrvMs.toStringAsFixed(0) : '',
@@ -3295,6 +3221,10 @@ class _WearablePolymorphicSyncModalSheetState
 
   @override
   void dispose() {
+    _recoveryCtrl.dispose();
+    _sleepPctCtrl.dispose();
+    _strainCtrl.dispose();
+    _stressCtrl.dispose();
     _hrvCtrl.dispose();
     _rhrCtrl.dispose();
     _sleepHoursCtrl.dispose();
@@ -3328,9 +3258,22 @@ class _WearablePolymorphicSyncModalSheetState
             0.0)
         .clamp(0.0, 24.0);
 
-    double computedRecovery = _recoverySlider;
-    double computedStrain = _strainSlider;
-    double computedSleepPct = _whoopSleepPctSlider;
+    final double? typedRec =
+        double.tryParse(_recoveryCtrl.text.trim().replaceAll(',', '.'));
+    final double? typedSleepPct =
+        double.tryParse(_sleepPctCtrl.text.trim().replaceAll(',', '.'));
+    final double? typedStrain =
+        double.tryParse(_strainCtrl.text.trim().replaceAll(',', '.'));
+    final double? typedStress =
+        double.tryParse(_stressCtrl.text.trim().replaceAll(',', '.'));
+
+    double computedRecovery =
+        (typedRec ?? _recoverySlider).clamp(0.0, 100.0);
+    double computedStrain = (typedStrain ?? _strainSlider).clamp(0.0, 21.0);
+    double computedSleepPct =
+        (typedSleepPct ?? _whoopSleepPctSlider).clamp(0.0, 100.0);
+    final double computedStress =
+        (typedStress ?? _whoopStressSlider).clamp(0.0, 3.0);
 
     final int huaweiStress =
         (int.tryParse(_huaweiStressCtrl.text.trim()) ?? 0).clamp(0, 100);
@@ -3384,6 +3327,10 @@ class _WearablePolymorphicSyncModalSheetState
           : 0.0;
     }
 
+    final String stressCat = computedStress >= 2.0
+        ? 'ALTO'
+        : (computedStress >= 1.0 ? 'MEDIO' : 'BAJO');
+
     final WearableMetricRecord record = WearableMetricRecord(
       date: DateTime.now(),
       recoveryScore: double.parse(computedRecovery.toStringAsFixed(0)),
@@ -3392,11 +3339,16 @@ class _WearablePolymorphicSyncModalSheetState
       restingHr: rhr,
       avgHr: widget.activeSource == 'HUAWEI_GT' ? huaweiAvgHr : rhr,
       maxHr: 0,
-      sleepHours: sleepH,
+      sleepHours: sleepH > 0
+          ? sleepH
+          : (computedSleepPct > 0
+              ? double.parse(((computedSleepPct / 100.0) * 8.0).toStringAsFixed(1))
+              : 0.0),
       sleepEfficiencyPct: double.parse(computedSleepPct.toStringAsFixed(0)),
       sourceDevice: widget.activeSource,
-      whoopStressLevel: double.parse(_whoopStressSlider.toStringAsFixed(1)),
-      whoopHealthMetricsInRange: 0,
+      whoopStressLevel: double.parse(computedStress.toStringAsFixed(1)),
+      stressCategory: stressCat,
+      whoopHealthMetricsInRange: computedRecovery >= 1.0 ? 5 : 0,
       huaweiStressScore: huaweiStress,
       huaweiTruSleepScore: huaweiTruSleep,
       huaweiVo2Max: huaweiVo2,
@@ -3440,20 +3392,24 @@ class _WearablePolymorphicSyncModalSheetState
               const SizedBox(height: 16),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
-                  backgroundColor: ApexTheme.cyanElectric,
+                  backgroundColor: widget.isOcrConfirmation
+                      ? Colors.white
+                      : ApexTheme.cyanElectric,
                   foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
-                onPressed: _submit,
+                onPressed: widget.viewModel.isSyncingWearable ? null : _submit,
                 icon: const Icon(Icons.check_circle_outline_rounded),
                 label: Text(
-                  src == 'WHOOP'
-                      ? 'GUARDAR MÉTRICAS WHOOP EN POSTGRESQL'
-                      : (src == 'HUAWEI_GT'
-                          ? 'GUARDAR MÉTRICAS HUAWEI EN POSTGRESQL'
-                          : (src == 'SAMSUNG_WATCH'
-                              ? 'GUARDAR MÉTRICAS SAMSUNG EN POSTGRESQL'
-                              : 'GUARDAR MÉTRICAS APPLE WATCH EN POSTGRESQL')),
+                  widget.isOcrConfirmation
+                      ? 'APLICAR Y GUARDAR EN RENDER'
+                      : (src == 'WHOOP'
+                          ? 'APLICAR Y GUARDAR EN RENDER'
+                          : (src == 'HUAWEI_GT'
+                              ? 'GUARDAR MÉTRICAS HUAWEI EN POSTGRESQL'
+                              : (src == 'SAMSUNG_WATCH'
+                                  ? 'GUARDAR MÉTRICAS SAMSUNG EN POSTGRESQL'
+                                  : 'GUARDAR MÉTRICAS APPLE WATCH EN POSTGRESQL'))),
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
@@ -3467,20 +3423,106 @@ class _WearablePolymorphicSyncModalSheetState
   List<Widget> _buildWhoopModalFields() {
     final Color recColor = ApexTheme.readinessColor(_recoverySlider);
     return <Widget>[
-      const Text(
-        'REGISTRAR MÉTRICAS WHOOP 4.0',
+      Text(
+        widget.isOcrConfirmation
+            ? 'TELEMETRÍA EXTRAÍDA DE TU BANDA'
+            : 'REGISTRAR MÉTRICAS WHOOP 4.0',
         style: TextStyle(
           fontSize: 15,
           fontWeight: FontWeight.w900,
-          color: ApexTheme.cyanElectric,
+          color: widget.isOcrConfirmation
+              ? ApexTheme.voltAccent
+              : ApexTheme.cyanElectric,
         ),
       ),
       const SizedBox(height: 4),
-      const Text(
-        'Ingresa Recuperación %, Strain (0-21), Sueño %, FC Reposo, HRV y Nivel de Estrés (0-3).',
-        style: TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
+      Text(
+        widget.isOcrConfirmation
+            ? 'Revisa los datos extraídos por Gemini Vision (puedes editar cualquier valor) y pulsa "APLICAR Y GUARDAR EN RENDER" para actualizar los 3 diales y tu rutina.'
+            : 'Ingresa Recuperación %, Sueño %, Strain (0-21), FC Reposo, HRV y Nivel de Estrés (0-3).',
+        style: const TextStyle(fontSize: 11.5, color: ApexTheme.textMuted),
       ),
       const SizedBox(height: 12),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _sleepPctCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Sueño (%)',
+                isDense: true,
+              ),
+              onChanged: (String v) {
+                final double? parsed = double.tryParse(v.replaceAll(',', '.'));
+                if (parsed != null) {
+                  setState(
+                    () => _whoopSleepPctSlider = parsed.clamp(0.0, 100.0),
+                  );
+                }
+              },
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _recoveryCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Recuperación (%)',
+                isDense: true,
+              ),
+              onChanged: (String v) {
+                final double? parsed = double.tryParse(v.replaceAll(',', '.'));
+                if (parsed != null) {
+                  setState(() => _recoverySlider = parsed.clamp(0.0, 100.0));
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Row(
+        spacing: 8,
+        children: <Widget>[
+          Expanded(
+            child: TextFormField(
+              controller: _strainCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Esfuerzo (0-21)',
+                isDense: true,
+              ),
+              onChanged: (String v) {
+                final double? parsed = double.tryParse(v.replaceAll(',', '.'));
+                if (parsed != null) {
+                  setState(() => _strainSlider = parsed.clamp(0.0, 21.0));
+                }
+              },
+            ),
+          ),
+          Expanded(
+            child: TextFormField(
+              controller: _stressCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Estrés (0.0-3.0)',
+                isDense: true,
+              ),
+              onChanged: (String v) {
+                final double? parsed = double.tryParse(v.replaceAll(',', '.'));
+                if (parsed != null) {
+                  setState(() => _whoopStressSlider = parsed.clamp(0.0, 3.0));
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
@@ -3501,7 +3543,12 @@ class _WearablePolymorphicSyncModalSheetState
               max: 100,
               divisions: 100,
               activeColor: recColor,
-              onChanged: (double v) => setState(() => _recoverySlider = v),
+              onChanged: (double v) {
+                setState(() {
+                  _recoverySlider = v;
+                  _recoveryCtrl.text = v.toStringAsFixed(0);
+                });
+              },
             ),
             _buildSliderHeader(
               'ESFUERZO / STRAIN (0–21)',
@@ -3514,7 +3561,12 @@ class _WearablePolymorphicSyncModalSheetState
               max: 21,
               divisions: 210,
               activeColor: ApexTheme.cyanElectric,
-              onChanged: (double v) => setState(() => _strainSlider = v),
+              onChanged: (double v) {
+                setState(() {
+                  _strainSlider = v;
+                  _strainCtrl.text = v.toStringAsFixed(1);
+                });
+              },
             ),
             _buildSliderHeader(
               'SUEÑO % (0–100%)',
@@ -3527,8 +3579,12 @@ class _WearablePolymorphicSyncModalSheetState
               max: 100,
               divisions: 100,
               activeColor: const Color(0xFF75A8D3),
-              onChanged: (double v) =>
-                  setState(() => _whoopSleepPctSlider = v),
+              onChanged: (double v) {
+                setState(() {
+                  _whoopSleepPctSlider = v;
+                  _sleepPctCtrl.text = v.toStringAsFixed(0);
+                });
+              },
             ),
             _buildSliderHeader(
               'NIVEL DE ESTRÉS WHOOP (0.0–3.0)',
@@ -3541,7 +3597,12 @@ class _WearablePolymorphicSyncModalSheetState
               max: 3.0,
               divisions: 30,
               activeColor: ApexTheme.warningAmber,
-              onChanged: (double v) => setState(() => _whoopStressSlider = v),
+              onChanged: (double v) {
+                setState(() {
+                  _whoopStressSlider = v;
+                  _stressCtrl.text = v.toStringAsFixed(1);
+                });
+              },
             ),
           ],
         ),
@@ -3555,7 +3616,7 @@ class _WearablePolymorphicSyncModalSheetState
               controller: _hrvCtrl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'HRV (ms)',
+                labelText: 'HRV (ms, opc.)',
                 isDense: true,
               ),
             ),
@@ -3565,7 +3626,7 @@ class _WearablePolymorphicSyncModalSheetState
               controller: _rhrCtrl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'FC Reposo (bpm)',
+                labelText: 'FC Reposo (bpm, opc.)',
                 isDense: true,
               ),
             ),

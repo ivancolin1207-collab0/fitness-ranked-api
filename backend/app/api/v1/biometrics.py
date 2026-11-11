@@ -271,7 +271,7 @@ async def get_today_wearable_metrics(
     ).scalar_one_or_none()
 
     readiness = await get_today_athlete_readiness(db, current_user.id)
-    if not readiness["has_readiness_today"] and wm_record is None:
+    if not readiness["has_readiness_today"]:
         return None
 
     raw_dev = str(
@@ -290,11 +290,8 @@ async def get_today_wearable_metrics(
         source_enum = WearableSource.WHOOP
 
     sleep_pct_val = readiness.get("sleep_pct")
-    rec_val = float(
-        readiness.get("recovery_score")
-        if readiness.get("recovery_score") is not None
-        else (wm_record.recovery_score if wm_record is not None else 0.0)
-    )
+    raw_rec_val = readiness.get("recovery_score")
+    rec_val = float(raw_rec_val) if (raw_rec_val is not None and float(raw_rec_val) >= 1.0) else 0.0
     strain_val = float(
         readiness.get("strain_score")
         if readiness.get("strain_score") is not None
@@ -336,6 +333,11 @@ async def get_today_wearable_metrics(
     response_model=WearableSyncResponse,
     status_code=status.HTTP_200_OK,
 )
+@router.post(
+    "/wearables/readiness/save",
+    response_model=WearableSyncResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def sync_wearable_metrics(
     payload: WearableSyncRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -343,21 +345,58 @@ async def sync_wearable_metrics(
 ) -> WearableSyncResponse:
     """
     Realiza un UPSERT transaccional de las métricas fisiológicas reales provenientes
-    de Health Connect o ingreso manual y actualiza la fuente primaria del usuario.
+    de captura OCR confirmada, Health Connect o ingreso manual y actualiza la fuente primaria.
+    PROHIBIDO sobrescribir un `recovery_score >= 1` o `sleep_pct >= 1` existente hoy con `0.0`.
     """
     user_id: UUID = current_user.id
     current_user.preferred_wearable = payload.source_device
 
-    safe_hrv = (
+    existing_today = await get_today_athlete_readiness(db, user_id)
+    prev_rec = float(existing_today.get("recovery_score") or 0.0)
+    prev_sleep_pct = float(existing_today.get("sleep_pct") or 0.0)
+    prev_sleep_h = float(existing_today.get("sleep_hours") or 0.0)
+    prev_strain = float(existing_today.get("strain_score") or 0.0)
+    prev_hrv = float(existing_today.get("hrv_ms") or 0.0)
+    prev_rhr = int(existing_today.get("resting_hr") or 0)
+    prev_stress = existing_today.get("stress_level")
+    prev_stress_cat = existing_today.get("stress_category")
+
+    effective_recovery = (
+        float(payload.recovery_score)
+        if float(payload.recovery_score or 0.0) >= 1.0
+        else (prev_rec if prev_rec >= 1.0 else 0.0)
+    )
+    incoming_sleep_pct = float(payload.sleep_efficiency_pct or 0.0)
+    effective_sleep_pct = (
+        incoming_sleep_pct
+        if incoming_sleep_pct >= 1.0
+        else (prev_sleep_pct if prev_sleep_pct >= 1.0 else None)
+    )
+    effective_sleep_hours = (
+        float(payload.sleep_hours)
+        if float(payload.sleep_hours or 0.0) > 0.0
+        else (prev_sleep_h if prev_sleep_h > 0.0 else 0.0)
+    )
+    effective_strain = (
+        float(payload.strain_score)
+        if float(payload.strain_score or 0.0) > 0.0
+        else (prev_strain if prev_strain > 0.0 else 0.0)
+    )
+
+    raw_hrv = (
         float(payload.hrv_ms)
-        if (payload.hrv_ms is not None and 5.0 <= float(payload.hrv_ms) <= 300.0)
-        else None
+        if (payload.hrv_ms is not None and float(payload.hrv_ms) >= 5.0)
+        else prev_hrv
     )
-    safe_rhr = (
+    safe_hrv = raw_hrv if (5.0 <= raw_hrv <= 300.0) else None
+
+    raw_rhr = (
         int(payload.resting_hr)
-        if (payload.resting_hr is not None and 25 <= int(payload.resting_hr) <= 140)
-        else None
+        if (payload.resting_hr is not None and int(payload.resting_hr) >= 25)
+        else prev_rhr
     )
+    safe_rhr = raw_rhr if (25 <= raw_rhr <= 140) else None
+
     safe_avg_hr = max(
         30,
         min(
@@ -380,27 +419,27 @@ async def sync_wearable_metrics(
         .values(
             user_id=user_id,
             date=payload.date,
-            strain_score=payload.strain_score,
-            recovery_score=payload.recovery_score,
+            strain_score=effective_strain,
+            recovery_score=effective_recovery,
             hrv_ms=safe_hrv,
             resting_hr=safe_rhr,
             avg_hr=safe_avg_hr,
             max_hr=safe_max_hr,
-            sleep_hours=payload.sleep_hours,
-            sleep_efficiency_pct=payload.sleep_efficiency_pct,
+            sleep_hours=effective_sleep_hours,
+            sleep_efficiency_pct=effective_sleep_pct,
             source_device=payload.source_device,
         )
         .on_conflict_do_update(
             constraint="uq_user_date_device",
             set_={
-                "strain_score": payload.strain_score,
-                "recovery_score": payload.recovery_score,
+                "strain_score": effective_strain,
+                "recovery_score": effective_recovery,
                 "hrv_ms": safe_hrv,
                 "resting_hr": safe_rhr,
                 "avg_hr": safe_avg_hr,
                 "max_hr": safe_max_hr,
-                "sleep_hours": payload.sleep_hours,
-                "sleep_efficiency_pct": payload.sleep_efficiency_pct,
+                "sleep_hours": effective_sleep_hours,
+                "sleep_efficiency_pct": effective_sleep_pct,
                 "synced_at": func.now(),
             },
         )
@@ -410,15 +449,21 @@ async def sync_wearable_metrics(
     record = result.scalar_one()
 
     resolved_stress = (
-        float(payload.stress_level) if payload.stress_level is not None else 0.0
+        float(payload.stress_level)
+        if (payload.stress_level is not None and float(payload.stress_level) > 0.0)
+        else (float(prev_stress) if prev_stress is not None else 0.0)
     )
-    resolved_stress_cat = payload.stress_category or (
-        "ALTO"
-        if resolved_stress >= 2.0
-        else (
-            "MEDIO"
-            if resolved_stress >= 1.0
-            else ("BAJO" if resolved_stress > 0.0 else "SIN DATO")
+    resolved_stress_cat = (
+        payload.stress_category
+        or prev_stress_cat
+        or (
+            "ALTO"
+            if resolved_stress >= 2.0
+            else (
+                "MEDIO"
+                if resolved_stress >= 1.0
+                else ("BAJO" if resolved_stress > 0.0 else "SIN DATO")
+            )
         )
     )
 
@@ -459,24 +504,36 @@ async def sync_wearable_metrics(
                 {
                     "uid": user_id,
                     "dt": payload.date,
-                    "sleep_pct": float(payload.sleep_efficiency_pct or 0.0),
-                    "rec": payload.recovery_score,
-                    "strain": payload.strain_score,
+                    "sleep_pct": float(effective_sleep_pct or 0.0),
+                    "rec": effective_recovery,
+                    "strain": effective_strain,
                     "stress_lvl": resolved_stress,
                     "stress_cat": resolved_stress_cat,
-                    "sleep_h": payload.sleep_hours,
+                    "sleep_h": effective_sleep_hours,
                     "hrv": safe_hrv,
                     "rhr": safe_rhr,
                     "src": payload.source_device.value,
                 },
             )
+            if float(payload.recovery_score or 0.0) >= 1.0:
+                await db.execute(
+                    text(
+                        """
+                        UPDATE user_routines
+                        SET biometric_signature = 'NEEDS_RECOVERY_SYNC'
+                        WHERE user_id = :uid AND status = 'active'
+                        """
+                    ),
+                    {"uid": user_id},
+                )
     except Exception as exc:
         logger.warning("Aviso actualizando daily_readiness en sync_wearable: %s", exc)
 
     await db.commit()
     await db.refresh(record)
     resp = WearableSyncResponse.model_validate(record)
-    resp.sleep_pct = payload.sleep_efficiency_pct
+    resp.sleep_pct = effective_sleep_pct
+    resp.sleep_efficiency_pct = effective_sleep_pct
     resp.stress_level = resolved_stress
     resp.whoop_stress_level = resolved_stress
     resp.stress_category = resolved_stress_cat

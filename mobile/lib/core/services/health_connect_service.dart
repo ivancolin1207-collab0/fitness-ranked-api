@@ -445,25 +445,29 @@ class HealthConnectService {
       rawStrain.clamp(0.0, 21.0).toStringAsFixed(1),
     );
 
-    // Cálculo fisiológico real de Recuperación (%) ponderando únicamente las señales presentes
+    // Cálculo fisiológico real de Recuperación (%):
+    // SOLO calcular si Health Connect devolvió al menos Sueño (>0 min) o HRV (>0 ms).
+    // Si Health Connect devuelve 0 min de sueño y 0 HRV, dejar recoveryScore = 0.0 (que la UI trata como `--`, NUNCA `0%`).
     double weightedSum = 0.0;
     double totalWeight = 0.0;
 
-    if (resolvedHrv > 0) {
-      final double hrvNorm =
-          ((resolvedHrv - 20.0) / 85.0).clamp(0.08, 1.0) * 100.0;
-      weightedSum += hrvNorm * 0.50;
-      totalWeight += 0.50;
-    }
-    if (resolvedRhr > 0) {
-      final double rhrNorm =
-          ((88.0 - resolvedRhr) / 42.0).clamp(0.08, 1.0) * 100.0;
-      weightedSum += rhrNorm * 0.25;
-      totalWeight += 0.25;
-    }
-    if (sleepPct > 0) {
-      weightedSum += sleepPct * 0.25;
-      totalWeight += 0.25;
+    if (resolvedHrv > 0 || sleepPct > 0) {
+      if (resolvedHrv > 0) {
+        final double hrvNorm =
+            ((resolvedHrv - 20.0) / 85.0).clamp(0.08, 1.0) * 100.0;
+        weightedSum += hrvNorm * 0.50;
+        totalWeight += 0.50;
+      }
+      if (resolvedRhr > 0) {
+        final double rhrNorm =
+            ((88.0 - resolvedRhr) / 42.0).clamp(0.08, 1.0) * 100.0;
+        weightedSum += rhrNorm * 0.25;
+        totalWeight += 0.25;
+      }
+      if (sleepPct > 0) {
+        weightedSum += sleepPct * 0.25;
+        totalWeight += 0.25;
+      }
     }
 
     final double recoveryScore = totalWeight > 0

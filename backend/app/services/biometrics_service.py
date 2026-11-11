@@ -295,60 +295,101 @@ async def get_today_athlete_readiness(
             "source_device": None,
         }
 
-    # Si ambos existen, priorizar el que tenga `synced_at` más reciente
+    # Si ambos existen, priorizar el registro que tenga recuperación/sueño real (> 0),
+    # o en su defecto el que tenga `synced_at` más reciente.
     use_dr_primary = False
     if dr_row is not None and wm_row is None:
         use_dr_primary = True
     elif dr_row is not None and wm_row is not None:
-        dr_ts = dr_row[7]
-        wm_ts = wm_row.synced_at
-        if dr_ts is None or wm_ts is None or dr_ts >= wm_ts:
+        dr_rec = float(dr_row[1]) if dr_row[1] is not None else 0.0
+        wm_rec = float(wm_row.recovery_score) if wm_row.recovery_score is not None else 0.0
+        if dr_rec >= 1.0 and wm_rec < 1.0:
             use_dr_primary = True
+        elif wm_rec >= 1.0 and dr_rec < 1.0:
+            use_dr_primary = False
+        else:
+            dr_ts = dr_row[7]
+            wm_ts = wm_row.synced_at
+            if dr_ts is None or wm_ts is None or dr_ts >= wm_ts:
+                use_dr_primary = True
+
+    def _pos_float(val: object) -> float | None:
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            return f if f >= 1.0 else None
+        except (TypeError, ValueError):
+            return None
 
     if use_dr_primary and dr_row is not None:
         dr_hrv = float(dr_row[8]) if (len(dr_row) > 8 and dr_row[8] is not None and float(dr_row[8]) > 0) else None
         dr_rhr = int(dr_row[9]) if (len(dr_row) > 9 and dr_row[9] is not None and int(dr_row[9]) > 0) else None
+        raw_sleep_pct = _pos_float(dr_row[0]) or (
+            _pos_float(wm_row.sleep_efficiency_pct) if wm_row is not None else None
+        )
+        raw_rec = _pos_float(dr_row[1]) or (
+            _pos_float(wm_row.recovery_score) if wm_row is not None else None
+        )
+        raw_strain = float(dr_row[2]) if (dr_row[2] is not None and float(dr_row[2]) > 0) else (
+            float(wm_row.strain_score) if (wm_row is not None and wm_row.strain_score is not None and float(wm_row.strain_score) > 0) else None
+        )
+        raw_sleep_h = float(dr_row[5]) if (dr_row[5] is not None and float(dr_row[5]) > 0) else (
+            float(wm_row.sleep_hours) if (wm_row is not None and wm_row.sleep_hours is not None and float(wm_row.sleep_hours) > 0) else None
+        )
+        has_any = any(v is not None for v in (raw_sleep_pct, raw_rec, raw_strain, dr_hrv, dr_rhr))
         return {
-            "has_readiness_today": True,
-            "sleep_pct": float(dr_row[0]) if dr_row[0] is not None else None,
-            "recovery_score": float(dr_row[1]) if dr_row[1] is not None else None,
-            "strain_score": float(dr_row[2]) if dr_row[2] is not None else None,
-            "stress_level": float(dr_row[3]) if dr_row[3] is not None else None,
-            "stress_category": str(dr_row[4]) if dr_row[4] is not None else None,
-            "sleep_hours": float(dr_row[5]) if dr_row[5] is not None else None,
+            "has_readiness_today": has_any,
+            "sleep_pct": raw_sleep_pct,
+            "recovery_score": raw_rec,
+            "strain_score": raw_strain,
+            "stress_level": float(dr_row[3]) if (dr_row[3] is not None and float(dr_row[3]) > 0) else None,
+            "stress_category": str(dr_row[4]) if (dr_row[4] is not None and str(dr_row[4]) != "SIN DATO") else None,
+            "sleep_hours": raw_sleep_h,
             "hrv_ms": dr_hrv
             if dr_hrv is not None
             else (
                 float(wm_row.hrv_ms)
-                if (wm_row is not None and wm_row.hrv_ms is not None)
+                if (wm_row is not None and wm_row.hrv_ms is not None and float(wm_row.hrv_ms) > 0)
                 else None
             ),
             "resting_hr": dr_rhr
             if dr_rhr is not None
             else (
                 int(wm_row.resting_hr)
-                if (wm_row is not None and wm_row.resting_hr is not None)
+                if (wm_row is not None and wm_row.resting_hr is not None and int(wm_row.resting_hr) > 0)
                 else None
             ),
             "source_device": str(dr_row[6]) if dr_row[6] is not None else "WHOOP",
         }
 
     assert wm_row is not None
+    raw_sleep_pct = _pos_float(wm_row.sleep_efficiency_pct) or (
+        _pos_float(dr_row[0]) if dr_row is not None else None
+    )
+    raw_rec = _pos_float(wm_row.recovery_score) or (
+        _pos_float(dr_row[1]) if dr_row is not None else None
+    )
+    raw_strain = float(wm_row.strain_score) if (wm_row.strain_score is not None and float(wm_row.strain_score) > 0) else (
+        float(dr_row[2]) if (dr_row is not None and dr_row[2] is not None and float(dr_row[2]) > 0) else None
+    )
+    raw_sleep_h = float(wm_row.sleep_hours) if (wm_row.sleep_hours is not None and float(wm_row.sleep_hours) > 0) else None
+    wm_hrv = float(wm_row.hrv_ms) if (wm_row.hrv_ms is not None and float(wm_row.hrv_ms) > 0) else None
+    wm_rhr = int(wm_row.resting_hr) if (wm_row.resting_hr is not None and int(wm_row.resting_hr) > 0) else None
+    has_any = any(v is not None for v in (raw_sleep_pct, raw_rec, raw_strain, wm_hrv, wm_rhr))
     return {
-        "has_readiness_today": True,
-        "sleep_pct": float(wm_row.sleep_efficiency_pct)
-        if wm_row.sleep_efficiency_pct is not None
-        else (float(dr_row[0]) if (dr_row is not None and dr_row[0] is not None) else None),
-        "recovery_score": float(wm_row.recovery_score),
-        "strain_score": float(wm_row.strain_score),
+        "has_readiness_today": has_any,
+        "sleep_pct": raw_sleep_pct,
+        "recovery_score": raw_rec,
+        "strain_score": raw_strain,
         "stress_level": float(dr_row[3])
-        if (dr_row is not None and dr_row[3] is not None)
+        if (dr_row is not None and dr_row[3] is not None and float(dr_row[3]) > 0)
         else None,
         "stress_category": str(dr_row[4])
-        if (dr_row is not None and dr_row[4] is not None)
+        if (dr_row is not None and dr_row[4] is not None and str(dr_row[4]) != "SIN DATO")
         else None,
-        "sleep_hours": float(wm_row.sleep_hours),
-        "hrv_ms": float(wm_row.hrv_ms) if wm_row.hrv_ms is not None else None,
-        "resting_hr": int(wm_row.resting_hr) if wm_row.resting_hr is not None else None,
+        "sleep_hours": raw_sleep_h,
+        "hrv_ms": wm_hrv,
+        "resting_hr": wm_rhr,
         "source_device": wm_row.source_device.value,
     }

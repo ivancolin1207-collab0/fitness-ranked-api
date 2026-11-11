@@ -331,6 +331,50 @@ class FitnessRepository {
   // 2. BIOMETRÍA Y WEARABLE REAL (WHOOP / HEALTH CONNECT)
   // =========================================================================
 
+  Future<bool> isLockedByWhoopScanToday() {
+    return _storageService.readWhoopScanLockForToday();
+  }
+
+  Future<void> saveWhoopScanLockForToday(bool locked) {
+    return _storageService.saveWhoopScanLockForToday(locked);
+  }
+
+  WearableMetricRecord _mergePreservingPositiveScanMetrics(
+    WearableMetricRecord incoming,
+    WearableMetricRecord? existing,
+  ) {
+    if (existing == null) {
+      return incoming;
+    }
+    return incoming.copyWith(
+      recoveryScore: incoming.recoveryScore >= 1.0
+          ? incoming.recoveryScore
+          : (existing.recoveryScore >= 1.0 ? existing.recoveryScore : 0.0),
+      sleepEfficiencyPct: incoming.sleepEfficiencyPct >= 1.0
+          ? incoming.sleepEfficiencyPct
+          : (existing.sleepEfficiencyPct >= 1.0
+              ? existing.sleepEfficiencyPct
+              : 0.0),
+      sleepHours: incoming.sleepHours > 0.0
+          ? incoming.sleepHours
+          : (existing.sleepHours > 0.0 ? existing.sleepHours : 0.0),
+      strainScore: incoming.strainScore > 0.0
+          ? incoming.strainScore
+          : (existing.strainScore > 0.0 ? existing.strainScore : 0.0),
+      hrvMs: incoming.hrvMs > 0.0 ? incoming.hrvMs : existing.hrvMs,
+      restingHr: incoming.restingHr > 0 ? incoming.restingHr : existing.restingHr,
+      whoopStressLevel: incoming.whoopStressLevel > 0.0
+          ? incoming.whoopStressLevel
+          : existing.whoopStressLevel,
+      stressCategory: (incoming.stressCategory != null &&
+              incoming.stressCategory!.isNotEmpty &&
+              incoming.stressCategory != 'SIN DATOS' &&
+              incoming.stressCategory != 'SIN DATO')
+          ? incoming.stressCategory
+          : existing.stressCategory,
+    );
+  }
+
   /// Intenta leer telemetría real desde Health Connect (alimentada por Whoop/Huawei)
   /// y sincronizarla en PostgreSQL. Si Health Connect no reporta datos hoy,
   /// consulta si ya existe un registro sincronizado hoy en PostgreSQL (`GET /wearables/today`).
@@ -342,12 +386,25 @@ class FitnessRepository {
     final String token = await _requireToken();
     final String preferred =
         sourceDevice ?? await _storageService.readPreferredWearable();
+    final bool lockedByScan = await _storageService.readWhoopScanLockForToday();
+    final WearableMetricRecord? cachedToday =
+        await _storageService.readCachedWearableTelemetry();
+
+    if (lockedByScan &&
+        cachedToday != null &&
+        (cachedToday.recoveryScore >= 1.0 ||
+            cachedToday.sleepEfficiencyPct >= 1.0)) {
+      return cachedToday;
+    }
 
     if (!forceSensorPoll) {
       try {
         final WearableMetricRecord? existingCloud =
             await _apiClient.fetchTodayWearable(jwtToken: token);
-        if (existingCloud != null) {
+        if (existingCloud != null &&
+            (existingCloud.recoveryScore >= 1.0 ||
+                existingCloud.sleepEfficiencyPct >= 1.0 ||
+                existingCloud.strainScore > 0.0)) {
           return existingCloud;
         }
       } catch (_) {}
@@ -358,21 +415,23 @@ class FitnessRepository {
       preferredSource: preferred,
     );
     if (sensorMetrics != null) {
-      await _storageService.saveCachedWearableTelemetry(sensorMetrics);
+      final WearableMetricRecord merged =
+          _mergePreservingPositiveScanMetrics(sensorMetrics, cachedToday);
+      await _storageService.saveCachedWearableTelemetry(merged);
       try {
         return await _apiClient.syncWearableMetrics(
-          record: sensorMetrics,
+          record: merged,
           jwtToken: token,
         );
       } catch (_) {
-        return sensorMetrics;
+        return merged;
       }
     }
 
     try {
       return await _apiClient.fetchTodayWearable(jwtToken: token);
     } catch (_) {
-      return null;
+      return cachedToday;
     }
   }
 
@@ -384,6 +443,9 @@ class FitnessRepository {
   }) async {
     final String preferred =
         sourceDevice ?? await _storageService.readPreferredWearable();
+    final bool lockedByScan = await _storageService.readWhoopScanLockForToday();
+    final WearableMetricRecord? cachedToday =
+        await _storageService.readCachedWearableTelemetry();
 
     final HealthConnectPollResult poll =
         await _healthConnectService.requestPermissionsAndPollToday(
@@ -391,12 +453,27 @@ class FitnessRepository {
       openSettingsIfDenied: interactive,
     );
 
+    if (lockedByScan &&
+        cachedToday != null &&
+        (cachedToday.recoveryScore >= 1.0 ||
+            cachedToday.sleepEfficiencyPct >= 1.0)) {
+      return HealthConnectPollResult(
+        record: cachedToday,
+        sdkAvailable: poll.sdkAvailable,
+        permissionGranted: poll.permissionGranted,
+        statusMessage:
+            'Telemetría protegida por captura escaneada hoy (${cachedToday.recoveryScore.toStringAsFixed(0)}% Recuperación).',
+      );
+    }
+
     if (poll.record != null) {
-      await _storageService.saveCachedWearableTelemetry(poll.record!);
+      final WearableMetricRecord merged =
+          _mergePreservingPositiveScanMetrics(poll.record!, cachedToday);
+      await _storageService.saveCachedWearableTelemetry(merged);
       try {
         final String token = await _requireToken();
         final WearableMetricRecord saved = await _apiClient.syncWearableMetrics(
-          record: poll.record!,
+          record: merged,
           jwtToken: token,
         );
         return HealthConnectPollResult(
@@ -407,7 +484,7 @@ class FitnessRepository {
         );
       } catch (_) {
         return HealthConnectPollResult(
-          record: poll.record,
+          record: merged,
           sdkAvailable: poll.sdkAvailable,
           permissionGranted: poll.permissionGranted,
           statusMessage: poll.statusMessage,
@@ -420,7 +497,7 @@ class FitnessRepository {
       final String token = await _requireToken();
       cloudRecord = await _apiClient.fetchTodayWearable(jwtToken: token);
     } catch (_) {
-      cloudRecord = null;
+      cloudRecord = cachedToday;
     }
     return HealthConnectPollResult(
       record: cloudRecord,
@@ -430,15 +507,25 @@ class FitnessRepository {
     );
   }
 
-  /// Permite sincronizar directamente un payload real de telemetría wearable hacia PostgreSQL.
+  /// Permite sincronizar directamente un payload real de telemetría wearable hacia PostgreSQL
+  /// y bloquear la sobrescritura automática (`whoop_scan_${userId}_${today} = true`).
   Future<WearableMetricRecord> pushWearableRecord(
-    WearableMetricRecord record,
-  ) async {
+    WearableMetricRecord record, {
+    bool lockTodayScan = true,
+  }) async {
+    await _storageService.saveCachedWearableTelemetry(record);
+    if (lockTodayScan &&
+        (record.recoveryScore >= 1.0 || record.sleepEfficiencyPct >= 1.0)) {
+      await _storageService.saveWhoopScanLockForToday(true);
+      await _storageService.clearCachedAiRoutinePlan();
+    }
     final String token = await _requireToken();
-    return _apiClient.syncWearableMetrics(
+    final WearableMetricRecord saved = await _apiClient.syncWearableMetrics(
       record: record,
       jwtToken: token,
     );
+    await _storageService.saveCachedWearableTelemetry(saved);
+    return saved;
   }
 
   /// Escanea una captura de pantalla de WHOOP desde bytes (`POST /api/v1/wearables/scan-whoop`)

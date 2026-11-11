@@ -16,6 +16,7 @@ class SecureStorageService {
   static const String _routinePrefix = 'routine_';
   static const String _routineTemplatesPrefix = 'routine_templates_';
   static const String _readinessPrefix = 'readiness_';
+  static const String _whoopScanLockPrefix = 'whoop_scan_';
   static const String _biometricsPrefix = 'biometrics_';
   static const String _pairedBleIdPrefix = 'last_paired_ble_id_';
   static const String _pairedBleNamePrefix = 'last_paired_ble_name_';
@@ -393,10 +394,43 @@ class SecureStorageService {
     try {
       final Map<String, dynamic> decoded =
           jsonDecode(raw) as Map<String, dynamic>;
-      return WearableMetricRecord.fromJson(decoded);
+      final WearableMetricRecord parsed =
+          WearableMetricRecord.fromJson(decoded);
+      if (parsed.recoveryScore < 1.0 &&
+          parsed.sleepEfficiencyPct < 1.0 &&
+          parsed.strainScore <= 0.0 &&
+          parsed.hrvMs <= 0.0) {
+        return null;
+      }
+      return parsed;
     } catch (_) {
       return null;
     }
+  }
+
+  /// Guarda o actualiza el candado `isLockedByScan` de hoy (`whoop_scan_${userId}_${today}`)
+  /// para evitar que Health Connect o el pulso BLE sobrescriban la captura escaneada.
+  Future<void> saveWhoopScanLockForToday(
+    bool locked, {
+    String? userId,
+  }) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return;
+    }
+    final String ymd = _todayYmd();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_whoopScanLockPrefix${uid}_$ymd', locked);
+  }
+
+  Future<bool> readWhoopScanLockForToday({String? userId}) async {
+    final String? uid = await _tryResolveActiveUserId(userId);
+    if (uid == null) {
+      return false;
+    }
+    final String ymd = _todayYmd();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('$_whoopScanLockPrefix${uid}_$ymd') ?? false;
   }
 
   Future<void> clearCachedWearableTelemetry({String? userId}) async {
@@ -407,6 +441,7 @@ class SecureStorageService {
     final String ymd = _todayYmd();
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_readinessPrefix${uid}_$ymd');
+    await prefs.remove('$_whoopScanLockPrefix${uid}_$ymd');
   }
 
   Future<void> saveCachedBiometrics(
