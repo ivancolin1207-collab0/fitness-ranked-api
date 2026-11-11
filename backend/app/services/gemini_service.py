@@ -55,44 +55,59 @@ def _invoke_gemini_vision_json(
 
     try:
         raw_text = ""
-        try:
-            from google import genai as google_genai
-            from google.genai import types
+        last_err: Optional[Exception] = None
+        candidate_models = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
 
-            client = google_genai.Client(api_key=api_key)
-            image_part = types.Part.from_bytes(
-                data=image_bytes,
-                mime_type=mime_type or "image/jpeg",
-            )
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[prompt, image_part],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=2048,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    response_mime_type="application/json",
-                ),
-            )
-            raw_text = response.text or ""
-        except Exception:
-            import google.generativeai as genai  # type: ignore
+        for model_name in candidate_models:
+            try:
+                from google import genai as google_genai
+                from google.genai import types
 
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(
-                "gemini-2.5-flash",
-                generation_config={
-                    "temperature": 0.1,
-                    "response_mime_type": "application/json",
-                },
-            )
-            response = model.generate_content(
-                [
-                    prompt,
-                    {"mime_type": mime_type or "image/jpeg", "data": image_bytes},
-                ]
-            )
-            raw_text = response.text or ""
+                client = google_genai.Client(api_key=api_key)
+                image_part = types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type=mime_type or "image/jpeg",
+                )
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, image_part],
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=2048,
+                        response_mime_type="application/json",
+                    ),
+                )
+                raw_text = (response.text or "").strip()
+                if raw_text:
+                    break
+            except Exception as genai_exc:
+                last_err = genai_exc
+                try:
+                    import google.generativeai as genai  # type: ignore
+
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel(
+                        model_name,
+                        generation_config={
+                            "temperature": 0.1,
+                            "response_mime_type": "application/json",
+                        },
+                    )
+                    response = model.generate_content(
+                        [
+                            prompt,
+                            {"mime_type": mime_type or "image/jpeg", "data": image_bytes},
+                        ]
+                    )
+                    raw_text = (response.text or "").strip()
+                    if raw_text:
+                        break
+                except Exception as legacy_exc:
+                    last_err = legacy_exc
+                    continue
+
+        if not raw_text and last_err is not None:
+            raise last_err
 
         cleaned_text = (
             raw_text.replace("```json", "").replace("```", "").strip()
@@ -750,7 +765,6 @@ async def generate_adaptive_prescription(
                     top_p=0.8,
                     top_k=20,
                     max_output_tokens=2048,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                     response_mime_type="application/json",
                     response_schema=AdaptivePrescriptionResponse,
                 ),
@@ -959,7 +973,6 @@ async def generate_coach_chat_reply(
                     system_instruction=system_instruction,
                     temperature=0.35,
                     max_output_tokens=2048,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             return (resp.text or "").strip()

@@ -115,9 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
         isMale: (authViewModel.currentUser?.sex ?? 'male').toLowerCase() !=
             'female',
       );
-      if (!viewModel.hasWhoopData && !viewModel.isSyncingWearable) {
-        unawaited(viewModel.forceSyncWearable());
-      }
     });
   }
 
@@ -148,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final Uri? uri = Uri.tryParse(link);
     final String status = uri?.queryParameters['status'] ?? '';
-    if (status == 'linked') {
+    if (status == 'linked' || status == 'success' || status.isEmpty) {
       try {
         await viewModel.syncOrLinkWhoopCloud();
         widget.onProfileOrBiometricsUpdated?.call();

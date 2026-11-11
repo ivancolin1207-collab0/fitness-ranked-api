@@ -47,11 +47,13 @@ class ApiClientService {
 
   List<String> _candidateBaseUrls() {
     final List<String> candidates = <String>[
-      _baseUrl,
       ApiConstants.defaultProductionBaseUrl,
-      ApiConstants.fallbackLocalLanUrl,
-      ApiConstants.fallbackEmulatorUrl,
-      ApiConstants.fallbackLoopbackUrl,
+      if (_baseUrl != ApiConstants.defaultProductionBaseUrl &&
+          !_baseUrl.contains('192.168.') &&
+          !_baseUrl.contains('10.0.2.2') &&
+          !_baseUrl.contains('127.0.0.1') &&
+          !_baseUrl.contains('localhost'))
+        _baseUrl,
     ];
     final Set<String> seen = <String>{};
     return candidates.where((String u) => seen.add(u)).toList();
@@ -111,11 +113,14 @@ class ApiClientService {
         http.Response response = await requestFn(candidate).timeout(
           _timeoutForCandidate(candidate),
         );
-        // Si Render está despertando (502/503/504), reintentar automáticamente tras breve pausa
-        if (response.statusCode == 502 ||
-            response.statusCode == 503 ||
-            response.statusCode == 504) {
-          await Future<void>.delayed(const Duration(milliseconds: 900));
+        // Si Render está despertando (502/503/504), reintentar automáticamente con backoff
+        int attempt = 0;
+        while ((response.statusCode == 502 ||
+                response.statusCode == 503 ||
+                response.statusCode == 504) &&
+            attempt < 3) {
+          attempt++;
+          await Future<void>.delayed(Duration(seconds: attempt * 2));
           response = await requestFn(candidate).timeout(
             _timeoutForCandidate(candidate),
           );

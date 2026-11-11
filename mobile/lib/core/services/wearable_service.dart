@@ -69,6 +69,13 @@ class WearableService {
     final String candidate = (rawUrl != null && rawUrl.trim().isNotEmpty)
         ? rawUrl.trim()
         : ApiConstants.defaultProductionBaseUrl;
+    final String low = candidate.toLowerCase();
+    if (low.contains('192.168.') ||
+        low.contains('10.0.2.2') ||
+        low.contains('127.0.0.1') ||
+        low.contains('localhost')) {
+      return ApiConstants.defaultProductionBaseUrl;
+    }
     return candidate
         .replaceAll(RegExp(r'/+$'), '')
         .replaceAll(RegExp(r'/api/v1$'), '');
@@ -223,10 +230,13 @@ class WearableService {
           .post(base64Uri, headers: jsonHeaders, body: bodyJson)
           .timeout(ApiConstants.ocrUploadTimeout);
 
-      if (jsonRes.statusCode == 502 ||
-          jsonRes.statusCode == 503 ||
-          jsonRes.statusCode == 504) {
-        await Future<void>.delayed(const Duration(milliseconds: 900));
+      int retryAttempt = 0;
+      while ((jsonRes.statusCode == 502 ||
+              jsonRes.statusCode == 503 ||
+              jsonRes.statusCode == 504) &&
+          retryAttempt < 3) {
+        retryAttempt++;
+        await Future<void>.delayed(Duration(seconds: retryAttempt * 2));
         jsonRes = await _httpClient
             .post(base64Uri, headers: jsonHeaders, body: bodyJson)
             .timeout(ApiConstants.ocrUploadTimeout);
@@ -243,8 +253,20 @@ class WearableService {
       }
     } on WearableScanException {
       rethrow;
+    } on TimeoutException {
+      throw const WearableScanException(
+        statusCode: 504,
+        message:
+            'Tiempo de espera agotado (90s) al analizar la captura con Gemini Vision en Render. Intenta de nuevo.',
+      );
+    } on SocketException catch (e) {
+      throw WearableScanException(
+        statusCode: 503,
+        message:
+            'Sin conexión de red con el servidor ($targetBase): ${e.message}',
+      );
     } catch (_) {
-      // Continuar al fallback Multipart si el endpoint Base64 aún no estaba disponible
+      // Continuar al fallback Multipart si el endpoint Base64 devolvió 404/405
     }
 
     // 2. Fallback Multipart (/api/v1/wearables/scan-whoop y /api/v1/wearables/scan-screen)

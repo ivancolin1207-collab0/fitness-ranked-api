@@ -211,9 +211,21 @@ class SecureStorageService {
     return prefs.getString('$_wearablePrefPrefix$uid') ?? 'WHOOP';
   }
 
+  bool _isStaleLocalUrl(String url) {
+    final String low = url.toLowerCase().trim();
+    return low.contains('192.168.') ||
+        low.contains('10.0.2.2') ||
+        low.contains('127.0.0.1') ||
+        low.contains('localhost');
+  }
+
   Future<void> saveApiBaseUrl(String url) async {
+    final String cleaned = url.trim();
+    if (_isStaleLocalUrl(cleaned)) {
+      return;
+    }
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_apiBaseUrlKey, url.trim());
+    await prefs.setString(_apiBaseUrlKey, cleaned);
   }
 
   Future<String?> readApiBaseUrl() async {
@@ -222,7 +234,12 @@ class SecureStorageService {
     if (saved == null || saved.trim().isEmpty) {
       return null;
     }
-    return saved.trim();
+    final String cleaned = saved.trim();
+    if (_isStaleLocalUrl(cleaned)) {
+      await prefs.remove(_apiBaseUrlKey);
+      return null;
+    }
+    return cleaned;
   }
 
   /// Guarda la periodización completa de 5 días indexada estrictamente por `routine_${userId}`.

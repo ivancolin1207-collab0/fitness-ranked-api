@@ -358,44 +358,70 @@ class FitnessRepository {
       preferredSource: preferred,
     );
     if (sensorMetrics != null) {
-      return _apiClient.syncWearableMetrics(
-        record: sensorMetrics,
-        jwtToken: token,
-      );
+      await _storageService.saveCachedWearableTelemetry(sensorMetrics);
+      try {
+        return await _apiClient.syncWearableMetrics(
+          record: sensorMetrics,
+          jwtToken: token,
+        );
+      } catch (_) {
+        return sensorMetrics;
+      }
     }
 
-    return _apiClient.fetchTodayWearable(jwtToken: token);
+    try {
+      return await _apiClient.fetchTodayWearable(jwtToken: token);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Solicita explícitamente permisos de lectura a Health Connect, sincroniza con PostgreSQL
   /// si existen lecturas hoy, o retorna el registro existente hoy junto con el mensaje diagnóstico.
   Future<HealthConnectPollResult> forcePollHealthConnectAndSync({
     String? sourceDevice,
+    bool interactive = false,
   }) async {
-    final String token = await _requireToken();
     final String preferred =
         sourceDevice ?? await _storageService.readPreferredWearable();
 
     final HealthConnectPollResult poll =
         await _healthConnectService.requestPermissionsAndPollToday(
       preferredSource: preferred,
+      openSettingsIfDenied: interactive,
     );
 
     if (poll.record != null) {
-      final WearableMetricRecord saved = await _apiClient.syncWearableMetrics(
-        record: poll.record!,
-        jwtToken: token,
-      );
-      return HealthConnectPollResult(
-        record: saved,
-        sdkAvailable: poll.sdkAvailable,
-        permissionGranted: poll.permissionGranted,
-        statusMessage: poll.statusMessage,
-      );
+      await _storageService.saveCachedWearableTelemetry(poll.record!);
+      try {
+        final String token = await _requireToken();
+        final WearableMetricRecord saved = await _apiClient.syncWearableMetrics(
+          record: poll.record!,
+          jwtToken: token,
+        );
+        return HealthConnectPollResult(
+          record: saved,
+          sdkAvailable: poll.sdkAvailable,
+          permissionGranted: poll.permissionGranted,
+          statusMessage: poll.statusMessage,
+        );
+      } catch (_) {
+        return HealthConnectPollResult(
+          record: poll.record,
+          sdkAvailable: poll.sdkAvailable,
+          permissionGranted: poll.permissionGranted,
+          statusMessage: poll.statusMessage,
+        );
+      }
     }
 
-    final WearableMetricRecord? cloudRecord =
-        await _apiClient.fetchTodayWearable(jwtToken: token);
+    WearableMetricRecord? cloudRecord;
+    try {
+      final String token = await _requireToken();
+      cloudRecord = await _apiClient.fetchTodayWearable(jwtToken: token);
+    } catch (_) {
+      cloudRecord = null;
+    }
     return HealthConnectPollResult(
       record: cloudRecord,
       sdkAvailable: poll.sdkAvailable,

@@ -27,13 +27,13 @@ class HealthConnectService {
   final Health _health = Health();
   static const MethodChannel _systemChannel =
       MethodChannel('apexmetrix/system');
+  static Future<HealthConnectPollResult>? _inFlightPoll;
 
   static const List<HealthDataType> _types = <HealthDataType>[
     HealthDataType.HEART_RATE_VARIABILITY_RMSSD,
     HealthDataType.RESTING_HEART_RATE,
     HealthDataType.SLEEP_SESSION,
     HealthDataType.SLEEP_ASLEEP,
-    HealthDataType.TOTAL_CALORIES_BURNED,
     HealthDataType.ACTIVE_ENERGY_BURNED,
     HealthDataType.STEPS,
     HealthDataType.HEART_RATE,
@@ -60,6 +60,29 @@ class HealthConnectService {
     bool openSettingsIfDenied = false,
     int athleteAge = 28,
   }) async {
+    if (_inFlightPoll != null) {
+      return _inFlightPoll!;
+    }
+    final Future<HealthConnectPollResult> task = _executePollToday(
+      preferredSource: preferredSource,
+      openSettingsIfDenied: openSettingsIfDenied,
+      athleteAge: athleteAge,
+    );
+    _inFlightPoll = task;
+    try {
+      return await task;
+    } finally {
+      if (identical(_inFlightPoll, task)) {
+        _inFlightPoll = null;
+      }
+    }
+  }
+
+  Future<HealthConnectPollResult> _executePollToday({
+    required String preferredSource,
+    required bool openSettingsIfDenied,
+    required int athleteAge,
+  }) async {
     try {
       await _health.configure();
 
@@ -67,6 +90,9 @@ class HealthConnectService {
           await _health.getHealthConnectSdkStatus();
       if (sdkStatus != null &&
           sdkStatus != HealthConnectSdkStatus.sdkAvailable) {
+        if (openSettingsIfDenied) {
+          await openHealthConnectPermissionsSettings();
+        }
         return const HealthConnectPollResult(
           sdkAvailable: false,
           permissionGranted: false,
@@ -102,28 +128,23 @@ class HealthConnectService {
       // los tipos individualmente antes de declarar permisos denegados.
       final DateTime now = DateTime.now();
       final DateTime windowStart = now.subtract(const Duration(hours: 24));
+      final DateTime sleepWindowStart =
+          now.subtract(const Duration(hours: 36));
       final List<HealthDataPoint> points = <HealthDataPoint>[];
 
-      try {
-        final List<HealthDataPoint> batch =
-            await _health.getHealthDataFromTypes(
-          types: _types,
-          startTime: windowStart,
-          endTime: now,
-        );
-        points.addAll(batch);
-      } catch (_) {
-        for (final HealthDataType singleType in _types) {
-          try {
-            final List<HealthDataPoint> partial =
-                await _health.getHealthDataFromTypes(
-              types: <HealthDataType>[singleType],
-              startTime: windowStart,
-              endTime: now,
-            );
-            points.addAll(partial);
-          } catch (_) {}
-        }
+      for (final HealthDataType singleType in _types) {
+        try {
+          final bool isSleepType =
+              singleType == HealthDataType.SLEEP_SESSION ||
+                  singleType == HealthDataType.SLEEP_ASLEEP;
+          final List<HealthDataPoint> partial =
+              await _health.getHealthDataFromTypes(
+            types: <HealthDataType>[singleType],
+            startTime: isSleepType ? sleepWindowStart : windowStart,
+            endTime: now,
+          );
+          points.addAll(partial);
+        } catch (_) {}
       }
 
       int totalSteps = 0;
@@ -147,6 +168,9 @@ class HealthConnectService {
       }
 
       if (points.isEmpty && totalSteps <= 0) {
+        if (openSettingsIfDenied) {
+          await openHealthConnectPermissionsSettings();
+        }
         return const HealthConnectPollResult(
           sdkAvailable: true,
           permissionGranted: true,

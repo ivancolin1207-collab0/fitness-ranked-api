@@ -334,7 +334,7 @@ class HomeViewModel extends ChangeNotifier {
     await forceSyncWearable();
   }
 
-  Future<void> forceSyncWearable() async {
+  Future<void> forceSyncWearable({bool interactive = true}) async {
     _isSyncingWearable = true;
     _errorMessage = null;
     _statusBanner = null;
@@ -344,6 +344,7 @@ class HomeViewModel extends ChangeNotifier {
       final HealthConnectPollResult result =
           await _repository.forcePollHealthConnectAndSync(
         sourceDevice: _preferredWearable,
+        interactive: interactive,
       );
       if (result.record != null) {
         _wearable = result.record;
@@ -351,7 +352,10 @@ class HomeViewModel extends ChangeNotifier {
       }
       _statusBanner = result.statusMessage;
     } catch (e) {
-      _errorMessage = e.toString().replaceFirst('HttpException: ', '');
+      final String clean = ApiErrorSanitizer.sanitizeRawErrorString(e);
+      if (clean != ApiErrorSanitizer.cloudReconnectingMessage) {
+        _errorMessage = clean;
+      }
     } finally {
       _isSyncingWearable = false;
       notifyListeners();

@@ -1021,7 +1021,7 @@ async def whoop_oauth_callback(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="refresh" content="1;url=apexmetrix://oauth/whoop?status=success" />
+  <meta http-equiv="refresh" content="1;url=apexmetrix://oauth/whoop?status=linked" />
   <title>WHOOP Cloud Conectado • ApexMetrix</title>
   <style>
     body {{
